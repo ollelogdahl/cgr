@@ -152,6 +152,17 @@ swap_chain_support_details_t query_swap_chain_support(VkPhysicalDevice device, V
     return details;
 }
 
+struct shader_program_t {
+
+};
+
+struct shader_program_load_params_t {
+    const char *vertex_hlsl_path;
+    const char *fragment_hlsl_path;
+
+    bool hotload = true;
+};
+
 struct gpu_t {
     VkInstance instance;
     VkPhysicalDevice pdev = VK_NULL_HANDLE;
@@ -465,7 +476,8 @@ struct gpu_t {
         {
             // create image views into swap-chain.
             swapchain.image_views.resize(swapchain.images.size());
-            for (auto &img : swapchain.images) {
+            for (auto i = 0; i < swapchain.images.size(); i++) {
+                auto &img = swapchain.images[i];
                 VkImageViewCreateInfo createInfo{};
                 createInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
                 createInfo.image = img;
@@ -481,7 +493,7 @@ struct gpu_t {
                 createInfo.subresourceRange.baseArrayLayer = 0;
                 createInfo.subresourceRange.layerCount = 1;
 
-                auto result = vkCreateImageView(device, &createInfo, nullptr, &swapchain.image_views[img]);
+                auto result = vkCreateImageView(device, &createInfo, nullptr, &swapchain.image_views[i]);
                 if (result != VK_SUCCESS) {
                     gpu_log.error("failed to create image views");
                     return;
@@ -490,6 +502,53 @@ struct gpu_t {
         }
     }
 };
+
+shader_program_t load_shader_program(gpu_t &gpu, const shader_program_load_params_t &params) {
+    // @todo: handle errors
+    shader_program_t program;
+
+    auto create_module = [&](const char *path) {
+        const auto code = file_read(path).unwrap();
+
+        VkShaderModuleCreateInfo createInfo{};
+        createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+        createInfo.codeSize = code.content.len;
+        createInfo.pCode = reinterpret_cast<const uint32_t*>(code.content.ptr);
+
+        VkShaderModule shaderModule;
+        if (vkCreateShaderModule(gpu.device, &createInfo, nullptr, &shaderModule) != VK_SUCCESS) {
+            gpu_log.error("failed to create shader module");
+        }
+
+        file_close(code);
+        return shaderModule;
+    };
+
+    VkShaderModule frag;
+    VkShaderModule vert;
+
+    if (params.vertex_hlsl_path != nullptr) {
+        // invoke glslc to compile the shader
+        // we could also use libshaderc, but i think that will be more complicated.
+        // @todo: use forks instead of system.
+        auto cmd = fmt::format("glslc -fshader-stage=vertex -o /tmp/1.spv {}", params.vertex_hlsl_path);
+        system(cmd.c_str());
+        vert = create_module("/tmp/1.spv");
+    }
+
+    if (params.fragment_hlsl_path != nullptr) {
+        auto cmd = fmt::format("glslc -fshader-stage=fragment -o /tmp/2.spv {}", params.fragment_hlsl_path);
+        system(cmd.c_str());
+        frag = create_module("/tmp/2.spv");
+    }
+
+    // @todo: consider sharing the same module sometimes?
+    VkPipelineShaderStageCreateInfo vertShaderStageInfo{};
+    vertShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    vertShaderStageInfo.stage = VK_SHADER_STAGE_VERTEX_BIT;
+
+    return program;
+}
 
 int main(void) {
     glfwInit();
