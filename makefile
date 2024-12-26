@@ -1,6 +1,9 @@
 ODIR = .target
 ODIR_REL = ${ODIR}/release
 
+CXX = clang++
+
+
 HFILES_SRC = $(shell find src/ -type f -name *.h)
 CCFILES_SRC = $(shell find src/ -type f -name *.cc)
 
@@ -12,15 +15,20 @@ CC_OFILES_VENDOR_RELEASE = $(patsubst vendor/%.cc,${ODIR_REL}/vendor/%.cc.o,$(CC
 
 OFILES_RELEASE = $(CC_OFILES_SRC_RELEASE) $(CC_OFILES_VENDOR_RELEASE)
 
-CCFLAGS_COMMON = -std=c++20 -Wall -Wextra -Werror -Ivendor/include -Isrc
-LDFLAGS_COMMON = -lglfw -lvulkan
+CCFLAGS_COMMON = -std=c++2a -Wall -Wextra -Werror -Ivendor/include -Isrc -DDEBUG -g
+LDFLAGS_COMMON = --ld-path=/usr/bin/mold -ldl -lglfw -lvulkan
 
 CCFLAGS_RELEASE = $(CCFLAGS_COMMON) -O3
 
 LDFLAGS_RELEASE = $(LDFLAGS_COMMON)
 
+.PHONY: clean
+
 cgr: $(ODIR_REL)/cgr
 	@cp $(ODIR_REL)/cgr cgr
+
+clean:
+	@rm -r $(ODIR_REL)
 
 $(ODIR_REL)/cgr: $(OFILES_RELEASE)
 	@mkdir -p $(dir $@)

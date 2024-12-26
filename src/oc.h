@@ -405,7 +405,7 @@ class ref_t {
 public:
     constexpr inline ref_t() : ptr(nullptr), ref_count(nullptr) {}
 
-    constexpr inline ref_t(std::nullptr_t ptr) : ptr(nullptr), ref_count(nullptr) {}
+    constexpr inline ref_t(std::nullptr_t) : ptr(nullptr), ref_count(nullptr) {}
 
     constexpr inline ref_t(const ref_t<T>& other) {
         ptr = other.ptr;
@@ -550,7 +550,7 @@ void _panic_impl();
 template <typename ...Args>
 __attribute__((noreturn))
 inline void panic(fmt::format_string<Args...> fmt, Args... args) {
-    std::cout << "panic! " << fmt::format(fmt, std::forward<Args>(args)...) << std::endl << std::endl;
+    std::cout << std::endl << "panic! " << fmt::format(fmt, std::forward<Args>(args)...) << std::endl << std::endl;
     _panic_impl();
 }
 
