@@ -1,5 +1,11 @@
-#include <vulkan/vulkan_core.h>
-#define GLFW_INCLUDE_VULKAN
+#include <asm-generic/errno-base.h>
+#include <cerrno>
+#include <cstdint>
+#include <stdexcept>
+
+#include <sys/types.h>
+#include <unordered_map>
+#include <vulkan/vulkan.h>
 #include <GLFW/glfw3.h>
 
 #include "oc.h"
@@ -9,6 +15,7 @@
 #include <vector>
 #include <cstring>
 #include <set>
+#include <vulkan/vulkan_core.h>
 
 static logger_t gpu_log = logger_t("gpu");
 
@@ -18,14 +25,35 @@ static logger_t gpu_log = logger_t("gpu");
 struct fswatcher_t {
     int inotify_fd;
 
+    struct elem_t {
+        void (*on_modified)(std::string, void *userdata);
+        void *userdata;
+        std::string path;
+
+        bool operator==(const elem_t &other) const {
+            return path == other.path && on_modified == other.on_modified;
+        }
+    };
+
+    std::unordered_map<int, elem_t> watches;
+
     void init() {
         inotify_fd = inotify_init();
         auto old_flags = fcntl(inotify_fd, F_GETFL);
         fcntl(inotify_fd, F_SETFL, old_flags | O_NONBLOCK);
     }
 
-    void fd_add_modify_watch(const char *path) {
-        inotify_add_watch(inotify_fd, path, IN_MODIFY);
+    void add_watch(const char *path, void (*on_modified)(std::string, void *userdata), void *userdata) {
+        int ret = inotify_add_watch(inotify_fd, path, IN_ALL_EVENTS);
+        if (ret == -1) {
+            panic("inotify_add_watch error: {}", strerror(errno));
+        }
+        g_log.info("added fs watch on {}", path);
+        watches[ret] = {
+            on_modified,
+            userdata,
+            path
+        };
     }
     void process_watches() {
         // read from inotify until no more events are available now
@@ -35,24 +63,21 @@ struct fswatcher_t {
 
         while (true) {
             auto len = read(inotify_fd, buffer, buffer_size);
+            if (len < 0 && errno == EAGAIN) break;
+            if (len == 0) break;
 
-            auto ev = (inotify_event *)&buffer[0];
-            auto end = (inotify_event *)&buffer[len];
-            while(ev < end) {
-                if (ev->len) {
-                    g_log.info("got event for: {}", ev->name);
+            ssize_t idx = 0;
+            while(idx < len) {
+                auto ev = (inotify_event *)(buffer + idx);
+                idx += sizeof(inotify_event) + ev->len;
+
+                if (ev->mask & IN_MODIFY) {
+                    auto &e = watches[ev->wd];
+                    e.on_modified(e.path, e.userdata);
                 }
-
-                ev += sizeof(inotify_event) + ev->len;
             }
         }
     }
-};
-
-struct hotloader_t {
-    int fd_watcher;
-
-    void check_hotload();
 };
 
 void dump_available_validation_layers() {
@@ -194,18 +219,6 @@ swap_chain_support_details_t query_swap_chain_support(VkPhysicalDevice device, V
     return details;
 }
 
-struct shader_program_t {
-    VkPipelineShaderStageCreateInfo frag;
-    VkPipelineShaderStageCreateInfo vert;
-};
-
-struct shader_program_load_params_t {
-    const char *vertex_hlsl_path;
-    const char *fragment_hlsl_path;
-
-    bool hotload = true;
-};
-
 static VKAPI_ATTR VkBool32 VKAPI_CALL vk_debug_callback(
     VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
     VkDebugUtilsMessageTypeFlagsEXT messageType,
@@ -237,7 +250,16 @@ struct gpu_t {
     VkQueue graphics_queue, present_queue;
     VkSurfaceKHR surface;
 
+    GLFWwindow *window;
+
+    VkRenderPass display_render_pass;
+
     VkDebugUtilsMessengerEXT debug_messager;
+
+    struct {
+        u32 graphics;
+        u32 present;
+    } queue_families;
 
     // can maybe be broken out but i don't see why.
     struct {
@@ -251,6 +273,8 @@ struct gpu_t {
     } swapchain;
 
     void init(GLFWwindow *window) {
+        this->window = window;
+
         bool requests_validation_layers = true;
         bool validation_layers_available = true;
 
@@ -328,8 +352,7 @@ struct gpu_t {
             createInfo.pfnUserCallback = vk_debug_callback;
             createInfo.pUserData = nullptr; // Optional
 
-            // load the function
-            auto func = (PFN_vkCreateDebugUtilsMessengerEXT) vkGetInstanceProcAddr(instance, "vkCreateDebugUtilsMessengerEXT");
+            auto func = (PFN_vkCreateDebugUtilsMessengerEXT)vkGetInstanceProcAddr(instance, "vkCreateDebugUtilsMessengerEXT");
 
             if(func(instance, &createInfo, nullptr, &debug_messager)) {
                 g_log.error("failed to setup debug messenger");
@@ -423,6 +446,9 @@ struct gpu_t {
                 gpu_log.error("failed to find required queue families");
                 return;
             }
+
+            queue_families.graphics = qfamily_graphics;
+            queue_families.present = qfamily_present;
         }
 
         {
@@ -479,195 +505,334 @@ struct gpu_t {
             vkGetDeviceQueue(device, qfamily_present, 0, &present_queue);
         }
 
-        // @todo: break this out when we support resizing.
         {
-            // setup swap chain
-            swap_chain_support_details_t swap_chain_support = query_swap_chain_support(pdev, surface);
+            // create the render pass
+            // @todo: actually, the image format may change, so we should recreate the render pass
+            //       when the swapchain is recreated.
+            VkAttachmentDescription colorAttachment{};
+            colorAttachment.format = swapchain.image_format;
+            colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
+            colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+            colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+            colorAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+            colorAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+            colorAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+            colorAttachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
 
-            VkSurfaceFormatKHR surface_format;
-            VkPresentModeKHR present_mode;
-            VkExtent2D extent;
-            {
-                for (auto &surf : swap_chain_support.formats) {
-                    if (surf.format == VK_FORMAT_B8G8R8A8_SRGB && surf.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
-                        surface_format = surf;
-                        break;
-                    }
+            VkAttachmentReference colorAttachmentRef{};
+            colorAttachmentRef.attachment = 0;
+            colorAttachmentRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+            VkSubpassDescription subpass{};
+            subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+            subpass.colorAttachmentCount = 1;
+            subpass.pColorAttachments = &colorAttachmentRef;
+
+            VkRenderPassCreateInfo renderPassInfo{};
+            renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+            renderPassInfo.attachmentCount = 1;
+            renderPassInfo.pAttachments = &colorAttachment;
+            renderPassInfo.subpassCount = 1;
+            renderPassInfo.pSubpasses = &subpass;
+
+            if (vkCreateRenderPass(device, &renderPassInfo, nullptr, &display_render_pass) != VK_SUCCESS) {
+                throw std::runtime_error("failed to create render pass!");
+            }
+        }
+
+        recreate_swapchain(false);
+    }
+
+    void recreate_swapchain(bool need_to_clear = true) {
+        if (need_to_clear) {
+            for (size_t i = 0; i < swapchain.framebuffers.size(); i++) {
+                vkDestroyFramebuffer(device, swapchain.framebuffers[i], nullptr);
+            }
+
+            for (size_t i = 0; i < swapchain.image_views.size(); i++) {
+                vkDestroyImageView(device, swapchain.image_views[i], nullptr);
+            }
+
+            vkDestroySwapchainKHR(device, swapchain.handle, nullptr);
+        }
+
+        // setup swap chain
+        swap_chain_support_details_t swap_chain_support = query_swap_chain_support(pdev, surface);
+
+        VkSurfaceFormatKHR surface_format;
+        VkPresentModeKHR present_mode;
+        VkExtent2D extent;
+        {
+            for (auto &surf : swap_chain_support.formats) {
+                if (surf.format == VK_FORMAT_B8G8R8A8_SRGB && surf.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
+                    surface_format = surf;
+                    break;
                 }
             }
-
-            {
-                for (auto &mode : swap_chain_support.present_modes) {
-                    if (mode == VK_PRESENT_MODE_MAILBOX_KHR) {
-                        present_mode = mode;
-                        break;
-                    }
-                }
-
-                present_mode = VK_PRESENT_MODE_FIFO_KHR;
-            }
-
-            {
-                if (swap_chain_support.capabilities.currentExtent.width != UINT32_MAX) {
-                    extent = swap_chain_support.capabilities.currentExtent;
-                } else {
-                    int width, height;
-                    glfwGetFramebufferSize(window, &width, &height);
-
-                    extent.width = clamp((u32)width, swap_chain_support.capabilities.minImageExtent.width, swap_chain_support.capabilities.maxImageExtent.width);
-                    extent.height = clamp((u32)height, swap_chain_support.capabilities.minImageExtent.height, swap_chain_support.capabilities.maxImageExtent.height);
-                }
-            }
-
-            u32 image_count = swap_chain_support.capabilities.minImageCount + 1;
-            if (swap_chain_support.capabilities.maxImageCount > 0 && image_count > swap_chain_support.capabilities.maxImageCount) {
-                image_count = swap_chain_support.capabilities.maxImageCount;
-            }
-
-
-            VkSwapchainCreateInfoKHR createInfo{};
-            createInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
-            createInfo.surface = surface;
-            createInfo.minImageCount = image_count;
-            createInfo.imageFormat = surface_format.format;
-            createInfo.imageColorSpace = surface_format.colorSpace;
-            createInfo.imageExtent = extent;
-            createInfo.imageArrayLayers = 1;
-
-            // could also be VK_IMAGE_USAGE_TRANSFER_DST_BIT
-            createInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
-
-            u32 qfamilies_separate[] = {qfamily_graphics, qfamily_present};
-            if (qfamily_graphics != qfamily_present) {
-                createInfo.imageSharingMode = VK_SHARING_MODE_CONCURRENT;
-                createInfo.queueFamilyIndexCount = 2;
-                createInfo.pQueueFamilyIndices = qfamilies_separate;
-            } else {
-                createInfo.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
-                createInfo.queueFamilyIndexCount = 0; // Optional
-                createInfo.pQueueFamilyIndices = nullptr; // Optional
-            }
-
-            createInfo.preTransform = swap_chain_support.capabilities.currentTransform;
-            createInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
-
-            createInfo.presentMode = present_mode;
-            createInfo.clipped = VK_TRUE;
-
-            createInfo.oldSwapchain = VK_NULL_HANDLE;
-
-            auto result = vkCreateSwapchainKHR(device, &createInfo, nullptr, &swapchain.handle);
-            if (result != VK_SUCCESS) {
-                gpu_log.error("failed to create swap chain");
-                return;
-            }
-            gpu_log.info("swap chain created");
-
-            vkGetSwapchainImagesKHR(device, swapchain.handle, &image_count, nullptr);
-            swapchain.images.resize(image_count);
-            vkGetSwapchainImagesKHR(device, swapchain.handle, &image_count, swapchain.images.data());
-
-            swapchain.image_format = surface_format.format;
-            swapchain.extent = extent;
         }
 
         {
-            // create image views into swap-chain.
-            swapchain.image_views.resize(swapchain.images.size());
-            for (usize i = 0; i < swapchain.images.size(); i++) {
-                auto &img = swapchain.images[i];
-                VkImageViewCreateInfo createInfo{};
-                createInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-                createInfo.image = img;
-                createInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-                createInfo.format = swapchain.image_format;
-                createInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
-                createInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
-                createInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
-                createInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
-                createInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-                createInfo.subresourceRange.baseMipLevel = 0;
-                createInfo.subresourceRange.levelCount = 1;
-                createInfo.subresourceRange.baseArrayLayer = 0;
-                createInfo.subresourceRange.layerCount = 1;
+            for (auto &mode : swap_chain_support.present_modes) {
+                if (mode == VK_PRESENT_MODE_MAILBOX_KHR) {
+                    present_mode = mode;
+                    break;
+                }
+            }
 
-                auto result = vkCreateImageView(device, &createInfo, nullptr, &swapchain.image_views[i]);
-                if (result != VK_SUCCESS) {
-                    gpu_log.error("failed to create image views");
-                    return;
+            present_mode = VK_PRESENT_MODE_FIFO_KHR;
+        }
+
+        {
+            if (swap_chain_support.capabilities.currentExtent.width != UINT32_MAX) {
+                extent = swap_chain_support.capabilities.currentExtent;
+            } else {
+                int width, height;
+                glfwGetFramebufferSize(window, &width, &height);
+
+                extent.width = clamp((u32)width, swap_chain_support.capabilities.minImageExtent.width, swap_chain_support.capabilities.maxImageExtent.width);
+                extent.height = clamp((u32)height, swap_chain_support.capabilities.minImageExtent.height, swap_chain_support.capabilities.maxImageExtent.height);
+            }
+        }
+
+        u32 image_count = swap_chain_support.capabilities.minImageCount + 1;
+        if (swap_chain_support.capabilities.maxImageCount > 0 && image_count > swap_chain_support.capabilities.maxImageCount) {
+            image_count = swap_chain_support.capabilities.maxImageCount;
+        }
+
+
+        VkSwapchainCreateInfoKHR createInfo{};
+        createInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
+        createInfo.surface = surface;
+        createInfo.minImageCount = image_count;
+        createInfo.imageFormat = surface_format.format;
+        createInfo.imageColorSpace = surface_format.colorSpace;
+        createInfo.imageExtent = extent;
+        createInfo.imageArrayLayers = 1;
+
+        // could also be VK_IMAGE_USAGE_TRANSFER_DST_BIT
+        createInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+
+        u32 qfamilies_separate[] = {queue_families.graphics, queue_families.present};
+        if (queue_families.graphics != queue_families.present) {
+            createInfo.imageSharingMode = VK_SHARING_MODE_CONCURRENT;
+            createInfo.queueFamilyIndexCount = 2;
+            createInfo.pQueueFamilyIndices = qfamilies_separate;
+        } else {
+            createInfo.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
+            createInfo.queueFamilyIndexCount = 0; // Optional
+            createInfo.pQueueFamilyIndices = nullptr; // Optional
+        }
+
+        createInfo.preTransform = swap_chain_support.capabilities.currentTransform;
+        createInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+
+        createInfo.presentMode = present_mode;
+        createInfo.clipped = VK_TRUE;
+
+        createInfo.oldSwapchain = VK_NULL_HANDLE;
+
+        auto result = vkCreateSwapchainKHR(device, &createInfo, nullptr, &swapchain.handle);
+        if (result != VK_SUCCESS) {
+            gpu_log.error("failed to create swap chain");
+            return;
+        }
+        // gpu_log.info("swap chain created");
+
+        vkGetSwapchainImagesKHR(device, swapchain.handle, &image_count, nullptr);
+        swapchain.images.resize(image_count);
+        vkGetSwapchainImagesKHR(device, swapchain.handle, &image_count, swapchain.images.data());
+
+        swapchain.image_format = surface_format.format;
+        swapchain.extent = extent;
+
+        // create image views into swap-chain.
+        swapchain.image_views.resize(swapchain.images.size());
+        for (usize i = 0; i < swapchain.images.size(); i++) {
+            auto &img = swapchain.images[i];
+            VkImageViewCreateInfo createInfo{};
+            createInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+            createInfo.image = img;
+            createInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+            createInfo.format = swapchain.image_format;
+            createInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
+            createInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
+            createInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
+            createInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
+            createInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+            createInfo.subresourceRange.baseMipLevel = 0;
+            createInfo.subresourceRange.levelCount = 1;
+            createInfo.subresourceRange.baseArrayLayer = 0;
+            createInfo.subresourceRange.layerCount = 1;
+
+            auto result = vkCreateImageView(device, &createInfo, nullptr, &swapchain.image_views[i]);
+            if (result != VK_SUCCESS) {
+                gpu_log.error("failed to create image views");
+                return;
+            }
+        }
+
+        // setup framebuffers
+        {
+            swapchain.framebuffers.reserve(swapchain.image_views.size());
+            for (usize i = 0; i < swapchain.image_views.size(); ++i) {
+                VkImageView attachments[] = {
+                    swapchain.image_views[i]
+                };
+
+                VkFramebufferCreateInfo framebufferInfo{};
+                framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+                framebufferInfo.renderPass = display_render_pass;
+                framebufferInfo.attachmentCount = 1;
+                framebufferInfo.pAttachments = attachments;
+                framebufferInfo.width = swapchain.extent.width;
+                framebufferInfo.height = swapchain.extent.height;
+                framebufferInfo.layers = 1;
+
+                if (vkCreateFramebuffer(device, &framebufferInfo, nullptr, &swapchain.framebuffers[i]) != VK_SUCCESS) {
+                    throw std::runtime_error("failed to create framebuffer!");
                 }
             }
         }
     }
 };
 
-shader_program_t load_shader_program(gpu_t &gpu, const shader_program_load_params_t &params) {
-    // @todo: handle errors
-    shader_program_t program;
+#include <sys/stat.h>
 
-    auto create_module = [&](const char *path) {
-        auto code = file_read(path).unwrap();
+bool file_a_is_newer_than_b(const char *a, const char *b) {
+    struct stat a_stat;
+    struct stat b_stat;
 
-        VkShaderModuleCreateInfo createInfo{};
-        createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
-        createInfo.codeSize = code.contents.len;
-        createInfo.pCode = reinterpret_cast<const uint32_t*>(code.contents.data);
+    int ret_a = stat(a, &a_stat);
+    int ret_b = stat(b, &b_stat);
 
-        VkShaderModule shaderModule;
-        if (vkCreateShaderModule(gpu.device, &createInfo, nullptr, &shaderModule) != VK_SUCCESS) {
-            gpu_log.error("failed to create shader module");
+    if (ret_b != 0) {
+        return true;
+    }
+    if (ret_a != 0) {
+        return false;
+    }
+
+    return a_stat.st_mtime > b_stat.st_mtime;
+}
+
+struct shader_program_t {
+    std::vector<VkPipelineShaderStageCreateInfo> stages;
+    bool modified = false;
+};
+
+struct shader_program_load_params_t {
+    const char *vertex_hlsl_path;
+    const char *fragment_hlsl_path;
+
+    bool operator==(const shader_program_load_params_t &other) const {
+        return strcmp(vertex_hlsl_path, other.vertex_hlsl_path) == 0 &&
+               strcmp(fragment_hlsl_path, other.fragment_hlsl_path) == 0;
+    }
+};
+
+template <>
+struct std::hash<shader_program_load_params_t> {
+    std::size_t operator()(const shader_program_load_params_t &params) const {
+        std::size_t h1 = std::hash<const char*>{}(params.vertex_hlsl_path);
+        std::size_t h2 = std::hash<const char*>{}(params.fragment_hlsl_path);
+        return h1 ^ (h2 << 1);
+    }
+};
+
+struct loader_t {
+    ref_t<shader_program_t> load_shader_program(const shader_program_load_params_t &params) {
+        auto exists_it = loaded_shaders.find(params);
+        if (exists_it != loaded_shaders.end()) {
+            return exists_it->second;
         }
 
-        file_close(code);
-        return shaderModule;
-    };
+        shader_program_t program;
 
-    VkShaderModule frag;
-    VkShaderModule vert;
+        auto create_module = [&](const char *path) {
+            auto code = file_read(path).unwrap();
 
-    //if (params.vertex_hlsl_path != nullptr) {
-    {
-        // invoke glslc to compile the shader
-        // we could also use libshaderc, but i think that will be more complicated.
-        // @todo: use forks instead of system.
-        auto cmd = fmt::format("glslc -fshader-stage=vertex -o /tmp/1.spv {}", params.vertex_hlsl_path);
-        system(cmd.c_str());
-        vert = create_module("/tmp/1.spv");
+            VkShaderModuleCreateInfo createInfo{};
+            createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+            createInfo.codeSize = code.contents.len;
+            createInfo.pCode = reinterpret_cast<const uint32_t*>(code.contents.data);
+
+            VkShaderModule shaderModule;
+            if (vkCreateShaderModule(gpu->device, &createInfo, nullptr, &shaderModule) != VK_SUCCESS) {
+                gpu_log.error("failed to create shader module");
+            }
+
+            file_close(code);
+            return shaderModule;
+        };
+
+        std::vector<VkPipelineShaderStageCreateInfo> stages;
+
+        //if (params.vertex_hlsl_path != nullptr) {
+        auto cmp_vertex = [&](std::string path) {
+            // invoke glslc to compile the shader
+            // we could also use libshaderc, but i think that will be more complicated.
+            // @todo: use forks instead of system.
+            if (file_a_is_newer_than_b(path.c_str(), "/tmp/1.spv")) {
+                auto cmd = fmt::format("glslc -fshader-stage=vertex -o /tmp/1.spv {}", path);
+                system(cmd.c_str());
+            }
+            auto mod = create_module("/tmp/1.spv");
+
+            VkPipelineShaderStageCreateInfo stage_info{};
+            stage_info.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+            stage_info.stage = VK_SHADER_STAGE_VERTEX_BIT;
+            stage_info.module = mod;
+            stage_info.pName = "main";
+
+            stages.push_back(stage_info);
+        };
+
+        auto cmp_fragment = [&](std::string path) {
+            if (file_a_is_newer_than_b(path.c_str(), "/tmp/2.spv")) {
+                auto cmd = fmt::format("glslc -fshader-stage=fragment -o /tmp/2.spv {}", path);
+                system(cmd.c_str());
+            }
+            auto mod = create_module("/tmp/2.spv");
+
+            VkPipelineShaderStageCreateInfo stage_info{};
+            stage_info.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+            stage_info.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+            stage_info.module = mod;
+            stage_info.pName = "main";
+
+            stages.push_back(stage_info);
+        };
+
+        cmp_vertex(params.vertex_hlsl_path);
+        cmp_fragment(params.fragment_hlsl_path);
+
+        loaded_shaders[params] = make_ref_owned<shader_program_t>(stages, true);
+        return loaded_shaders[params];
     }
 
-    //if (params.fragment_hlsl_path != nullptr) {
-    {
-        auto cmd = fmt::format("glslc -fshader-stage=fragment -o /tmp/2.spv {}", params.fragment_hlsl_path);
-        system(cmd.c_str());
-        frag = create_module("/tmp/2.spv");
+    void init(gpu_t &gpu) {
+        this->gpu = &gpu;
+        watcher.init();
     }
 
-    // @todo: consider sharing the same module sometimes?
-    VkPipelineShaderStageCreateInfo vertShaderStageInfo{};
-    vertShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    vertShaderStageInfo.stage = VK_SHADER_STAGE_VERTEX_BIT;
-    vertShaderStageInfo.module = vert;
-    vertShaderStageInfo.pName = "main";
+    void process_hotreload() {
+        watcher.process_watches();
+    }
 
-    VkPipelineShaderStageCreateInfo fragShaderStageInfo{};
-    fragShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    fragShaderStageInfo.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
-    fragShaderStageInfo.module = frag;
-    fragShaderStageInfo.pName = "main";
+    std::unordered_map<shader_program_load_params_t, ref_t<shader_program_t>> loaded_shaders;
 
-    program.frag = fragShaderStageInfo;
-    program.vert = vertShaderStageInfo;
+    fswatcher_t watcher;
+    gpu_t *gpu;
+};
 
-    return program;
-}
+loader_t g_loader;
 
 int main(void) {
     oc_init();
-
     glfwInit();
 
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-    glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
+    glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
     GLFWwindow* window = glfwCreateWindow(800, 600, "vulkan", nullptr, nullptr);
 
     // initialize vulkan
@@ -675,9 +840,10 @@ int main(void) {
     gpu.init(window);
     std::cout << "vulkan initialized" << std::endl;
 
+    g_loader.init(gpu);
+
     // create a test pipeline and pass
     VkPipeline pipeline;
-    VkRenderPass renderPass;
     {
         // viewport and scissor states are provided each instantiation of the pipeline.
         // this is handy for resizes.
@@ -764,112 +930,203 @@ int main(void) {
             return 1;
         }
 
-        // create a test render pass
-        {
-            VkAttachmentDescription colorAttachment{};
-            colorAttachment.format = gpu.swapchain.image_format;
-            colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
-            colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-            colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-            colorAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-            colorAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-            colorAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-            colorAttachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
 
-            VkAttachmentReference colorAttachmentRef{};
-            colorAttachmentRef.attachment = 0;
-            colorAttachmentRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-
-            VkSubpassDescription subpass{};
-            subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
-            subpass.colorAttachmentCount = 1;
-            subpass.pColorAttachments = &colorAttachmentRef;
-
-            VkRenderPassCreateInfo renderPassInfo{};
-            renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
-            renderPassInfo.attachmentCount = 1;
-            renderPassInfo.pAttachments = &colorAttachment;
-            renderPassInfo.subpassCount = 1;
-            renderPassInfo.pSubpasses = &subpass;
-
-            if (vkCreateRenderPass(gpu.device, &renderPassInfo, nullptr, &renderPass) != VK_SUCCESS) {
-                throw std::runtime_error("failed to create render pass!");
-            }
-        }
-
-
-        auto shader = load_shader_program(gpu, {
+        auto shader = g_loader.load_shader_program({
            .vertex_hlsl_path = "eassets/shaders/test.vert",
            .fragment_hlsl_path = "eassets/shaders/test.frag",
         });
 
-        // create the pipeline
-        VkGraphicsPipelineCreateInfo pipelineInfo{};
-        pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
-        pipelineInfo.stageCount = 2;
+        VkGraphicsPipelineCreateInfo create_info{};
+        create_info.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
 
-        VkPipelineShaderStageCreateInfo stages[] = {
-            shader.vert, shader.frag
-        };
+        create_info.stageCount = shader->stages.size();
+        create_info.pStages = shader->stages.data();
 
-        pipelineInfo.pStages = stages;
+        create_info.pVertexInputState = &vertexInputInfo;
+        create_info.pInputAssemblyState = &inputAssembly;
+        create_info.pViewportState = &viewportState;
+        create_info.pRasterizationState = &rasterizer;
+        create_info.pMultisampleState = &multisampling;
+        create_info.pDepthStencilState = nullptr; // Optional
+        create_info.pColorBlendState = &colorBlending;
+        create_info.pDynamicState = &dynamicState;
 
-        pipelineInfo.pVertexInputState = &vertexInputInfo;
-        pipelineInfo.pInputAssemblyState = &inputAssembly;
-        pipelineInfo.pViewportState = &viewportState;
-        pipelineInfo.pRasterizationState = &rasterizer;
-        pipelineInfo.pMultisampleState = &multisampling;
-        pipelineInfo.pDepthStencilState = nullptr; // Optional
-        pipelineInfo.pColorBlendState = &colorBlending;
-        pipelineInfo.pDynamicState = &dynamicState;
+        create_info.layout = pipelineLayout;
+        create_info.renderPass = gpu.display_render_pass;
+        create_info.subpass = 0;
 
-        pipelineInfo.layout = pipelineLayout;
-        pipelineInfo.renderPass = renderPass;
-        pipelineInfo.subpass = 0;
+        create_info.basePipelineHandle = VK_NULL_HANDLE; // Optional
+        create_info.basePipelineIndex = -1; // Optional
 
-        pipelineInfo.basePipelineHandle = VK_NULL_HANDLE; // Optional
-        pipelineInfo.basePipelineIndex = -1; // Optional
-
-        if (vkCreateGraphicsPipelines(gpu.device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &pipeline) != VK_SUCCESS) {
-            throw std::runtime_error("failed to create graphics pipeline!");
+        if (vkCreateGraphicsPipelines(gpu.device, VK_NULL_HANDLE, 1, &create_info, nullptr, &pipeline) != VK_SUCCESS) {
+            gpu_log.error("failed to create graphics pipeline!");
+            return 1;
         }
     }
 
-    // setup the swapchain framebuffers
+    // setup the command-buffers.
+    // i do not think these must be owned by the gpu.
+
+    VkCommandPool cmd_pool;
     {
-        for (usize i = 0; i < gpu.swapchain.image_views.size(); ++i) {
-            VkImageView attachments[] = {
-                gpu.swapchain.image_views[i]
-            };
+        VkCommandPoolCreateInfo poolInfo{};
+        poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+        poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+        // can also be transient.
 
-            VkFramebufferCreateInfo framebufferInfo{};
-            framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
-            framebufferInfo.renderPass = renderPass;
-            framebufferInfo.attachmentCount = 1;
-            framebufferInfo.pAttachments = attachments;
-            framebufferInfo.width = gpu.swapchain.extent.width;
-            framebufferInfo.height = gpu.swapchain.extent.height;
-            framebufferInfo.layers = 1;
 
-            if (vkCreateFramebuffer(gpu.device, &framebufferInfo, nullptr, &gpu.swapchain.framebuffers[i]) != VK_SUCCESS) {
-                throw std::runtime_error("failed to create framebuffer!");
-            }
+        poolInfo.queueFamilyIndex = gpu.queue_families.graphics;
+        if (vkCreateCommandPool(gpu.device, &poolInfo, nullptr, &cmd_pool) != VK_SUCCESS) {
+            throw std::runtime_error("failed to create command pool!");
         }
     }
 
-    VkViewport viewport{};
-    viewport.x = 0.0f;
-    viewport.y = 0.0f;
-    viewport.width = (float) gpu.swapchain.extent.width;
-    viewport.height = (float) gpu.swapchain.extent.height;
-    viewport.minDepth = 0.0f;
-    viewport.maxDepth = 1.0f;
+    VkCommandBuffer cmds;
+    {
+        VkCommandBufferAllocateInfo allocInfo{};
+        allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+        allocInfo.commandPool = cmd_pool;
+        allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        allocInfo.commandBufferCount = 1;
 
-    VkRect2D scissor{};
-    scissor.offset = {0, 0};
-    scissor.extent = gpu.swapchain.extent;
+        if (vkAllocateCommandBuffers(gpu.device, &allocInfo, &cmds) != VK_SUCCESS) {
+            throw std::runtime_error("failed to allocate command buffers!");
+        }
+    }
 
+    VkSemaphore imageAvailableSemaphore;
+    VkSemaphore renderFinishedSemaphore;
+    VkFence inFlightFence;
+
+    // create sync objects
+    {
+        VkSemaphoreCreateInfo semaphoreInfo{};
+        semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+
+        VkFenceCreateInfo fenceInfo{};
+        fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+        fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+
+        if (vkCreateSemaphore(gpu.device, &semaphoreInfo, nullptr, &imageAvailableSemaphore) != VK_SUCCESS) {
+            throw std::runtime_error("failed to create semaphore");
+        }
+        if (vkCreateSemaphore(gpu.device, &semaphoreInfo, nullptr, &renderFinishedSemaphore) != VK_SUCCESS) {
+            throw std::runtime_error("failed to create semaphore");
+        }
+        if (vkCreateFence(gpu.device, &fenceInfo, nullptr, &inFlightFence) != VK_SUCCESS) {
+            throw std::runtime_error("failed to create fence");
+        }
+    }
+
+    g_log.info("running...");
+    gpu_log.info("swapchain size: {}", gpu.swapchain.image_views.size());
     while(!glfwWindowShouldClose(window)) {
+        g_loader.process_hotreload();
+
+        // draw frame
+        {
+            u32 image_idx;
+            auto swapchain_result = vkAcquireNextImageKHR(gpu.device, gpu.swapchain.handle, UINT64_MAX, imageAvailableSemaphore, VK_NULL_HANDLE, &image_idx);
+            {
+                if (swapchain_result == VK_ERROR_OUT_OF_DATE_KHR || swapchain_result == VK_SUBOPTIMAL_KHR) {
+                    vkDeviceWaitIdle(gpu.device);
+                    gpu.recreate_swapchain();
+                    continue;
+                } else if (swapchain_result != VK_SUCCESS) {
+                    throw std::runtime_error("failed to acquire swap chain image!");
+                }
+            }
+
+            VkViewport full_viewport{};
+            full_viewport.x = 0.0f;
+            full_viewport.y = 0.0f;
+            full_viewport.width = (float) gpu.swapchain.extent.width;
+            full_viewport.height = (float) gpu.swapchain.extent.height;
+            full_viewport.minDepth = 0.0f;
+            full_viewport.maxDepth = 1.0f;
+
+            VkRect2D full_scissor{};
+            full_scissor.offset = {0, 0};
+            full_scissor.extent = gpu.swapchain.extent;
+
+            vkWaitForFences(gpu.device, 1, &inFlightFence, VK_TRUE, UINT64_MAX);
+            vkResetFences(gpu.device, 1, &inFlightFence);
+
+            vkResetCommandBuffer(cmds, 0);
+            // use the command buffer
+            {
+                VkCommandBufferBeginInfo beginInfo{};
+                beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+                beginInfo.flags = 0; // Optional
+                beginInfo.pInheritanceInfo = nullptr; // Optional
+
+                if (vkBeginCommandBuffer(cmds, &beginInfo) != VK_SUCCESS) {
+                    throw std::runtime_error("failed to begin recording command buffer!");
+                }
+            }
+
+            // begin render pass
+            {
+                VkRenderPassBeginInfo renderPassInfo{};
+                renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+                renderPassInfo.renderPass = gpu.display_render_pass;
+                renderPassInfo.framebuffer = gpu.swapchain.framebuffers[image_idx];
+                renderPassInfo.renderArea.offset = {0, 0};
+                renderPassInfo.renderArea.extent = gpu.swapchain.extent;
+
+                VkClearValue clearColor = {{{0.0f, 0.0f, 0.4f, 1.0f}}};
+                renderPassInfo.clearValueCount = 1;
+                renderPassInfo.pClearValues = &clearColor;
+
+                vkCmdBeginRenderPass(cmds, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+            }
+
+            vkCmdBindPipeline(cmds, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+
+            vkCmdSetViewport(cmds, 0, 1, &full_viewport);
+            vkCmdSetScissor(cmds, 0, 1, &full_scissor);
+            vkCmdDraw(cmds, 3, 1, 0, 0);
+
+            vkCmdEndRenderPass(cmds);
+
+            if (vkEndCommandBuffer(cmds) != VK_SUCCESS) {
+                throw std::runtime_error("failed to record command buffer!");
+            }
+
+            // submit command buffer
+            VkSubmitInfo submitInfo{};
+            submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+
+            VkPipelineStageFlags waitStages[] = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
+            submitInfo.waitSemaphoreCount = 1;
+            submitInfo.pWaitSemaphores = &imageAvailableSemaphore;
+            submitInfo.pWaitDstStageMask = waitStages;
+
+            submitInfo.commandBufferCount = 1;
+            submitInfo.pCommandBuffers = &cmds;
+
+            submitInfo.signalSemaphoreCount = 1;
+            submitInfo.pSignalSemaphores = &renderFinishedSemaphore;
+
+            if (vkQueueSubmit(gpu.graphics_queue, 1, &submitInfo, inFlightFence) != VK_SUCCESS) {
+                throw std::runtime_error("failed to submit draw command buffer!");
+            }
+
+            // present
+            VkPresentInfoKHR presentInfo{};
+            presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+
+            presentInfo.waitSemaphoreCount = 1;
+            presentInfo.pWaitSemaphores = &renderFinishedSemaphore;
+
+            presentInfo.swapchainCount = 1;
+            presentInfo.pSwapchains = &gpu.swapchain.handle;
+            presentInfo.pImageIndices = &image_idx;
+            presentInfo.pResults = nullptr;
+
+            vkQueuePresentKHR(gpu.present_queue, &presentInfo);
+        }
+
         glfwPollEvents();
     }
 

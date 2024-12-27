@@ -3,6 +3,7 @@ ODIR_REL = ${ODIR}/release
 
 CXX = clang++
 
+USE_MOLD_LINKER = false
 
 HFILES_SRC = $(shell find src/ -type f -name *.h)
 CCFILES_SRC = $(shell find src/ -type f -name *.cc)
@@ -16,11 +17,15 @@ CC_OFILES_VENDOR_RELEASE = $(patsubst vendor/%.cc,${ODIR_REL}/vendor/%.cc.o,$(CC
 OFILES_RELEASE = $(CC_OFILES_SRC_RELEASE) $(CC_OFILES_VENDOR_RELEASE)
 
 CCFLAGS_COMMON = -std=c++2a -Wall -Wextra -Werror -Ivendor/include -Isrc -DDEBUG -g
-LDFLAGS_COMMON = --ld-path=/usr/bin/mold -ldl -lglfw -lvulkan
+LDFLAGS_COMMON = -ldl -lglfw -lvulkan
 
 CCFLAGS_RELEASE = $(CCFLAGS_COMMON) -O3
 
 LDFLAGS_RELEASE = $(LDFLAGS_COMMON)
+
+ifeq ($(USE_MOLD_LINKER),true)
+LDFLAGS_COMMON += --ld-path=/usr/bin/mold
+endif
 
 .PHONY: clean
 
