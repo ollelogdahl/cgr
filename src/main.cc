@@ -22,6 +22,10 @@ static logger_t gpu_log = logger_t("gpu");
 #include <sys/inotify.h>
 #include <fcntl.h>
 
+#include <imgui/imgui.h>
+#include <imgui/imgui_impl_glfw.h>
+#include <imgui/imgui_impl_vulkan.h>
+
 struct fswatcher_t {
     int inotify_fd;
 
@@ -827,20 +831,74 @@ struct loader_t {
 
 loader_t g_loader;
 
+struct imgui_renderer_state_t {
+    VkCommandBuffer cmds;
+};
+
+void imgui_init(gpu_t &gpu) {
+    ImGui::CreateContext();
+    ImGuiIO& io = ImGui::GetIO();
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;     // Enable Keyboard Controls
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;      // Enable Gamepad Controls
+    io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
+
+    // Setup Dear ImGui style
+    ImGui::StyleColorsDark();
+
+    VkDescriptorPool descriptor_pool;
+    {
+        VkDescriptorPoolSize imgui_pool_sizes[] = {
+            { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1 }
+        };
+        VkDescriptorPoolCreateInfo pool_info = {};
+        pool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+        pool_info.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
+        pool_info.maxSets = 1;
+        pool_info.poolSizeCount = array_size(imgui_pool_sizes);
+        pool_info.pPoolSizes = imgui_pool_sizes;
+        if (vkCreateDescriptorPool(gpu.device, &pool_info, nullptr, &descriptor_pool) != VK_SUCCESS) {
+            throw std::runtime_error("failed to create descriptor pool");
+        }
+    }
+
+    // create unique gpu stuffs for imgui...
+    ImGui_ImplGlfw_InitForVulkan(gpu.window, true);
+    ImGui_ImplVulkan_InitInfo init_info = {};
+    init_info.Instance = gpu.instance;
+    init_info.PhysicalDevice = gpu.pdev;
+    init_info.Device = gpu.device;
+    init_info.QueueFamily = gpu.queue_families.graphics,
+    init_info.Queue = gpu.graphics_queue,
+    init_info.PipelineCache = VK_NULL_HANDLE;
+    init_info.DescriptorPool = descriptor_pool;
+    init_info.RenderPass = gpu.display_render_pass;
+    init_info.Subpass = 0;
+    init_info.MinImageCount = 2;
+    init_info.ImageCount = gpu.swapchain.images.size();
+    init_info.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
+    init_info.Allocator = VK_NULL_HANDLE;
+    init_info.CheckVkResultFn = nullptr;
+    ImGui_ImplVulkan_Init(&init_info);
+}
+
 int main(void) {
     oc_init();
     glfwInit();
 
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
     glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
+    glfwWindowHint(GLFW_SRGB_CAPABLE, GLFW_TRUE);
     GLFWwindow* window = glfwCreateWindow(800, 600, "vulkan", nullptr, nullptr);
 
     // initialize vulkan
     gpu_t gpu;
     gpu.init(window);
-    std::cout << "vulkan initialized" << std::endl;
+    g_log.info("gpu initialized");
 
     g_loader.init(gpu);
+
+    imgui_init(gpu);
+    g_log.info("imgui initialized");
 
     // create a test pipeline and pass
     VkPipeline pipeline;
@@ -1023,6 +1081,13 @@ int main(void) {
     while(!glfwWindowShouldClose(window)) {
         g_loader.process_hotreload();
 
+        ImGui_ImplVulkan_NewFrame();
+        ImGui_ImplGlfw_NewFrame();
+        ImGui::NewFrame();
+
+        static bool show_demo_window = true;
+        ImGui::ShowDemoWindow(&show_demo_window);
+
         // draw frame
         {
             u32 image_idx;
@@ -1031,6 +1096,7 @@ int main(void) {
                 if (swapchain_result == VK_ERROR_OUT_OF_DATE_KHR || swapchain_result == VK_SUBOPTIMAL_KHR) {
                     vkDeviceWaitIdle(gpu.device);
                     gpu.recreate_swapchain();
+                    ImGui::EndFrame();
                     continue;
                 } else if (swapchain_result != VK_SUCCESS) {
                     throw std::runtime_error("failed to acquire swap chain image!");
@@ -1074,7 +1140,7 @@ int main(void) {
                 renderPassInfo.renderArea.offset = {0, 0};
                 renderPassInfo.renderArea.extent = gpu.swapchain.extent;
 
-                VkClearValue clearColor = {{{0.0f, 0.0f, 0.4f, 1.0f}}};
+                VkClearValue clearColor = {{{0.0f, 0.0f, 0.0f, 1.0f}}};
                 renderPassInfo.clearValueCount = 1;
                 renderPassInfo.pClearValues = &clearColor;
 
@@ -1086,6 +1152,10 @@ int main(void) {
             vkCmdSetViewport(cmds, 0, 1, &full_viewport);
             vkCmdSetScissor(cmds, 0, 1, &full_scissor);
             vkCmdDraw(cmds, 3, 1, 0, 0);
+
+            ImGui::Render();
+            ImDrawData* draw_data = ImGui::GetDrawData();
+            ImGui_ImplVulkan_RenderDrawData(draw_data, cmds);
 
             vkCmdEndRenderPass(cmds);
 
