@@ -52,7 +52,6 @@ struct fswatcher_t {
         if (ret == -1) {
             panic("inotify_add_watch error: {}", strerror(errno));
         }
-        g_log.info("added fs watch on {}", path);
         watches[ret] = {
             on_modified,
             userdata,
@@ -237,10 +236,12 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL vk_debug_callback(
 
         panic("aborting on validation warning!");
     }
-
-    if (messageSeverity == VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT) {
+    else if (messageSeverity == VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT) {
         gpu_log.error("validation error: {}", pCallbackData->pMessage);
         panic("aborting on validation error!");
+    }
+    else {
+        gpu_log.info("validation: {}", pCallbackData->pMessage);
     }
 
     return VK_FALSE;
@@ -280,7 +281,6 @@ struct gpu_t {
         this->window = window;
 
         bool requests_validation_layers = true;
-        bool validation_layers_available = true;
 
         const char *validation_layers[] = {
             "VK_LAYER_KHRONOS_validation"
@@ -290,6 +290,7 @@ struct gpu_t {
             VK_KHR_SWAPCHAIN_EXTENSION_NAME
         };
 
+        bool validation_layers_available = true;
         if (requests_validation_layers && !check_validation_layer_support(validation_layers)) {
             gpu_log.error("validation layers requested, but not available");
             dump_available_validation_layers();
@@ -390,7 +391,7 @@ struct gpu_t {
                 return;
             }
 
-            const char *device_name;
+            const char *device_name = "\0";
             {
                 VkPhysicalDeviceProperties device_properties;
                 vkGetPhysicalDeviceProperties(pdev, &device_properties);
@@ -509,6 +510,8 @@ struct gpu_t {
             vkGetDeviceQueue(device, qfamily_present, 0, &present_queue);
         }
 
+        recreate_swapchain(false);
+
         {
             // create the render pass
             // @todo: actually, the image format may change, so we should recreate the render pass
@@ -543,8 +546,6 @@ struct gpu_t {
                 throw std::runtime_error("failed to create render pass!");
             }
         }
-
-        recreate_swapchain(false);
     }
 
     void recreate_swapchain(bool need_to_clear = true) {
@@ -676,6 +677,9 @@ struct gpu_t {
         }
 
         // setup framebuffers
+        // @todo: i don't really love this. i think instead we should
+        // set usage as TRANSFER_DST and use a single framebuffer for
+        // each frame in flight (1 currently).
         {
             swapchain.framebuffers.reserve(swapchain.image_views.size());
             for (usize i = 0; i < swapchain.image_views.size(); ++i) {
@@ -719,11 +723,6 @@ bool file_a_is_newer_than_b(const char *a, const char *b) {
     return a_stat.st_mtime > b_stat.st_mtime;
 }
 
-struct shader_program_t {
-    std::vector<VkPipelineShaderStageCreateInfo> stages;
-    bool modified = false;
-};
-
 struct shader_program_load_params_t {
     const char *vertex_hlsl_path;
     const char *fragment_hlsl_path;
@@ -732,6 +731,38 @@ struct shader_program_load_params_t {
         return strcmp(vertex_hlsl_path, other.vertex_hlsl_path) == 0 &&
                strcmp(fragment_hlsl_path, other.fragment_hlsl_path) == 0;
     }
+};
+struct shader_program_t {
+    std::vector<VkPipelineShaderStageCreateInfo> stages;
+    shader_program_load_params_t params;
+    bool modified = false;
+};
+
+// @todo: setup a pipeline cache which will allow us to
+// 1. create only 1 pipeline for each configuration
+// 2. Hot reload the pipeline when the shader changes
+struct pipeline_config_t {
+    ref_t<shader_program_t> shader;
+
+    // @todo: make this cleaner and make optional
+    VkPipelineVertexInputStateCreateInfo vertex_input_info;
+    VkPipelineInputAssemblyStateCreateInfo input_assembly;
+    VkPipelineViewportStateCreateInfo viewport_state;
+    VkPipelineRasterizationStateCreateInfo rasterizer;
+    VkPipelineMultisampleStateCreateInfo multisampling;
+    VkPipelineColorBlendStateCreateInfo color_blending;
+    VkPipelineDynamicStateCreateInfo dynamic_state;
+    VkPipelineLayout pipeline_layout;
+    VkRenderPass render_pass;
+
+    bool operator ==(const pipeline_config_t &other) const {
+        return shader == other.shader;
+    }
+};
+struct gpu_pipeline_t {
+    VkPipeline pipeline;
+    pipeline_config_t config;
+    bool modified = false;
 };
 
 template <>
@@ -743,6 +774,72 @@ struct std::hash<shader_program_load_params_t> {
     }
 };
 
+template <>
+struct std::hash<pipeline_config_t> {
+    std::size_t operator()(const pipeline_config_t &config) const {
+        std::size_t h1 = std::hash<shader_program_load_params_t>{}(config.shader->params);
+        return h1;
+    }
+};
+
+#define SHADER_STAGE_VERTEX 0
+#define SHADER_STAGE_FRAGMENT 1
+
+VkPipelineShaderStageCreateInfo compile_shader(gpu_t &gpu, const char *path, int type) {
+    // in dev mode, we compile the shader into the tmp dir. The filename in tmp is
+    // based on the hash of the original file name.
+
+    u64 hash = std::hash<const char *>{}(path);
+
+    const char *tmp_dir = "/tmp";
+    auto tmp_path = fmt::format("{}/{}.spv", tmp_dir, hash);
+
+    VkShaderStageFlagBits vk_stage;
+    const char *glslc_stage;
+    switch (type) {
+    case SHADER_STAGE_VERTEX:
+        glslc_stage = "vertex";
+        vk_stage = VK_SHADER_STAGE_VERTEX_BIT;
+        break;
+    case SHADER_STAGE_FRAGMENT:
+        glslc_stage = "fragment";
+        vk_stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+        break;
+    }
+
+    if (file_a_is_newer_than_b(path, tmp_path.c_str())) {
+        gpu_log.info("compiling shader {}", path);
+        auto cmd = fmt::format("glslc -fshader-stage={} -o {} {}", glslc_stage, tmp_path, path);
+
+        // @todo: use exec instead of system.
+        // we want to be able to do these things in parallel.
+        system(cmd.c_str());
+    }
+
+    auto code = file_read(tmp_path.c_str()).unwrap();
+
+    VkShaderModuleCreateInfo createInfo{};
+    createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+    createInfo.codeSize = code.contents.len;
+    createInfo.pCode = reinterpret_cast<const uint32_t*>(code.contents.data);
+
+    VkShaderModule shader_module;
+    if (vkCreateShaderModule(gpu.device, &createInfo, nullptr, &shader_module) != VK_SUCCESS) {
+        gpu_log.error("failed to create shader module");
+    }
+
+    file_close(code);
+
+    VkPipelineShaderStageCreateInfo stage_info{};
+    stage_info.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stage_info.stage = vk_stage;
+    stage_info.module = shader_module;
+    stage_info.pName = "main";
+
+    return stage_info;
+}
+
+// @todo: pipelines should be somewhere else (pipeline cache), but needs to be referenced from here.
 struct loader_t {
     ref_t<shader_program_t> load_shader_program(const shader_program_load_params_t &params) {
         auto exists_it = loaded_shaders.find(params);
@@ -750,68 +847,43 @@ struct loader_t {
             return exists_it->second;
         }
 
-        shader_program_t program;
-
-        auto create_module = [&](const char *path) {
-            auto code = file_read(path).unwrap();
-
-            VkShaderModuleCreateInfo createInfo{};
-            createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
-            createInfo.codeSize = code.contents.len;
-            createInfo.pCode = reinterpret_cast<const uint32_t*>(code.contents.data);
-
-            VkShaderModule shaderModule;
-            if (vkCreateShaderModule(gpu->device, &createInfo, nullptr, &shaderModule) != VK_SUCCESS) {
-                gpu_log.error("failed to create shader module");
-            }
-
-            file_close(code);
-            return shaderModule;
-        };
 
         std::vector<VkPipelineShaderStageCreateInfo> stages;
+        stages.push_back(compile_shader(*gpu, params.vertex_hlsl_path, SHADER_STAGE_VERTEX));
+        stages.push_back(compile_shader(*gpu, params.fragment_hlsl_path, SHADER_STAGE_FRAGMENT));
 
-        //if (params.vertex_hlsl_path != nullptr) {
-        auto cmp_vertex = [&](std::string path) {
-            // invoke glslc to compile the shader
-            // we could also use libshaderc, but i think that will be more complicated.
-            // @todo: use forks instead of system.
-            if (file_a_is_newer_than_b(path.c_str(), "/tmp/1.spv")) {
-                auto cmd = fmt::format("glslc -fshader-stage=vertex -o /tmp/1.spv {}", path);
-                system(cmd.c_str());
-            }
-            auto mod = create_module("/tmp/1.spv");
+        loaded_shaders[params] = make_ref<shader_program_t>();
+        shader_program_t &program = *loaded_shaders[params];
+        program.stages = stages;
+        program.params = params;
+        program.modified = false;
 
-            VkPipelineShaderStageCreateInfo stage_info{};
-            stage_info.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-            stage_info.stage = VK_SHADER_STAGE_VERTEX_BIT;
-            stage_info.module = mod;
-            stage_info.pName = "main";
+        watcher.add_watch(params.vertex_hlsl_path, [](std::string, void *userdata) {
+            auto *shader = static_cast<shader_program_t *>(userdata);
+            shader->modified = true;
+        }, &program);
+        watcher.add_watch(params.fragment_hlsl_path, [](std::string, void *userdata) {
+            auto *shader = static_cast<shader_program_t *>(userdata);
+            shader->modified = true;
+        }, &program);
 
-            stages.push_back(stage_info);
-        };
-
-        auto cmp_fragment = [&](std::string path) {
-            if (file_a_is_newer_than_b(path.c_str(), "/tmp/2.spv")) {
-                auto cmd = fmt::format("glslc -fshader-stage=fragment -o /tmp/2.spv {}", path);
-                system(cmd.c_str());
-            }
-            auto mod = create_module("/tmp/2.spv");
-
-            VkPipelineShaderStageCreateInfo stage_info{};
-            stage_info.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-            stage_info.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
-            stage_info.module = mod;
-            stage_info.pName = "main";
-
-            stages.push_back(stage_info);
-        };
-
-        cmp_vertex(params.vertex_hlsl_path);
-        cmp_fragment(params.fragment_hlsl_path);
-
-        loaded_shaders[params] = make_ref_owned<shader_program_t>(stages, true);
         return loaded_shaders[params];
+    }
+
+    ref_t<gpu_pipeline_t> make_pipeline(const pipeline_config_t &config) {
+        auto exists_it = loaded_pipelines.find(config);
+        if (exists_it != loaded_pipelines.end()) {
+            return exists_it->second;
+        }
+
+        auto pipeline = make_ref<gpu_pipeline_t>();
+        pipeline->pipeline = VK_NULL_HANDLE;
+        pipeline->config = config;
+        pipeline->modified = true;
+
+        loaded_pipelines[config] = pipeline;
+
+        return pipeline;
     }
 
     void init(gpu_t &gpu) {
@@ -821,9 +893,66 @@ struct loader_t {
 
     void process_hotreload() {
         watcher.process_watches();
+
+        for (auto it : loaded_pipelines) {
+            auto &pipeline = it.second;
+            if (pipeline->config.shader->modified) {
+                pipeline->modified = true;
+            }
+        }
+
+        for (auto it : loaded_shaders) {
+            auto &program = it.second;
+            if (program->modified) {
+                program->stages.clear();
+
+                program->stages.push_back(compile_shader(*gpu, program->params.vertex_hlsl_path, SHADER_STAGE_VERTEX));
+                program->stages.push_back(compile_shader(*gpu, program->params.fragment_hlsl_path, SHADER_STAGE_FRAGMENT));
+
+                program->modified = false;
+            }
+        }
+
+        for (auto it : loaded_pipelines) {
+            auto &pipeline = it.second;
+
+            if (pipeline->modified) {
+                pipeline->modified = false;
+                g_log.info("recreating pipeline");
+                if (pipeline->pipeline != VK_NULL_HANDLE) {
+                    // @todo: when is it safe to destroy a pipeline?
+                    // vkDestroyPipeline(gpu->device, pipeline->pipeline, nullptr);
+                    pipeline->pipeline = VK_NULL_HANDLE;
+                }
+
+                VkGraphicsPipelineCreateInfo pipeline_info{};
+                pipeline_info.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+
+                pipeline_info.stageCount = pipeline->config.shader->stages.size();
+                pipeline_info.pStages = pipeline->config.shader->stages.data();
+
+                pipeline_info.pVertexInputState = &pipeline->config.vertex_input_info;
+                pipeline_info.pInputAssemblyState = &pipeline->config.input_assembly;
+                pipeline_info.pViewportState = &pipeline->config.viewport_state;
+                pipeline_info.pRasterizationState = &pipeline->config.rasterizer;
+                pipeline_info.pMultisampleState = &pipeline->config.multisampling;
+                pipeline_info.pDepthStencilState = nullptr;
+                pipeline_info.pColorBlendState = &pipeline->config.color_blending;
+                pipeline_info.pDynamicState = &pipeline->config.dynamic_state;
+                pipeline_info.layout = pipeline->config.pipeline_layout;
+                pipeline_info.renderPass = pipeline->config.render_pass;
+                pipeline_info.subpass = 0;
+                pipeline_info.basePipelineHandle = VK_NULL_HANDLE;
+
+                if (vkCreateGraphicsPipelines(gpu->device, VK_NULL_HANDLE, 1, &pipeline_info, nullptr, &pipeline->pipeline) != VK_SUCCESS) {
+                    gpu_log.error("failed to create graphics pipeline");
+                }
+            }
+        }
     }
 
     std::unordered_map<shader_program_load_params_t, ref_t<shader_program_t>> loaded_shaders;
+    std::unordered_map<pipeline_config_t, ref_t<gpu_pipeline_t>> loaded_pipelines;
 
     fswatcher_t watcher;
     gpu_t *gpu;
@@ -901,7 +1030,7 @@ int main(void) {
     g_log.info("imgui initialized");
 
     // create a test pipeline and pass
-    VkPipeline pipeline;
+    ref_t<gpu_pipeline_t> pipeline;
     {
         // viewport and scissor states are provided each instantiation of the pipeline.
         // this is handy for resizes.
@@ -988,38 +1117,23 @@ int main(void) {
             return 1;
         }
 
-
         auto shader = g_loader.load_shader_program({
            .vertex_hlsl_path = "eassets/shaders/test.vert",
            .fragment_hlsl_path = "eassets/shaders/test.frag",
         });
 
-        VkGraphicsPipelineCreateInfo create_info{};
-        create_info.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
-
-        create_info.stageCount = shader->stages.size();
-        create_info.pStages = shader->stages.data();
-
-        create_info.pVertexInputState = &vertexInputInfo;
-        create_info.pInputAssemblyState = &inputAssembly;
-        create_info.pViewportState = &viewportState;
-        create_info.pRasterizationState = &rasterizer;
-        create_info.pMultisampleState = &multisampling;
-        create_info.pDepthStencilState = nullptr; // Optional
-        create_info.pColorBlendState = &colorBlending;
-        create_info.pDynamicState = &dynamicState;
-
-        create_info.layout = pipelineLayout;
-        create_info.renderPass = gpu.display_render_pass;
-        create_info.subpass = 0;
-
-        create_info.basePipelineHandle = VK_NULL_HANDLE; // Optional
-        create_info.basePipelineIndex = -1; // Optional
-
-        if (vkCreateGraphicsPipelines(gpu.device, VK_NULL_HANDLE, 1, &create_info, nullptr, &pipeline) != VK_SUCCESS) {
-            gpu_log.error("failed to create graphics pipeline!");
-            return 1;
-        }
+        pipeline = g_loader.make_pipeline({
+            .shader = shader,
+            .vertex_input_info = vertexInputInfo,
+            .input_assembly = inputAssembly,
+            .viewport_state = viewportState,
+            .rasterizer = rasterizer,
+            .multisampling = multisampling,
+            .color_blending = colorBlending,
+            .dynamic_state = dynamicState,
+            .pipeline_layout = pipelineLayout,
+            .render_pass = gpu.display_render_pass,
+        });
     }
 
     // setup the command-buffers.
@@ -1031,7 +1145,6 @@ int main(void) {
         poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
         poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
         // can also be transient.
-
 
         poolInfo.queueFamilyIndex = gpu.queue_families.graphics;
         if (vkCreateCommandPool(gpu.device, &poolInfo, nullptr, &cmd_pool) != VK_SUCCESS) {
@@ -1088,7 +1201,14 @@ int main(void) {
         static bool show_demo_window = true;
         ImGui::ShowDemoWindow(&show_demo_window);
 
+        ImGui::Begin("test");
+
+        ImGui::Text("Pipeline: %p", pipeline->pipeline);
+
+        ImGui::End();
+
         // draw frame
+        // @todo: support multiple frames in flight.
         {
             u32 image_idx;
             auto swapchain_result = vkAcquireNextImageKHR(gpu.device, gpu.swapchain.handle, UINT64_MAX, imageAvailableSemaphore, VK_NULL_HANDLE, &image_idx);
@@ -1103,6 +1223,9 @@ int main(void) {
                 }
             }
 
+            vkWaitForFences(gpu.device, 1, &inFlightFence, VK_TRUE, UINT64_MAX);
+            vkResetFences(gpu.device, 1, &inFlightFence);
+
             VkViewport full_viewport{};
             full_viewport.x = 0.0f;
             full_viewport.y = 0.0f;
@@ -1114,9 +1237,6 @@ int main(void) {
             VkRect2D full_scissor{};
             full_scissor.offset = {0, 0};
             full_scissor.extent = gpu.swapchain.extent;
-
-            vkWaitForFences(gpu.device, 1, &inFlightFence, VK_TRUE, UINT64_MAX);
-            vkResetFences(gpu.device, 1, &inFlightFence);
 
             vkResetCommandBuffer(cmds, 0);
             // use the command buffer
@@ -1147,7 +1267,7 @@ int main(void) {
                 vkCmdBeginRenderPass(cmds, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
             }
 
-            vkCmdBindPipeline(cmds, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+            vkCmdBindPipeline(cmds, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline->pipeline);
 
             vkCmdSetViewport(cmds, 0, 1, &full_viewport);
             vkCmdSetScissor(cmds, 0, 1, &full_scissor);

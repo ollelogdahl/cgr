@@ -16,7 +16,7 @@ CC_OFILES_VENDOR_RELEASE = $(patsubst vendor/%.cc,${ODIR_REL}/vendor/%.cc.o,$(CC
 
 OFILES_RELEASE = $(CC_OFILES_SRC_RELEASE) $(CC_OFILES_VENDOR_RELEASE)
 
-CCFLAGS_COMMON = -std=c++2a -Wall -Wextra -Werror -Ivendor/include -Isrc -I. -DDEBUG -g
+CCFLAGS_COMMON = -std=c++2a -Wall -Wextra -Werror -Ivendor/include -Isrc -I. -DDEBUG -g -fsanitize=undefined
 LDFLAGS_COMMON = -ldl -lglfw -lvulkan
 
 CCFLAGS_RELEASE = $(CCFLAGS_COMMON) -O3
@@ -33,7 +33,7 @@ cgr: $(ODIR_REL)/cgr
 	@cp $(ODIR_REL)/cgr cgr
 
 clean:
-	@rm -r $(ODIR)
+	@rm -rf $(ODIR_REL)/chr ${ODIR_REL}/src
 
 $(ODIR_REL)/cgr: $(OFILES_RELEASE)
 	@mkdir -p $(dir $@)
