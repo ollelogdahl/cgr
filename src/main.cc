@@ -1010,6 +1010,31 @@ void imgui_init(gpu_t &gpu) {
     ImGui_ImplVulkan_Init(&init_info);
 }
 
+#include <time.h>
+
+struct cpu_timer_t {
+    void start() {
+        timespec time1;
+        clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &time1);
+
+        start_time = time1.tv_sec * 1e9 + time1.tv_nsec;
+    }
+
+    void stop() {
+        timespec time2;
+        clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &time2);
+
+        last_measure = (time2.tv_sec * 1e9 + time2.tv_nsec - start_time);
+    }
+
+    float measure_ns() {
+        return last_measure;
+    }
+
+    u64 start_time = 0;
+    float last_measure = 0.0;
+};
+
 int main(void) {
     oc_init();
     glfwInit();
@@ -1189,10 +1214,25 @@ int main(void) {
         }
     }
 
+    cpu_timer_t full_loop_timer;
+
+    auto ns_to_string = [](float ns) {
+        if (ns < 1e3) {
+            return fmt::format("{:.1f}ns", ns);
+        } else if (ns < 1e6) {
+            return fmt::format("{:.1f}us", ns / 1e3);
+        } else if (ns < 1e9) {
+            return fmt::format("{:.1f}ms", ns / 1e6);
+        } else {
+            return fmt::format("{:.1f}s", ns / 1e9);
+        }
+    };
+
     g_log.info("running...");
     gpu_log.info("swapchain size: {}", gpu.swapchain.image_views.size());
     while(!glfwWindowShouldClose(window)) {
         g_loader.process_hotreload();
+        full_loop_timer.start();
 
         ImGui_ImplVulkan_NewFrame();
         ImGui_ImplGlfw_NewFrame();
@@ -1202,6 +1242,11 @@ int main(void) {
         ImGui::ShowDemoWindow(&show_demo_window);
 
         ImGui::Begin("test");
+
+        {
+            auto t1 = fmt::format("loop time: {}", ns_to_string(full_loop_timer.measure_ns()));
+            ImGui::Text("%s", t1.c_str());
+        }
 
         ImGui::Text("Pipeline: %p", pipeline->pipeline);
 
@@ -1318,6 +1363,8 @@ int main(void) {
         }
 
         glfwPollEvents();
+
+        full_loop_timer.stop();
     }
 
     glfwDestroyWindow(window);
