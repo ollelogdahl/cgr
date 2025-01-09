@@ -943,7 +943,6 @@ struct loader_t {
             return exists_it->second;
         }
 
-
         std::vector<VkPipelineShaderStageCreateInfo> stages;
         stages.push_back(compile_shader(*gpu, params.vertex_hlsl_path, SHADER_STAGE_VERTEX));
         stages.push_back(compile_shader(*gpu, params.fragment_hlsl_path, SHADER_STAGE_FRAGMENT));
@@ -1447,6 +1446,10 @@ int main(void) {
                 if (swapchain_result == VK_ERROR_OUT_OF_DATE_KHR) {
                     vkDeviceWaitIdle(gpu.device);
                     gpu.recreate_swapchain();
+
+                    // signal the fence to avoid waiting for it.
+                    vkQueueSubmit(gpu.graphics_queue, 0, nullptr, inFlightFence);
+
                     continue;
                 } else VK_CHECK(swapchain_result);
             }
@@ -1539,7 +1542,7 @@ int main(void) {
             presentInfo.pImageIndices = &image_idx;
             presentInfo.pResults = nullptr;
 
-            VK_CHECK(vkQueuePresentKHR(gpu.present_queue, &presentInfo));
+            vkQueuePresentKHR(gpu.present_queue, &presentInfo);
         }
 
         glfwPollEvents();
