@@ -1,5 +1,6 @@
 #include <asm-generic/errno-base.h>
 #include <cerrno>
+#include <cmath>
 #include <cstdint>
 #include <stdexcept>
 
@@ -25,6 +26,66 @@ static logger_t gpu_log = logger_t("gpu");
 #include <imgui/imgui.h>
 #include <imgui/imgui_impl_glfw.h>
 #include <imgui/imgui_impl_vulkan.h>
+#include <implot/implot.h>
+
+const char * vk_result_to_cstr(VkResult result)
+{
+    switch (result) {
+    case VK_SUCCESS: return "VK_SUCCESS";
+    case VK_NOT_READY: return "VK_NOT_READY";
+    case VK_TIMEOUT: return "VK_TIMEOUT";
+    case VK_EVENT_SET: return "VK_EVENT_SET";
+    case VK_EVENT_RESET: return "VK_EVENT_RESET";
+    case VK_INCOMPLETE: return "VK_INCOMPLETE";
+    case VK_ERROR_OUT_OF_HOST_MEMORY: return "VK_ERROR_OUT_OF_HOST_MEMORY";
+    case VK_ERROR_OUT_OF_DEVICE_MEMORY: return "VK_ERROR_OUT_OF_DEVICE_MEMORY";
+    case VK_ERROR_INITIALIZATION_FAILED: return "VK_ERROR_INITIALIZATION_FAILED";
+    case VK_ERROR_DEVICE_LOST: return "VK_ERROR_DEVICE_LOST";
+    case VK_ERROR_MEMORY_MAP_FAILED: return "VK_ERROR_MEMORY_MAP_FAILED";
+    case VK_ERROR_LAYER_NOT_PRESENT: return "VK_ERROR_LAYER_NOT_PRESENT";
+    case VK_ERROR_EXTENSION_NOT_PRESENT: return "VK_ERROR_EXTENSION_NOT_PRESENT";
+    case VK_ERROR_FEATURE_NOT_PRESENT: return "VK_ERROR_FEATURE_NOT_PRESENT";
+    case VK_ERROR_INCOMPATIBLE_DRIVER: return "VK_ERROR_INCOMPATIBLE_DRIVER";
+    case VK_ERROR_TOO_MANY_OBJECTS: return "VK_ERROR_TOO_MANY_OBJECTS";
+    case VK_ERROR_FORMAT_NOT_SUPPORTED: return "VK_ERROR_FORMAT_NOT_SUPPORTED";
+    case VK_ERROR_FRAGMENTED_POOL: return "VK_ERROR_FRAGMENTED_POOL";
+    case VK_ERROR_UNKNOWN: return "VK_ERROR_UNKNOWN";
+    case VK_ERROR_OUT_OF_POOL_MEMORY: return "VK_ERROR_OUT_OF_POOL_MEMORY";
+    case VK_ERROR_INVALID_EXTERNAL_HANDLE: return "VK_ERROR_INVALID_EXTERNAL_HANDLE";
+    case VK_ERROR_FRAGMENTATION: return "VK_ERROR_FRAGMENTATION";
+    case VK_ERROR_INVALID_OPAQUE_CAPTURE_ADDRESS: return "VK_ERROR_INVALID_OPAQUE_CAPTURE_ADDRESS";
+    case VK_PIPELINE_COMPILE_REQUIRED: return "VK_PIPELINE_COMPILE_REQUIRED";
+    case VK_ERROR_SURFACE_LOST_KHR: return "VK_ERROR_SURFACE_LOST_KHR";
+    case VK_ERROR_NATIVE_WINDOW_IN_USE_KHR: return "VK_ERROR_NATIVE_WINDOW_IN_USE_KHR";
+    case VK_SUBOPTIMAL_KHR: return "VK_SUBOPTIMAL_KHR";
+    case VK_ERROR_OUT_OF_DATE_KHR: return "VK_ERROR_OUT_OF_DATE_KHR";
+    case VK_ERROR_INCOMPATIBLE_DISPLAY_KHR: return "VK_ERROR_INCOMPATIBLE_DISPLAY_KHR";
+    case VK_ERROR_VALIDATION_FAILED_EXT: return "VK_ERROR_VALIDATION_FAILED_EXT";
+    case VK_ERROR_INVALID_SHADER_NV: return "VK_ERROR_INVALID_SHADER_NV";
+#ifdef VK_ENABLE_BETA_EXTENSIONS
+    case VK_ERROR_IMAGE_USAGE_NOT_SUPPORTED_KHR: return "VK_ERROR_IMAGE_USAGE_NOT_SUPPORTED_KHR";
+    case VK_ERROR_VIDEO_PICTURE_LAYOUT_NOT_SUPPORTED_KHR: return "VK_ERROR_VIDEO_PICTURE_LAYOUT_NOT_SUPPORTED_KHR";
+    case VK_ERROR_VIDEO_PROFILE_OPERATION_NOT_SUPPORTED_KHR: return "VK_ERROR_VIDEO_PROFILE_OPERATION_NOT_SUPPORTED_KHR";
+    case VK_ERROR_VIDEO_PROFILE_FORMAT_NOT_SUPPORTED_KHR: return "VK_ERROR_VIDEO_PROFILE_FORMAT_NOT_SUPPORTED_KHR";
+    case VK_ERROR_VIDEO_PROFILE_CODEC_NOT_SUPPORTED_KHR: return "VK_ERROR_VIDEO_PROFILE_CODEC_NOT_SUPPORTED_KHR";
+    case VK_ERROR_VIDEO_STD_VERSION_NOT_SUPPORTED_KHR: return "VK_ERROR_VIDEO_STD_VERSION_NOT_SUPPORTED_KHR";
+#endif
+    case VK_ERROR_INVALID_DRM_FORMAT_MODIFIER_PLANE_LAYOUT_EXT: return "VK_ERROR_INVALID_DRM_FORMAT_MODIFIER_PLANE_LAYOUT_EXT";
+    case VK_ERROR_NOT_PERMITTED_KHR: return "VK_ERROR_NOT_PERMITTED_KHR";
+    case VK_ERROR_FULL_SCREEN_EXCLUSIVE_MODE_LOST_EXT: return "VK_ERROR_FULL_SCREEN_EXCLUSIVE_MODE_LOST_EXT";
+    case VK_THREAD_IDLE_KHR: return "VK_THREAD_IDLE_KHR";
+    case VK_THREAD_DONE_KHR: return "VK_THREAD_DONE_KHR";
+    case VK_OPERATION_DEFERRED_KHR: return "VK_OPERATION_DEFERRED_KHR";
+    case VK_OPERATION_NOT_DEFERRED_KHR: return "VK_OPERATION_NOT_DEFERRED_KHR";
+    case VK_ERROR_COMPRESSION_EXHAUSTED_EXT: return "VK_ERROR_COMPRESSION_EXHAUSTED_EXT";
+    case VK_RESULT_MAX_ENUM: return "VK_RESULT_MAX_ENUM";
+    default: return "??????";
+    }
+}
+
+#define VK_CHECK(...) do { VkResult result = __VA_ARGS__; if (result != VK_SUCCESS) { \
+    auto err_str = vk_result_to_cstr(result); \
+    panic("vulkan api error: {}", err_str); } } while(0)
 
 struct fswatcher_t {
     int inotify_fd;
@@ -262,6 +323,14 @@ struct gpu_t {
     VkDebugUtilsMessengerEXT debug_messager;
 
     struct {
+        u64 timestamp_period;
+    } limits;
+
+    struct {
+        bool timestamp_queries;
+    } support;
+
+    struct {
         u32 graphics;
         u32 present;
     } queue_families;
@@ -318,6 +387,8 @@ struct gpu_t {
             if (validation_layers_available) {
                 createInfo.enabledLayerCount = array_size(validation_layers);
                 createInfo.ppEnabledLayerNames = validation_layers;
+            } else {
+                createInfo.enabledLayerCount = 0;
             }
 
             std::vector<const char*> extensions;
@@ -337,8 +408,6 @@ struct gpu_t {
                 createInfo.enabledExtensionCount = extensions.size();
                 createInfo.ppEnabledExtensionNames = extensions.data();
             }
-
-            createInfo.enabledLayerCount = 0;
 
             VkResult result = vkCreateInstance(&createInfo, nullptr, &instance);
             if (result != VK_SUCCESS) {
@@ -412,10 +481,6 @@ struct gpu_t {
         bool qfamily_graphics_found = false;
         bool qfamily_present_found = false;
 
-        auto queue_families_found = [&]() {
-            return qfamily_graphics_found && qfamily_present_found;
-        };
-
         u32 qfamily_graphics;
         u32 qfamily_present;
         {
@@ -428,7 +493,9 @@ struct gpu_t {
 
             int i = 0;
             for (const auto& queueFamily : queueFamilies) {
-                if (queue_families_found()) break;
+                if (qfamily_graphics_found && qfamily_present_found) {
+                    break;
+                }
 
                 if (queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT) {
                     qfamily_graphics_found = true;
@@ -447,13 +514,41 @@ struct gpu_t {
                 i++;
             }
 
-            if (!queue_families_found()) {
+            if (!qfamily_graphics_found || !qfamily_present_found) {
                 gpu_log.error("failed to find required queue families");
                 return;
             }
 
             queue_families.graphics = qfamily_graphics;
             queue_families.present = qfamily_present;
+        }
+
+        support.timestamp_queries = true;
+        {
+            // query limits and support
+            VkPhysicalDeviceProperties device_properties;
+            vkGetPhysicalDeviceProperties(pdev, &device_properties);
+
+            limits.timestamp_period = device_properties.limits.timestampPeriod;
+            if (limits.timestamp_period == 0) {
+                support.timestamp_queries = false;
+                gpu_log.warn("timestamp queries not supported");
+            }
+
+            if (!device_properties.limits.timestampComputeAndGraphics) {
+                // get properties for the graphics queue
+                uint32_t queueFamilyCount = 0;
+                vkGetPhysicalDeviceQueueFamilyProperties(pdev, &queueFamilyCount, nullptr);
+
+                std::vector<VkQueueFamilyProperties> queueFamilies(queueFamilyCount);
+                vkGetPhysicalDeviceQueueFamilyProperties(pdev, &queueFamilyCount, queueFamilies.data());
+
+                auto props = queueFamilies[queue_families.graphics];
+                if (!props.timestampValidBits) {
+                    support.timestamp_queries = false;
+                    gpu_log.warn("timestamp queries not supported on graphics queue");
+                }
+            }
         }
 
         {
@@ -511,41 +606,6 @@ struct gpu_t {
         }
 
         recreate_swapchain(false);
-
-        {
-            // create the render pass
-            // @todo: actually, the image format may change, so we should recreate the render pass
-            //       when the swapchain is recreated.
-            VkAttachmentDescription colorAttachment{};
-            colorAttachment.format = swapchain.image_format;
-            colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
-            colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-            colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-            colorAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-            colorAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-            colorAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-            colorAttachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-
-            VkAttachmentReference colorAttachmentRef{};
-            colorAttachmentRef.attachment = 0;
-            colorAttachmentRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-
-            VkSubpassDescription subpass{};
-            subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
-            subpass.colorAttachmentCount = 1;
-            subpass.pColorAttachments = &colorAttachmentRef;
-
-            VkRenderPassCreateInfo renderPassInfo{};
-            renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
-            renderPassInfo.attachmentCount = 1;
-            renderPassInfo.pAttachments = &colorAttachment;
-            renderPassInfo.subpassCount = 1;
-            renderPassInfo.pSubpasses = &subpass;
-
-            if (vkCreateRenderPass(device, &renderPassInfo, nullptr, &display_render_pass) != VK_SUCCESS) {
-                throw std::runtime_error("failed to create render pass!");
-            }
-        }
     }
 
     void recreate_swapchain(bool need_to_clear = true) {
@@ -553,6 +613,8 @@ struct gpu_t {
             for (size_t i = 0; i < swapchain.framebuffers.size(); i++) {
                 vkDestroyFramebuffer(device, swapchain.framebuffers[i], nullptr);
             }
+
+            vkDestroyRenderPass(device, display_render_pass, nullptr);
 
             for (size_t i = 0; i < swapchain.image_views.size(); i++) {
                 vkDestroyImageView(device, swapchain.image_views[i], nullptr);
@@ -649,6 +711,39 @@ struct gpu_t {
 
         swapchain.image_format = surface_format.format;
         swapchain.extent = extent;
+
+        {
+            // re-create the render pass
+            VkAttachmentDescription colorAttachment{};
+            colorAttachment.format = swapchain.image_format;
+            colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
+            colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+            colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+            colorAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+            colorAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+            colorAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+            colorAttachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+
+            VkAttachmentReference colorAttachmentRef{};
+            colorAttachmentRef.attachment = 0;
+            colorAttachmentRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+            VkSubpassDescription subpass{};
+            subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+            subpass.colorAttachmentCount = 1;
+            subpass.pColorAttachments = &colorAttachmentRef;
+
+            VkRenderPassCreateInfo renderPassInfo{};
+            renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+            renderPassInfo.attachmentCount = 1;
+            renderPassInfo.pAttachments = &colorAttachment;
+            renderPassInfo.subpassCount = 1;
+            renderPassInfo.pSubpasses = &subpass;
+
+            if (vkCreateRenderPass(device, &renderPassInfo, nullptr, &display_render_pass) != VK_SUCCESS) {
+                throw std::runtime_error("failed to create render pass!");
+            }
+        }
 
         // create image views into swap-chain.
         swapchain.image_views.resize(swapchain.images.size());
@@ -750,7 +845,6 @@ struct pipeline_config_t {
     VkPipelineViewportStateCreateInfo viewport_state;
     VkPipelineRasterizationStateCreateInfo rasterizer;
     VkPipelineMultisampleStateCreateInfo multisampling;
-    VkPipelineColorBlendStateCreateInfo color_blending;
     VkPipelineDynamicStateCreateInfo dynamic_state;
     VkPipelineLayout pipeline_layout;
     VkRenderPass render_pass;
@@ -805,6 +899,8 @@ VkPipelineShaderStageCreateInfo compile_shader(gpu_t &gpu, const char *path, int
         glslc_stage = "fragment";
         vk_stage = VK_SHADER_STAGE_FRAGMENT_BIT;
         break;
+    default:
+        panic("unknown shader stage");
     }
 
     if (file_a_is_newer_than_b(path, tmp_path.c_str())) {
@@ -918,12 +1014,34 @@ struct loader_t {
 
             if (pipeline->modified) {
                 pipeline->modified = false;
-                g_log.info("recreating pipeline");
                 if (pipeline->pipeline != VK_NULL_HANDLE) {
                     // @todo: when is it safe to destroy a pipeline?
                     // vkDestroyPipeline(gpu->device, pipeline->pipeline, nullptr);
                     pipeline->pipeline = VK_NULL_HANDLE;
                 }
+
+                // @todo: make this configurable:
+                // it has to be here for now as we need to shuffle the pointers around.
+                VkPipelineColorBlendAttachmentState colorBlendAttachment{};
+                colorBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+                colorBlendAttachment.blendEnable = VK_FALSE;
+                colorBlendAttachment.srcColorBlendFactor = VK_BLEND_FACTOR_ONE; // Optional
+                colorBlendAttachment.dstColorBlendFactor = VK_BLEND_FACTOR_ZERO; // Optional
+                colorBlendAttachment.colorBlendOp = VK_BLEND_OP_ADD; // Optional
+                colorBlendAttachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE; // Optional
+                colorBlendAttachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO; // Optional
+                colorBlendAttachment.alphaBlendOp = VK_BLEND_OP_ADD; // Optional
+
+                VkPipelineColorBlendStateCreateInfo colorBlending{};
+                colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+                colorBlending.logicOpEnable = VK_FALSE;
+                colorBlending.logicOp = VK_LOGIC_OP_COPY; // Optional
+                colorBlending.attachmentCount = 1;
+                colorBlending.pAttachments = &colorBlendAttachment;
+                colorBlending.blendConstants[0] = 0.0f; // Optional
+                colorBlending.blendConstants[1] = 0.0f; // Optional
+                colorBlending.blendConstants[2] = 0.0f; // Optional
+                colorBlending.blendConstants[3] = 0.0f; // Optional
 
                 VkGraphicsPipelineCreateInfo pipeline_info{};
                 pipeline_info.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
@@ -937,7 +1055,7 @@ struct loader_t {
                 pipeline_info.pRasterizationState = &pipeline->config.rasterizer;
                 pipeline_info.pMultisampleState = &pipeline->config.multisampling;
                 pipeline_info.pDepthStencilState = nullptr;
-                pipeline_info.pColorBlendState = &pipeline->config.color_blending;
+                pipeline_info.pColorBlendState = &colorBlending;
                 pipeline_info.pDynamicState = &pipeline->config.dynamic_state;
                 pipeline_info.layout = pipeline->config.pipeline_layout;
                 pipeline_info.renderPass = pipeline->config.render_pass;
@@ -966,6 +1084,8 @@ struct imgui_renderer_state_t {
 
 void imgui_init(gpu_t &gpu) {
     ImGui::CreateContext();
+    ImPlot::CreateContext();
+
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;     // Enable Keyboard Controls
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;      // Enable Gamepad Controls
@@ -973,6 +1093,9 @@ void imgui_init(gpu_t &gpu) {
 
     // Setup Dear ImGui style
     ImGui::StyleColorsDark();
+
+    // setup implot style
+    ImPlot::PushStyleColor(ImPlotCol_FrameBg, {0.15,0.15,0.15,0.0});
 
     VkDescriptorPool descriptor_pool;
     {
@@ -1013,6 +1136,10 @@ void imgui_init(gpu_t &gpu) {
 #include <time.h>
 
 struct cpu_timer_t {
+    cpu_timer_t() {
+        memset(measures, 0, sizeof(measures));
+        measure_idx = 0;
+    }
     void start() {
         timespec time1;
         clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &time1);
@@ -1024,15 +1151,75 @@ struct cpu_timer_t {
         timespec time2;
         clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &time2);
 
-        last_measure = (time2.tv_sec * 1e9 + time2.tv_nsec - start_time);
+        // f32 time_ns = (time2.tv_sec * 1e9 + time2.tv_nsec - start_time);
+        f32 time_ms = (time2.tv_sec * 1e3 + time2.tv_nsec / 1e6 - start_time / 1e6);
+
+        measures[measure_idx] = time_ms;
+        measure_idx = (measure_idx + 1) % array_size(measures);
     }
 
     float measure_ns() {
-        return last_measure;
+        i64 idx = (i64)measure_idx - 1;
+        if (idx < 0) {
+            idx = array_size(measures) - 1;
+        }
+        return measures[idx];
+    }
+
+    u32 size() {
+        return array_size(measures);
     }
 
     u64 start_time = 0;
-    float last_measure = 0.0;
+    f32 measures[256];
+    u32 measure_idx = 0;
+};
+
+// @todo: aaaah correctness!!!
+struct gpu_timer_t {
+    void init(gpu_t &gpu) {
+        VkQueryPoolCreateInfo query_pool_info = {};
+        query_pool_info.sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;
+        query_pool_info.queryType = VK_QUERY_TYPE_TIMESTAMP;
+        query_pool_info.queryCount = 2;
+        VK_CHECK(vkCreateQueryPool(gpu.device, &query_pool_info, nullptr, &query_pool));
+    }
+
+    void reset(gpu_t &gpu, VkCommandBuffer &cmds) {
+        if (!is_first) vkGetQueryPoolResults(
+           	gpu.device,
+           	query_pool,
+           	0,
+           	2,
+           	4 * sizeof(u64),
+           	timestamps,
+           	2 * sizeof(u64),
+           	VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WITH_AVAILABILITY_BIT);
+        is_first = false;
+
+        vkCmdResetQueryPool(cmds, query_pool, 0, 2);
+    }
+
+    void start(gpu_t &gpu, VkCommandBuffer &cmds) {
+        if (timestamps[1] != 0 && timestamps[3] != 0) {
+            auto as_nanos = (timestamps[2] - timestamps[0]) / gpu.limits.timestamp_period;
+            measures[measure_idx] = (f32)as_nanos / 1e6;
+            measure_idx = (measure_idx + 1) % array_size(measures);
+        }
+
+        vkCmdWriteTimestamp(cmds, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, query_pool, 0);
+    }
+    void stop(gpu_t &gpu, VkCommandBuffer &cmds) {
+        vkCmdWriteTimestamp(cmds, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, query_pool, 1);
+
+        (void)gpu;
+    }
+
+    u64 timestamps[4] = {0};
+    f32 measures[256] = {0};
+    u32 measure_idx = 0;
+    bool is_first = true;
+    VkQueryPool query_pool;
 };
 
 int main(void) {
@@ -1137,10 +1324,7 @@ int main(void) {
         pipelineLayoutInfo.pPushConstantRanges = nullptr; // Optional
 
         VkPipelineLayout pipelineLayout;
-        if (vkCreatePipelineLayout(gpu.device, &pipelineLayoutInfo, nullptr, &pipelineLayout) != VK_SUCCESS) {
-            gpu_log.error("failed to create pipeline layout!");
-            return 1;
-        }
+        VK_CHECK(vkCreatePipelineLayout(gpu.device, &pipelineLayoutInfo, nullptr, &pipelineLayout));
 
         auto shader = g_loader.load_shader_program({
            .vertex_hlsl_path = "eassets/shaders/test.vert",
@@ -1154,7 +1338,6 @@ int main(void) {
             .viewport_state = viewportState,
             .rasterizer = rasterizer,
             .multisampling = multisampling,
-            .color_blending = colorBlending,
             .dynamic_state = dynamicState,
             .pipeline_layout = pipelineLayout,
             .render_pass = gpu.display_render_pass,
@@ -1172,9 +1355,7 @@ int main(void) {
         // can also be transient.
 
         poolInfo.queueFamilyIndex = gpu.queue_families.graphics;
-        if (vkCreateCommandPool(gpu.device, &poolInfo, nullptr, &cmd_pool) != VK_SUCCESS) {
-            throw std::runtime_error("failed to create command pool!");
-        }
+        VK_CHECK(vkCreateCommandPool(gpu.device, &poolInfo, nullptr, &cmd_pool));
     }
 
     VkCommandBuffer cmds;
@@ -1185,9 +1366,7 @@ int main(void) {
         allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
         allocInfo.commandBufferCount = 1;
 
-        if (vkAllocateCommandBuffers(gpu.device, &allocInfo, &cmds) != VK_SUCCESS) {
-            throw std::runtime_error("failed to allocate command buffers!");
-        }
+        VK_CHECK(vkAllocateCommandBuffers(gpu.device, &allocInfo, &cmds));
     }
 
     VkSemaphore imageAvailableSemaphore;
@@ -1203,33 +1382,21 @@ int main(void) {
         fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
         fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
 
-        if (vkCreateSemaphore(gpu.device, &semaphoreInfo, nullptr, &imageAvailableSemaphore) != VK_SUCCESS) {
-            throw std::runtime_error("failed to create semaphore");
-        }
-        if (vkCreateSemaphore(gpu.device, &semaphoreInfo, nullptr, &renderFinishedSemaphore) != VK_SUCCESS) {
-            throw std::runtime_error("failed to create semaphore");
-        }
-        if (vkCreateFence(gpu.device, &fenceInfo, nullptr, &inFlightFence) != VK_SUCCESS) {
-            throw std::runtime_error("failed to create fence");
-        }
+        VK_CHECK(vkCreateSemaphore(gpu.device, &semaphoreInfo, nullptr, &imageAvailableSemaphore));
+        VK_CHECK(vkCreateSemaphore(gpu.device, &semaphoreInfo, nullptr, &renderFinishedSemaphore));
+        VK_CHECK(vkCreateFence(gpu.device, &fenceInfo, nullptr, &inFlightFence));
     }
 
     cpu_timer_t full_loop_timer;
+    gpu_timer_t full_frame_timer;
+    gpu_timer_t imgui_render_timer;
 
-    auto ns_to_string = [](float ns) {
-        if (ns < 1e3) {
-            return fmt::format("{:.1f}ns", ns);
-        } else if (ns < 1e6) {
-            return fmt::format("{:.1f}us", ns / 1e3);
-        } else if (ns < 1e9) {
-            return fmt::format("{:.1f}ms", ns / 1e6);
-        } else {
-            return fmt::format("{:.1f}s", ns / 1e9);
-        }
-    };
+    full_frame_timer.init(gpu);
+    imgui_render_timer.init(gpu);
+
+    vkDeviceWaitIdle(gpu.device);
 
     g_log.info("running...");
-    gpu_log.info("swapchain size: {}", gpu.swapchain.image_views.size());
     while(!glfwWindowShouldClose(window)) {
         g_loader.process_hotreload();
         full_loop_timer.start();
@@ -1238,38 +1405,51 @@ int main(void) {
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
 
-        static bool show_demo_window = true;
-        ImGui::ShowDemoWindow(&show_demo_window);
+        static bool show_imgui_demo = false;
+        static bool show_implot_demo = false;
+        if (show_imgui_demo)
+            ImGui::ShowDemoWindow(&show_imgui_demo);
+
+        if (show_implot_demo)
+            ImPlot::ShowDemoWindow(&show_implot_demo);
 
         ImGui::Begin("test");
 
         {
-            auto t1 = fmt::format("loop time: {}", ns_to_string(full_loop_timer.measure_ns()));
-            ImGui::Text("%s", t1.c_str());
+            if (ImPlot::BeginPlot("Frame Times")) {
+                ImPlot::SetupAxes("Frame", "Time (ms)", ImPlotAxisFlags_AutoFit, ImPlotAxisFlags_None);
+                ImPlot::SetupAxisLimitsConstraints(ImAxis_Y1, 0, INFINITY);
+                ImPlot::PlotLine("Loop", full_loop_timer.measures, array_size(full_loop_timer.measures));
+                ImPlot::PlotLine("Frame", full_frame_timer.measures, array_size(full_frame_timer.measures));
+                ImPlot::PlotLine("ImGui", imgui_render_timer.measures, array_size(imgui_render_timer.measures));
+                ImPlot::EndPlot();
+            }
         }
 
-        ImGui::Text("Pipeline: %p", pipeline->pipeline);
+        if (ImGui::Button("Show ImGui demo")) show_imgui_demo = !show_imgui_demo;
+        if (ImGui::Button("Show ImPlot demo")) show_implot_demo = !show_implot_demo;
 
         ImGui::End();
+        ImGui::Render();
 
         // draw frame
         // @todo: support multiple frames in flight.
         {
+            VK_CHECK(vkWaitForFences(gpu.device, 1, &inFlightFence, VK_TRUE, UINT64_MAX));
+            VK_CHECK(vkResetFences(gpu.device, 1, &inFlightFence));
+
             u32 image_idx;
             auto swapchain_result = vkAcquireNextImageKHR(gpu.device, gpu.swapchain.handle, UINT64_MAX, imageAvailableSemaphore, VK_NULL_HANDLE, &image_idx);
             {
-                if (swapchain_result == VK_ERROR_OUT_OF_DATE_KHR || swapchain_result == VK_SUBOPTIMAL_KHR) {
+                // @note: we can also do || swapchain_result == VK_SUBOPTIMAL_KHR here,
+                // but I'm not sure it has a big impact. On my machine, this causes swapchain recreation
+                // every time i move ANY window.
+                if (swapchain_result == VK_ERROR_OUT_OF_DATE_KHR) {
                     vkDeviceWaitIdle(gpu.device);
                     gpu.recreate_swapchain();
-                    ImGui::EndFrame();
                     continue;
-                } else if (swapchain_result != VK_SUCCESS) {
-                    throw std::runtime_error("failed to acquire swap chain image!");
-                }
+                } else VK_CHECK(swapchain_result);
             }
-
-            vkWaitForFences(gpu.device, 1, &inFlightFence, VK_TRUE, UINT64_MAX);
-            vkResetFences(gpu.device, 1, &inFlightFence);
 
             VkViewport full_viewport{};
             full_viewport.x = 0.0f;
@@ -1283,7 +1463,7 @@ int main(void) {
             full_scissor.offset = {0, 0};
             full_scissor.extent = gpu.swapchain.extent;
 
-            vkResetCommandBuffer(cmds, 0);
+            VK_CHECK(vkResetCommandBuffer(cmds, 0));
             // use the command buffer
             {
                 VkCommandBufferBeginInfo beginInfo{};
@@ -1291,10 +1471,12 @@ int main(void) {
                 beginInfo.flags = 0; // Optional
                 beginInfo.pInheritanceInfo = nullptr; // Optional
 
-                if (vkBeginCommandBuffer(cmds, &beginInfo) != VK_SUCCESS) {
-                    throw std::runtime_error("failed to begin recording command buffer!");
-                }
+                VK_CHECK(vkBeginCommandBuffer(cmds, &beginInfo));
             }
+            full_frame_timer.reset(gpu, cmds);
+            imgui_render_timer.reset(gpu, cmds);
+
+            full_frame_timer.start(gpu, cmds);
 
             // begin render pass
             {
@@ -1318,15 +1500,15 @@ int main(void) {
             vkCmdSetScissor(cmds, 0, 1, &full_scissor);
             vkCmdDraw(cmds, 3, 1, 0, 0);
 
-            ImGui::Render();
+            imgui_render_timer.start(gpu, cmds);
             ImDrawData* draw_data = ImGui::GetDrawData();
             ImGui_ImplVulkan_RenderDrawData(draw_data, cmds);
+            imgui_render_timer.stop(gpu, cmds);
 
             vkCmdEndRenderPass(cmds);
 
-            if (vkEndCommandBuffer(cmds) != VK_SUCCESS) {
-                throw std::runtime_error("failed to record command buffer!");
-            }
+            full_frame_timer.stop(gpu, cmds);
+            VK_CHECK(vkEndCommandBuffer(cmds));
 
             // submit command buffer
             VkSubmitInfo submitInfo{};
@@ -1343,9 +1525,7 @@ int main(void) {
             submitInfo.signalSemaphoreCount = 1;
             submitInfo.pSignalSemaphores = &renderFinishedSemaphore;
 
-            if (vkQueueSubmit(gpu.graphics_queue, 1, &submitInfo, inFlightFence) != VK_SUCCESS) {
-                throw std::runtime_error("failed to submit draw command buffer!");
-            }
+            VK_CHECK(vkQueueSubmit(gpu.graphics_queue, 1, &submitInfo, inFlightFence));
 
             // present
             VkPresentInfoKHR presentInfo{};
@@ -1359,7 +1539,7 @@ int main(void) {
             presentInfo.pImageIndices = &image_idx;
             presentInfo.pResults = nullptr;
 
-            vkQueuePresentKHR(gpu.present_queue, &presentInfo);
+            VK_CHECK(vkQueuePresentKHR(gpu.present_queue, &presentInfo));
         }
 
         glfwPollEvents();
