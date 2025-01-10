@@ -14,7 +14,7 @@ CCFILES_VENDOR = $(shell find vendor/ -type f -name *.cc)
 CC_OFILES_SRC_RELEASE = $(patsubst src/%.cc,${ODIR_REL}/src/%.cc.o,$(CCFILES_SRC))
 CC_OFILES_VENDOR_RELEASE = $(patsubst vendor/%.cc,${ODIR_REL}/vendor/%.cc.o,$(CCFILES_VENDOR))
 
-OFILES_RELEASE = $(CC_OFILES_SRC_RELEASE) $(CC_OFILES_VENDOR_RELEASE)
+OFILES_RELEASE = $(CC_OFILES_VENDOR_RELEASE) $(CC_OFILES_SRC_RELEASE)
 
 CCFLAGS_COMMON = -std=c++2a -Wall -Wextra -Werror -Ivendor/include -Isrc -I. -DDEBUG -g -fsanitize=undefined
 LDFLAGS_COMMON = -ldl -lglfw -lvulkan

@@ -28,6 +28,8 @@ static logger_t gpu_log = logger_t("gpu");
 #include <imgui/imgui_impl_vulkan.h>
 #include <implot/implot.h>
 
+#include "modimp.h"
+
 const char * vk_result_to_cstr(VkResult result)
 {
     switch (result) {
@@ -1225,10 +1227,29 @@ int main(void) {
     oc_init();
     glfwInit();
 
+    modimp::scene_t test;
+    {
+        auto res = modimp::scene_load(test, "assets/cube.obj");
+        if (res.is_err()) {
+            g_log.error("failed to load model: {}", res.unwrap_err());
+            return 1;
+        }
+
+        g_log.info("loaded model");
+        g_log.info("   num meshes: {}", test.meshes.len);
+
+        for (auto &m : test.meshes) {
+            g_log.info("   mesh");
+            g_log.info("   num vertices: {}", m.vertices.len);
+            g_log.info("   num indices: {}", m.indices.len);
+            g_log.info("   bounds: {}", m.bounds);
+        }
+    }
+
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
     glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
     glfwWindowHint(GLFW_SRGB_CAPABLE, GLFW_TRUE);
-    GLFWwindow* window = glfwCreateWindow(800, 600, "vulkan", nullptr, nullptr);
+    GLFWwindow* window = glfwCreateWindow(1200, 900, "vulkan", nullptr, nullptr);
 
     // initialize vulkan
     gpu_t gpu;
@@ -1451,6 +1472,8 @@ int main(void) {
                     vkQueueSubmit(gpu.graphics_queue, 0, nullptr, inFlightFence);
 
                     continue;
+                } if (swapchain_result == VK_SUBOPTIMAL_KHR) {
+                    
                 } else VK_CHECK(swapchain_result);
             }
 
