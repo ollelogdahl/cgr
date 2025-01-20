@@ -68,7 +68,7 @@ result_t<void, std::string> scene_load_obj(scene_t &scene, slice<byte> data) {
         std::vector<u32> curr_triangles;
 
         aabb_t curr_bounds = aabb_t{v3f{INFINITY, INFINITY, INFINITY}, v3f{-INFINITY, -INFINITY, -INFINITY}};
-    
+
         std::vector<mesh_t> meshes;
 
         void produce_mesh() {
@@ -80,7 +80,7 @@ result_t<void, std::string> scene_load_obj(scene_t &scene, slice<byte> data) {
             auto triangles_ptr = new u32[curr_triangles.size()];
             auto normals_ptr = has_normals ? new v3f[curr_normals.size()] : nullptr;
             auto texcoords_ptr = has_texcoords ? new v2f[curr_texcoords.size()] : nullptr;
-            
+
             memcpy(vertices_ptr, curr_vertices.data(), curr_vertices.size() * sizeof(v3f));
             memcpy(triangles_ptr, curr_triangles.data(), curr_triangles.size() * sizeof(u32));
             if (has_normals) memcpy(normals_ptr, curr_normals.data(), curr_normals.size() * sizeof(v3f));
@@ -92,6 +92,7 @@ result_t<void, std::string> scene_load_obj(scene_t &scene, slice<byte> data) {
             auto texcoords = has_texcoords ? slice<v2f>{texcoords_ptr, curr_texcoords.size()} : slice<v2f>{};
 
             mesh_t mesh = {
+                .material_index = 0,
                 .vertices = vertices,
                 .indices = triangles,
                 .bounds = curr_bounds,
@@ -143,7 +144,7 @@ result_t<void, std::string> scene_load_obj(scene_t &scene, slice<byte> data) {
 
     auto on_face = [](void *user_ctx, u32 vertex_n, u32 *vertex_idxs, u32 *texcoord, u32 *normal_idxs) {
         auto ctx = (struct ctx_t *)user_ctx;
-        
+
         // triangulate and make indices shared.
         for (u32 i = 2; i < vertex_n; ++i) {
             u32 vis[3] = { vertex_idxs[0], vertex_idxs[i - 1], vertex_idxs[i] };
@@ -180,7 +181,11 @@ result_t<void, std::string> scene_load_obj(scene_t &scene, slice<byte> data) {
         .on_vertex = on_vertex,
         .on_normal = on_normal,
         .on_texcoord = on_texcoord,
+        .on_material_definition = nullptr,
         .on_material_use = on_material_use,
+        .on_object = nullptr,
+        .on_group = nullptr,
+        .on_smoothing_group = nullptr,
         .on_face = on_face,
         .user_ctx = &ctx,
     };

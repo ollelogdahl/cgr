@@ -74,11 +74,13 @@ public:
 // slices are just a plain pointer and a length. The data in them is not owned.
 template <typename T>
 struct slice {
-    T* data;
+    using ptr_type = std::conditional_t<std::is_const_v<T>, const T*, T*>;
+    ptr_type data;
     usize len;
 
     inline constexpr slice() : data(nullptr), len(0) {}
-    inline constexpr slice(T *data, usize len) : data(data), len(len) {}
+    inline constexpr slice(ptr_type data, usize len) : data(data), len(len) {}
+    inline constexpr slice(std::initializer_list<T> list) : data(list.begin()), len(list.size()) {}
 
     template <typename U>
     bool operator ==(const slice<U>& other) const {
