@@ -364,7 +364,7 @@ m4f constexpr m4f::perspective(anglef fov, f32 aspect, f32 near, f32 far) {
 
     return m4f::colmaj(
         f / aspect, 0, 0, 0,
-        0, f, 0, 0,
+        0, -f, 0, 0,
         0, 0, A, -1,
         0, 0, B, 0
     );

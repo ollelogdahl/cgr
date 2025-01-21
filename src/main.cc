@@ -20,9 +20,6 @@
 
 static logger_t gpu_log = logger_t("gpu");
 
-#include <sys/inotify.h>
-#include <fcntl.h>
-
 #include <imgui/imgui.h>
 #include <imgui/imgui_impl_glfw.h>
 #include <imgui/imgui_impl_vulkan.h>
@@ -30,383 +27,9 @@ static logger_t gpu_log = logger_t("gpu");
 
 #include "gpu.h"
 #include "modimp.h"
-
-struct fswatcher_t {
-    int inotify_fd;
-
-    struct elem_t {
-        void (*on_modified)(std::string, void *userdata);
-        void *userdata;
-        std::string path;
-
-        bool operator==(const elem_t &other) const {
-            return path == other.path && on_modified == other.on_modified;
-        }
-    };
-
-    std::unordered_map<int, elem_t> watches;
-
-    void init() {
-        inotify_fd = inotify_init();
-        auto old_flags = fcntl(inotify_fd, F_GETFL);
-        fcntl(inotify_fd, F_SETFL, old_flags | O_NONBLOCK);
-    }
-
-    void add_watch(const char *path, void (*on_modified)(std::string, void *userdata), void *userdata) {
-        int ret = inotify_add_watch(inotify_fd, path, IN_ALL_EVENTS);
-        if (ret == -1) {
-            panic("inotify_add_watch error: {}", strerror(errno));
-        }
-        watches[ret] = {
-            on_modified,
-            userdata,
-            path
-        };
-    }
-    void process_watches() {
-        // read from inotify until no more events are available now
-        const usize event_max_size = sizeof(inotify_event) + 256;
-        const usize buffer_size = 128 * event_max_size;
-        char buffer[buffer_size];
-
-        while (true) {
-            auto len = read(inotify_fd, buffer, buffer_size);
-            if (len < 0 && errno == EAGAIN) break;
-            if (len == 0) break;
-
-            ssize_t idx = 0;
-            while(idx < len) {
-                auto ev = (inotify_event *)(buffer + idx);
-                idx += sizeof(inotify_event) + ev->len;
-
-                if (ev->mask & IN_MODIFY) {
-                    auto &e = watches[ev->wd];
-                    e.on_modified(e.path, e.userdata);
-                }
-            }
-        }
-    }
-};
-
-#include <sys/stat.h>
-
-bool file_a_is_newer_than_b(const char *a, const char *b) {
-    struct stat a_stat;
-    struct stat b_stat;
-
-    int ret_a = stat(a, &a_stat);
-    int ret_b = stat(b, &b_stat);
-
-    if (ret_b != 0) {
-        return true;
-    }
-    if (ret_a != 0) {
-        return false;
-    }
-
-    return a_stat.st_mtime > b_stat.st_mtime;
-}
-
-struct shader_program_load_params_t {
-    const char *vertex_hlsl_path;
-    const char *fragment_hlsl_path;
-
-    bool operator==(const shader_program_load_params_t &other) const {
-        return strcmp(vertex_hlsl_path, other.vertex_hlsl_path) == 0 &&
-               strcmp(fragment_hlsl_path, other.fragment_hlsl_path) == 0;
-    }
-};
-struct shader_program_t {
-    std::vector<VkPipelineShaderStageCreateInfo> stages;
-    shader_program_load_params_t params;
-    bool modified = false;
-};
-
-// @todo: setup a pipeline cache which will allow us to
-// 1. create only 1 pipeline for each configuration
-// 2. Hot reload the pipeline when the shader changes
-struct pipeline_config_t {
-    ref_t<shader_program_t> shader;
-
-    // @todo: make this cleaner and make optional
-    struct {
-        slice<const VkVertexInputBindingDescription> bindings;
-        slice<const VkVertexInputAttributeDescription> attributes;
-    } vertex_input_info;
-    VkPipelineInputAssemblyStateCreateInfo input_assembly;
-    VkPipelineViewportStateCreateInfo viewport_state;
-    VkPipelineRasterizationStateCreateInfo rasterizer;
-    VkPipelineMultisampleStateCreateInfo multisampling;
-    slice<const VkDynamicState> dynamic_state;
-    VkPipelineLayout pipeline_layout;
-    VkRenderPass render_pass;
-
-    bool operator ==(const pipeline_config_t &other) const {
-        return shader == other.shader;
-    }
-};
-struct gpu_pipeline_t {
-    VkPipeline pipeline;
-    pipeline_config_t config;
-
-    std::vector<VkDynamicState> dynamic_states;
-    struct {
-        std::vector<VkVertexInputBindingDescription> bindings;
-        std::vector<VkVertexInputAttributeDescription> attributes;
-    } vertex_input_info;
-
-    bool modified = false;
-};
-
-template <>
-struct std::hash<shader_program_load_params_t> {
-    std::size_t operator()(const shader_program_load_params_t &params) const {
-        std::size_t h1 = std::hash<const char*>{}(params.vertex_hlsl_path);
-        std::size_t h2 = std::hash<const char*>{}(params.fragment_hlsl_path);
-        return h1 ^ (h2 << 1);
-    }
-};
-
-template <>
-struct std::hash<pipeline_config_t> {
-    std::size_t operator()(const pipeline_config_t &config) const {
-        std::size_t h1 = std::hash<shader_program_load_params_t>{}(config.shader->params);
-        return h1;
-    }
-};
-
-#define SHADER_STAGE_VERTEX 0
-#define SHADER_STAGE_FRAGMENT 1
-
-VkPipelineShaderStageCreateInfo compile_shader(gpu_t &gpu, const char *path, int type) {
-    // in dev mode, we compile the shader into the tmp dir. The filename in tmp is
-    // based on the hash of the original file name.
-
-    u64 hash = std::hash<const char *>{}(path);
-
-    const char *tmp_dir = "/tmp";
-    auto tmp_path = fmt::format("{}/{}.spv", tmp_dir, hash);
-
-    VkShaderStageFlagBits vk_stage;
-    const char *glslc_stage;
-    switch (type) {
-    case SHADER_STAGE_VERTEX:
-        glslc_stage = "vertex";
-        vk_stage = VK_SHADER_STAGE_VERTEX_BIT;
-        break;
-    case SHADER_STAGE_FRAGMENT:
-        glslc_stage = "fragment";
-        vk_stage = VK_SHADER_STAGE_FRAGMENT_BIT;
-        break;
-    default:
-        panic("unknown shader stage");
-    }
-
-    if (file_a_is_newer_than_b(path, tmp_path.c_str())) {
-        gpu_log.info("compiling shader {}", path);
-        // @todo: the path to glslc should maybe be compile-time configurable? or taken from env?
-        auto cmd = fmt::format("/home/dv20/dv20oll/bin/glslc -fshader-stage={} -o {} {}", glslc_stage, tmp_path, path);
-
-        // @todo: use exec instead of system.
-        // we want to be able to do these things in parallel i think.
-        // for this, we will break this function into two, (try_invoke_compiler, create_shader),
-        // and then we can call try_invoke_compiler in parallel.
-        system(cmd.c_str());
-    }
-
-    auto code = file_read(tmp_path.c_str()).unwrap();
-
-    VkShaderModuleCreateInfo createInfo{};
-    createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
-    createInfo.codeSize = code.contents.len;
-    createInfo.pCode = reinterpret_cast<const uint32_t*>(code.contents.data);
-
-    VkShaderModule shader_module;
-    if (vkCreateShaderModule(gpu.device, &createInfo, nullptr, &shader_module) != VK_SUCCESS) {
-        gpu_log.error("failed to create shader module");
-    }
-
-    file_close(code);
-
-    VkPipelineShaderStageCreateInfo stage_info{};
-    stage_info.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    stage_info.stage = vk_stage;
-    stage_info.module = shader_module;
-    stage_info.pName = "main";
-
-    return stage_info;
-}
-
-// @todo: pipelines should be somewhere else (pipeline cache), but needs to be referenced from here.
-struct loader_t {
-    ref_t<shader_program_t> load_shader_program(const shader_program_load_params_t &params) {
-        auto exists_it = loaded_shaders.find(params);
-        if (exists_it != loaded_shaders.end()) {
-            return exists_it->second;
-        }
-
-        std::vector<VkPipelineShaderStageCreateInfo> stages;
-        stages.push_back(compile_shader(*gpu, params.vertex_hlsl_path, SHADER_STAGE_VERTEX));
-        stages.push_back(compile_shader(*gpu, params.fragment_hlsl_path, SHADER_STAGE_FRAGMENT));
-
-        loaded_shaders[params] = make_ref<shader_program_t>();
-        shader_program_t &program = *loaded_shaders[params];
-        program.stages = stages;
-        program.params = params;
-        program.modified = false;
-
-        watcher.add_watch(params.vertex_hlsl_path, [](std::string, void *userdata) {
-            auto *shader = static_cast<shader_program_t *>(userdata);
-            shader->modified = true;
-        }, &program);
-        watcher.add_watch(params.fragment_hlsl_path, [](std::string, void *userdata) {
-            auto *shader = static_cast<shader_program_t *>(userdata);
-            shader->modified = true;
-        }, &program);
-
-        return loaded_shaders[params];
-    }
-
-    // @todo: I am not a fan of the fact that pipeline creation is a part of the resource loader.
-    // In my opinion, it should be a part of the gpu. The issue is that hotreloading requires
-    // reconstructing pipelines. It should be easy to move it.
-    ref_t<gpu_pipeline_t> make_pipeline(const pipeline_config_t &config) {
-        auto exists_it = loaded_pipelines.find(config);
-        if (exists_it != loaded_pipelines.end()) {
-            return exists_it->second;
-        }
-
-        auto pipeline = make_ref<gpu_pipeline_t>();
-        pipeline->pipeline = VK_NULL_HANDLE;
-        pipeline->config = config;
-        pipeline->modified = true;
-
-        // @todo: the config can contain temporary pointers (like slices to descriptors).
-        // these need to be copied into the pipeline struct.
-        pipeline->vertex_input_info.bindings = std::vector<VkVertexInputBindingDescription>(config.vertex_input_info.bindings.len);
-        pipeline->vertex_input_info.attributes = std::vector<VkVertexInputAttributeDescription>(config.vertex_input_info.attributes.len);
-        memcpy(pipeline->vertex_input_info.bindings.data(), config.vertex_input_info.bindings.data, config.vertex_input_info.bindings.len * sizeof(VkVertexInputBindingDescription));
-        memcpy(pipeline->vertex_input_info.attributes.data(), config.vertex_input_info.attributes.data, config.vertex_input_info.attributes.len * sizeof(VkVertexInputAttributeDescription));
-
-        pipeline->dynamic_states = std::vector<VkDynamicState>(config.dynamic_state.len);
-        memcpy(pipeline->dynamic_states.data(), config.dynamic_state.data, config.dynamic_state.len * sizeof(VkDynamicState));
-
-        loaded_pipelines[config] = pipeline;
-
-        return pipeline;
-    }
-
-    void init(gpu_t &gpu) {
-        this->gpu = &gpu;
-        watcher.init();
-    }
-
-    void process_hotreload() {
-        watcher.process_watches();
-
-        for (auto it : loaded_pipelines) {
-            auto &pipeline = it.second;
-            if (pipeline->config.shader->modified) {
-                pipeline->modified = true;
-            }
-        }
-
-        for (auto it : loaded_shaders) {
-            auto &program = it.second;
-            if (program->modified) {
-                program->stages.clear();
-
-                program->stages.push_back(compile_shader(*gpu, program->params.vertex_hlsl_path, SHADER_STAGE_VERTEX));
-                program->stages.push_back(compile_shader(*gpu, program->params.fragment_hlsl_path, SHADER_STAGE_FRAGMENT));
-
-                program->modified = false;
-            }
-        }
-
-        for (auto it : loaded_pipelines) {
-            auto &pipeline = it.second;
-
-            if (pipeline->modified) {
-                pipeline->modified = false;
-                if (pipeline->pipeline != VK_NULL_HANDLE) {
-                    // @todo: when is it safe to destroy a pipeline?
-                    // vkDestroyPipeline(gpu->device, pipeline->pipeline, nullptr);
-                    pipeline->pipeline = VK_NULL_HANDLE;
-                }
-
-                // @todo: make this configurable:
-                // it has to be here for now as we need to shuffle the pointers around.
-                VkPipelineColorBlendAttachmentState colorBlendAttachment{};
-                colorBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
-                colorBlendAttachment.blendEnable = VK_FALSE;
-                colorBlendAttachment.srcColorBlendFactor = VK_BLEND_FACTOR_ONE; // Optional
-                colorBlendAttachment.dstColorBlendFactor = VK_BLEND_FACTOR_ZERO; // Optional
-                colorBlendAttachment.colorBlendOp = VK_BLEND_OP_ADD; // Optional
-                colorBlendAttachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE; // Optional
-                colorBlendAttachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO; // Optional
-                colorBlendAttachment.alphaBlendOp = VK_BLEND_OP_ADD; // Optional
-
-                VkPipelineColorBlendStateCreateInfo colorBlending{};
-                colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-                colorBlending.logicOpEnable = VK_FALSE;
-                colorBlending.logicOp = VK_LOGIC_OP_COPY; // Optional
-                colorBlending.attachmentCount = 1;
-                colorBlending.pAttachments = &colorBlendAttachment;
-                colorBlending.blendConstants[0] = 0.0f; // Optional
-                colorBlending.blendConstants[1] = 0.0f; // Optional
-                colorBlending.blendConstants[2] = 0.0f; // Optional
-                colorBlending.blendConstants[3] = 0.0f; // Optional
-
-                VkGraphicsPipelineCreateInfo pipeline_info{};
-                pipeline_info.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
-
-                pipeline_info.stageCount = pipeline->config.shader->stages.size();
-                pipeline_info.pStages = pipeline->config.shader->stages.data();
-
-
-                VkPipelineVertexInputStateCreateInfo vertex_input_info{};
-                {
-                    vertex_input_info.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-                    vertex_input_info.vertexBindingDescriptionCount = pipeline->vertex_input_info.bindings.size();
-                    vertex_input_info.pVertexBindingDescriptions = pipeline->vertex_input_info.bindings.data();
-                    vertex_input_info.vertexAttributeDescriptionCount = pipeline->vertex_input_info.attributes.size();
-                    vertex_input_info.pVertexAttributeDescriptions = pipeline->vertex_input_info.attributes.data();
-
-                    pipeline_info.pVertexInputState = &vertex_input_info;
-                }
-
-                VkPipelineDynamicStateCreateInfo dynamic_state{};
-                {
-                    dynamic_state.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
-                    dynamic_state.dynamicStateCount = pipeline->dynamic_states.size();
-                    dynamic_state.pDynamicStates = pipeline->dynamic_states.data();
-                }
-
-                pipeline_info.pInputAssemblyState = &pipeline->config.input_assembly;
-                pipeline_info.pViewportState = &pipeline->config.viewport_state;
-                pipeline_info.pRasterizationState = &pipeline->config.rasterizer;
-                pipeline_info.pMultisampleState = &pipeline->config.multisampling;
-                pipeline_info.pDepthStencilState = nullptr;
-                pipeline_info.pColorBlendState = &colorBlending;
-                pipeline_info.pDynamicState = &dynamic_state;
-                pipeline_info.layout = pipeline->config.pipeline_layout;
-                pipeline_info.renderPass = pipeline->config.render_pass;
-                pipeline_info.subpass = 0;
-                pipeline_info.basePipelineHandle = VK_NULL_HANDLE;
-
-                if (vkCreateGraphicsPipelines(gpu->device, VK_NULL_HANDLE, 1, &pipeline_info, nullptr, &pipeline->pipeline) != VK_SUCCESS) {
-                    gpu_log.error("failed to create graphics pipeline");
-                }
-            }
-        }
-    }
-
-    std::unordered_map<shader_program_load_params_t, ref_t<shader_program_t>> loaded_shaders;
-    std::unordered_map<pipeline_config_t, ref_t<gpu_pipeline_t>> loaded_pipelines;
-
-    fswatcher_t watcher;
-    gpu_t *gpu;
-};
+#include "resource.h"
+#include "camera.h"
+#include "freefly_controller.h"
 
 loader_t g_loader;
 
@@ -560,7 +183,7 @@ int main(void) {
 
     modimp::scene_t scene_test;
     {
-        auto res = modimp::scene_load(scene_test, "assets/cube.obj");
+        auto res = modimp::scene_load(scene_test, "assets/dragon.obj");
         if (res.is_err()) {
             g_log.error("failed to load model: {}", res.unwrap_err());
             return 1;
@@ -600,6 +223,7 @@ int main(void) {
 
     // create a test pipeline and pass
     ref_t<gpu_pipeline_t> pipeline;
+    VkDescriptorSetLayout descriptorSetLayout;
     {
         VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
         inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
@@ -653,10 +277,28 @@ int main(void) {
         colorBlending.blendConstants[2] = 0.0f; // Optional
         colorBlending.blendConstants[3] = 0.0f; // Optional
 
+        // @todo: temp
+        {
+            VkDescriptorSetLayoutBinding uboLayoutBinding{};
+            uboLayoutBinding.binding = 0;
+            uboLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+            uboLayoutBinding.descriptorCount = 1;
+            uboLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+
+            VkDescriptorSetLayoutCreateInfo layoutInfo{};
+            layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+            layoutInfo.bindingCount = 1;
+            layoutInfo.pBindings = &uboLayoutBinding;
+
+            if (vkCreateDescriptorSetLayout(gpu.device, &layoutInfo, nullptr, &descriptorSetLayout) != VK_SUCCESS) {
+                throw std::runtime_error("failed to create descriptor set layout!");
+            }
+        }
+
         VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
         pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-        pipelineLayoutInfo.setLayoutCount = 0; // Optional
-        pipelineLayoutInfo.pSetLayouts = nullptr; // Optional
+        pipelineLayoutInfo.setLayoutCount = 1;
+        pipelineLayoutInfo.pSetLayouts = &descriptorSetLayout;
         pipelineLayoutInfo.pushConstantRangeCount = 0; // Optional
         pipelineLayoutInfo.pPushConstantRanges = nullptr; // Optional
 
@@ -780,18 +422,27 @@ int main(void) {
             auto vertices = slice<u8>((u8 *)buffer, size);
             for (usize i = 0; i < m.vertices.len; i++) {
                 auto &v = m.vertices[i];
-                auto &n = m.normals[i];
-                auto &uv = m.texcoords[0][i];
+
+                auto &normals = m.normals;
+
+                auto &uvp = m.texcoords[0];
 
                 f32 *ptr = (f32 *)buffer + i * 8;
                 ptr[0] = v.x;
                 ptr[1] = v.y;
                 ptr[2] = v.z;
-                ptr[3] = n.x;
-                ptr[4] = n.y;
-                ptr[5] = n.z;
-                ptr[6] = uv.x;
-                ptr[7] = uv.y;
+
+                if (normals.data != nullptr) {
+                    auto &n = normals[i];
+                    ptr[3] = n.x;
+                    ptr[4] = n.y;
+                    ptr[5] = n.z;
+                }
+                if (uvp.data != nullptr) {
+                    auto &uv = uvp[i];
+                    ptr[6] = uv.x;
+                    ptr[7] = uv.y;
+                }
             }
 
             gpu.create_buffer_persistent(vertices, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
@@ -805,10 +456,78 @@ int main(void) {
         }
     }
 
+    struct env_ubo_t {
+        m4f view;
+        m4f proj;
+    };
+
+    camera_t camera = camera_t(
+        v3f{0, 0, 5}, v3f{0, 0, 0},
+        m4f::perspective(anglef::from_deg(45.0f), 1200.0f / 900.0f, 0.1f, 60.0f)
+    );
+    freefly_controller_t controller;
+    controller.camera = &camera;
+
+    VkBuffer env_ubo_buffer;
+    VmaAllocation env_ubo_buffer_alloc;
+    {
+        gpu.create_buffer(sizeof(camera_uniform_t), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+            env_ubo_buffer, env_ubo_buffer_alloc);
+    }
+
+    // create the ubo thingy
+    VkDescriptorPool descriptor_pool;
+    {
+        VkDescriptorPoolSize pool_sizes[] = {
+            { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1 }
+        };
+
+        VkDescriptorPoolCreateInfo poolInfo{};
+        poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+        poolInfo.poolSizeCount = 1;
+        poolInfo.pPoolSizes = pool_sizes;
+        poolInfo.maxSets = 1;
+
+        VK_CHECK(vkCreateDescriptorPool(gpu.device, &poolInfo, nullptr, &descriptor_pool));
+    }
+    VkDescriptorSet descriptor_set;
+    {
+        VkDescriptorSetAllocateInfo allocInfo{};
+        allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+        allocInfo.descriptorPool = descriptor_pool;
+        allocInfo.descriptorSetCount = 1;
+        allocInfo.pSetLayouts = &descriptorSetLayout;
+
+        VK_CHECK(vkAllocateDescriptorSets(gpu.device, &allocInfo, &descriptor_set));
+    }
+
+    {
+        // also, update it to point to the correct buffer.
+        VkDescriptorBufferInfo bufferInfo{};
+        bufferInfo.buffer = env_ubo_buffer;
+        bufferInfo.offset = 0;
+        bufferInfo.range = sizeof(env_ubo_t);
+
+        VkWriteDescriptorSet descriptorWrite{};
+        descriptorWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        descriptorWrite.dstSet = descriptor_set;
+        descriptorWrite.dstBinding = 0;
+        descriptorWrite.dstArrayElement = 0;
+
+        descriptorWrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        descriptorWrite.descriptorCount = 1;
+
+        descriptorWrite.pBufferInfo = &bufferInfo;
+
+        vkUpdateDescriptorSets(gpu.device, 1, &descriptorWrite, 0, nullptr);
+    }
+
     g_log.info("running...");
     while(!glfwWindowShouldClose(window)) {
         g_loader.process_hotreload();
         full_loop_timer.start();
+
+        controller.update(window, 0.16);
 
         ImGui_ImplVulkan_NewFrame();
         ImGui_ImplGlfw_NewFrame();
@@ -912,13 +631,24 @@ int main(void) {
 
             vkCmdBindPipeline(cmds, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline->pipeline);
 
+            vkCmdSetViewport(cmds, 0, 1, &full_viewport);
+            vkCmdSetScissor(cmds, 0, 1, &full_scissor);
+
+            // @þœðœ: vad händer ens här??? BLOCK?
+            env_ubo_t env = {
+                .view = camera.view_matrix,
+                .proj = camera.projection_matrix,
+            };
+            gpu.write_buffer(slice<u8>((u8 *)&env, sizeof(env)), env_ubo_buffer_alloc);
+
+            vkCmdBindDescriptorSets(cmds, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline->config.pipeline_layout, 0, 1, &descriptor_set, 0, nullptr);
+
             VkBuffer buffers[] = {vertex_buffer};
             VkDeviceSize offsets[] = {0};
+
             vkCmdBindVertexBuffers(cmds, 0, array_size(buffers), buffers, offsets);
             vkCmdBindIndexBuffer(cmds, index_buffer, 0, VK_INDEX_TYPE_UINT32);
 
-            vkCmdSetViewport(cmds, 0, 1, &full_viewport);
-            vkCmdSetScissor(cmds, 0, 1, &full_scissor);
             vkCmdDrawIndexed(cmds, scene_test.meshes[0].indices.len, 1, 0, 0, 0);
 
             imgui_render_timer.start(gpu, cmds);

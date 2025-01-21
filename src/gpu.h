@@ -62,6 +62,10 @@ struct gpu_t {
     // to write to
     void create_buffer_persistent(slice<u8> data, VkBufferUsageFlags usage, VkBuffer &buffer, VmaAllocation &allocation);
 
+    // creates a buffer which is memory mapped to the cpu. Really cool!
+    void create_buffer(usize size, VkBufferUsageFlags usage, VkBuffer &buffer, VmaAllocation &allocation);
+    void write_buffer(slice<u8> data, VmaAllocation allocation);
+
     VkCommandBuffer begin_single_use_command_buffer();
     void end_single_use_command_buffer(VkCommandBuffer cmd);
 };

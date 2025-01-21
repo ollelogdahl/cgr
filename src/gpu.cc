@@ -565,6 +565,33 @@ void gpu_t::create_buffer_persistent(slice<u8> data, VkBufferUsageFlags usage, V
     }
 }
 
+void gpu_t::create_buffer(usize size, VkBufferUsageFlags usage, VkBuffer &buffer, VmaAllocation &allocation) {
+    VkBuffer staging_buffer;
+    VmaAllocation staging_allocation;
+    VmaAllocationInfo staging_allocation_info;
+
+    {
+        VkBufferCreateInfo buffer_info{};
+        buffer_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        buffer_info.size = size;
+        buffer_info.usage = usage;
+        buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+        VmaAllocationCreateInfo alloc_info{};
+        alloc_info.usage = VMA_MEMORY_USAGE_AUTO;
+        alloc_info.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT;
+
+        vmaCreateBuffer(allocator, &buffer_info, &alloc_info, &buffer, &allocation, &staging_allocation_info);
+    }
+}
+
+void gpu_t::write_buffer(slice<u8> data, VmaAllocation allocation) {
+    void *address;
+    vmaMapMemory(allocator, allocation, &address);
+    memcpy(address, data.data, data.len);
+    vmaUnmapMemory(allocator, allocation);
+}
+
 VkCommandBuffer gpu_t::begin_single_use_command_buffer() {
     VkCommandBufferAllocateInfo allocInfo{};
     allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
