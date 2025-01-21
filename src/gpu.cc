@@ -292,6 +292,14 @@ void gpu_t::init(GLFWwindow *window) {
     }
 
     recreate_swapchain(false);
+
+    // setup the allocator
+    VmaAllocatorCreateInfo allocatorInfo = {};
+    allocatorInfo.physicalDevice = pdev;
+    allocatorInfo.device = device;
+    allocatorInfo.instance = instance;
+    allocatorInfo.flags = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT;
+    vmaCreateAllocator(&allocatorInfo, &allocator);
 }
 
 void gpu_t::recreate_swapchain(bool need_to_clear) {
@@ -483,46 +491,6 @@ void gpu_t::recreate_swapchain(bool need_to_clear) {
         }
     }
 }
-
-void gpu_t::create_buffer(VkBuffer &buffer, VkDeviceMemory &buffer_memory, VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties) {
-    VkBufferCreateInfo buffer_info{};
-    buffer_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    buffer_info.size = size;
-    buffer_info.usage = usage;
-    buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-
-    if (vkCreateBuffer(device, &buffer_info, nullptr, &buffer) != VK_SUCCESS) {
-        panic("failed to create buffer");
-    }
-
-    VkMemoryRequirements memRequirements;
-    vkGetBufferMemoryRequirements(device, buffer, &memRequirements);
-
-    VkPhysicalDeviceMemoryProperties memProperties;
-    vkGetPhysicalDeviceMemoryProperties(pdev, &memProperties);
-
-    auto get_type_index = [&](u32 type_filter, VkMemoryPropertyFlags properties) -> u32 {
-        for (u32 i = 0; i < memProperties.memoryTypeCount; i++) {
-            if ((type_filter & (1 << i)) && (memProperties.memoryTypes[i].propertyFlags & properties) == properties) {
-                return i;
-            }
-        }
-
-        panic("failed to find suitable memory type");
-    };
-
-    VkMemoryAllocateInfo allocInfo{};
-    allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    allocInfo.allocationSize = memRequirements.size;
-    allocInfo.memoryTypeIndex = get_type_index(memRequirements.memoryTypeBits, properties);
-
-    if (vkAllocateMemory(device, &allocInfo, nullptr, &buffer_memory) != VK_SUCCESS) {
-        panic("failed to allocate buffer memory");
-    }
-
-    vkBindBufferMemory(device, buffer, buffer_memory, 0);
-}
-
 
 void dump_available_validation_layers() {
     uint32_t layer_count;

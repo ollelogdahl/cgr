@@ -4,6 +4,7 @@
 #include <GLFW/glfw3.h>
 
 #include "oc.h"
+#include "vma/vk_mem_alloc.h"
 
 #include <vector>
 #include <vulkan/vulkan_core.h>
@@ -25,6 +26,8 @@ struct gpu_t {
     VkRenderPass display_render_pass;
 
     VkDebugUtilsMessengerEXT debug_messager;
+
+    VmaAllocator allocator;
 
     struct {
         u64 timestamp_period;
@@ -53,5 +56,7 @@ struct gpu_t {
     void init(GLFWwindow *window);
     void recreate_swapchain(bool need_to_clear = true);
 
-    void create_buffer(VkBuffer &buffer, VkDeviceMemory &buffer_memory, VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties);
+    // creates a 'persistent' buffer (optimized for gpu-only use) using a staging buffer.
+    // to write to
+    void create_buffer_persistent(VkDeviceSize size, VkBufferUsageFlags usage, VkBuffer &buffer, VmaAllocation &allocation);
 };

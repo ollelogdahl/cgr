@@ -768,9 +768,9 @@ int main(void) {
 
     // create a gpu buffer
     VkBuffer vertex_buffer;
-    VkDeviceMemory vertex_buffer_memory;
+    VmaAllocation vertex_buffer_alloc;
     VkBuffer index_buffer;
-    VkDeviceMemory index_buffer_memory;
+    VmaAllocation index_buffer_alloc;
     {
         // we can extract the model from the test_scene first.
         auto &m = scene_test.meshes[0];
@@ -779,20 +779,30 @@ int main(void) {
         // upload into a buffer with TRANSFER_SRC, and move into a buffer with TRANSFER_DST.
         // this would be more optimal.
         {
-            auto size = 8 * sizeof(f32) * m.vertices.len;
-            gpu.create_buffer(vertex_buffer, vertex_buffer_memory, size,
-                VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 
-            // map it and write mesh data
-            void *data;
-            vkMapMemory(gpu.device, vertex_buffer_memory, 0, size, 0, &data);
+            auto size = 8 * sizeof(f32) * m.vertices.len;
+
+            VkBuffer staging_buffer;
+            VmaAllocation staging_buffer_alloc;
+            VmaAllocationInfo alloc_info;
+
+            VkBufferCreateInfo staging_buffer_info = {};
+            staging_buffer_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+            staging_buffer_info.size = size;
+            staging_buffer_info.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+
+            VmaAllocationCreateInfo staging_alloc_create_info = {};
+            staging_alloc_create_info.usage = VMA_MEMORY_USAGE_AUTO;
+            staging_alloc_create_info.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
+
+            vmaCreateBuffer(gpu.allocator, &staging_buffer_info, &staging_alloc_create_info, &staging_buffer, &staging_buffer_alloc, &alloc_info);
 
             for (usize i = 0; i < m.vertices.len; i++) {
                 auto &v = m.vertices[i];
                 auto &n = m.normals[i];
                 auto &uv = m.texcoords[0][i];
 
-                f32 *ptr = (f32 *)data + i * 8;
+                f32 *ptr = (f32 *)alloc_info.pMappedData + i * 8;
                 ptr[0] = v.x;
                 ptr[1] = v.y;
                 ptr[2] = v.z;
@@ -803,7 +813,16 @@ int main(void) {
                 ptr[7] = uv.y;
             }
 
-            vkUnmapMemory(gpu.device, vertex_buffer_memory);
+            VkBufferCreateInfo buffer_info = {};
+            buffer_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+            buffer_info.size = size;
+            buffer_info.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+
+            VmaAllocationCreateInfo alloc_create_info = {};
+            alloc_create_info.usage = VMA_MEMORY_USAGE_AUTO;
+            alloc_create_info.flags = 0;
+
+            vmaCreateBuffer(gpu.allocator, &buffer_info, &alloc_create_info, &vertex_buffer, &vertex_buffer_alloc, nullptr);
         }
 
         {
