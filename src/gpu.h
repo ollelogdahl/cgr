@@ -27,6 +27,8 @@ struct gpu_t {
 
     VkDebugUtilsMessengerEXT debug_messager;
 
+    VkCommandPool command_pool;
+    VkCommandPool transient_command_pool;
     VmaAllocator allocator;
 
     struct {
@@ -58,5 +60,8 @@ struct gpu_t {
 
     // creates a 'persistent' buffer (optimized for gpu-only use) using a staging buffer.
     // to write to
-    void create_buffer_persistent(VkDeviceSize size, VkBufferUsageFlags usage, VkBuffer &buffer, VmaAllocation &allocation);
+    void create_buffer_persistent(slice<u8> data, VkBufferUsageFlags usage, VkBuffer &buffer, VmaAllocation &allocation);
+
+    VkCommandBuffer begin_single_use_command_buffer();
+    void end_single_use_command_buffer(VkCommandBuffer cmd);
 };

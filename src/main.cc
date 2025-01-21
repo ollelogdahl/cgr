@@ -204,10 +204,13 @@ VkPipelineShaderStageCreateInfo compile_shader(gpu_t &gpu, const char *path, int
 
     if (file_a_is_newer_than_b(path, tmp_path.c_str())) {
         gpu_log.info("compiling shader {}", path);
-        auto cmd = fmt::format("glslc -fshader-stage={} -o {} {}", glslc_stage, tmp_path, path);
+        // @todo: the path to glslc should maybe be compile-time configurable? or taken from env?
+        auto cmd = fmt::format("/home/dv20/dv20oll/bin/glslc -fshader-stage={} -o {} {}", glslc_stage, tmp_path, path);
 
         // @todo: use exec instead of system.
-        // we want to be able to do these things in parallel.
+        // we want to be able to do these things in parallel i think.
+        // for this, we will break this function into two, (try_invoke_compiler, create_shader),
+        // and then we can call try_invoke_compiler in parallel.
         system(cmd.c_str());
     }
 
@@ -264,6 +267,9 @@ struct loader_t {
         return loaded_shaders[params];
     }
 
+    // @todo: I am not a fan of the fact that pipeline creation is a part of the resource loader.
+    // In my opinion, it should be a part of the gpu. The issue is that hotreloading requires
+    // reconstructing pipelines. It should be easy to move it.
     ref_t<gpu_pipeline_t> make_pipeline(const pipeline_config_t &config) {
         auto exists_it = loaded_pipelines.find(config);
         if (exists_it != loaded_pipelines.end()) {
@@ -717,22 +723,11 @@ int main(void) {
     // setup the command-buffers.
     // i do not think these must be owned by the gpu.
 
-    VkCommandPool cmd_pool;
-    {
-        VkCommandPoolCreateInfo poolInfo{};
-        poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
-        poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
-        // can also be transient.
-
-        poolInfo.queueFamilyIndex = gpu.queue_families.graphics;
-        VK_CHECK(vkCreateCommandPool(gpu.device, &poolInfo, nullptr, &cmd_pool));
-    }
-
     VkCommandBuffer cmds;
     {
         VkCommandBufferAllocateInfo allocInfo{};
         allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-        allocInfo.commandPool = cmd_pool;
+        allocInfo.commandPool = gpu.command_pool;
         allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
         allocInfo.commandBufferCount = 1;
 
@@ -781,28 +776,14 @@ int main(void) {
         {
 
             auto size = 8 * sizeof(f32) * m.vertices.len;
-
-            VkBuffer staging_buffer;
-            VmaAllocation staging_buffer_alloc;
-            VmaAllocationInfo alloc_info;
-
-            VkBufferCreateInfo staging_buffer_info = {};
-            staging_buffer_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-            staging_buffer_info.size = size;
-            staging_buffer_info.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
-
-            VmaAllocationCreateInfo staging_alloc_create_info = {};
-            staging_alloc_create_info.usage = VMA_MEMORY_USAGE_AUTO;
-            staging_alloc_create_info.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
-
-            vmaCreateBuffer(gpu.allocator, &staging_buffer_info, &staging_alloc_create_info, &staging_buffer, &staging_buffer_alloc, &alloc_info);
-
+            auto buffer = new u8[size];
+            auto vertices = slice<u8>((u8 *)buffer, size);
             for (usize i = 0; i < m.vertices.len; i++) {
                 auto &v = m.vertices[i];
                 auto &n = m.normals[i];
                 auto &uv = m.texcoords[0][i];
 
-                f32 *ptr = (f32 *)alloc_info.pMappedData + i * 8;
+                f32 *ptr = (f32 *)buffer + i * 8;
                 ptr[0] = v.x;
                 ptr[1] = v.y;
                 ptr[2] = v.z;
@@ -813,28 +794,14 @@ int main(void) {
                 ptr[7] = uv.y;
             }
 
-            VkBufferCreateInfo buffer_info = {};
-            buffer_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-            buffer_info.size = size;
-            buffer_info.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
-
-            VmaAllocationCreateInfo alloc_create_info = {};
-            alloc_create_info.usage = VMA_MEMORY_USAGE_AUTO;
-            alloc_create_info.flags = 0;
-
-            vmaCreateBuffer(gpu.allocator, &buffer_info, &alloc_create_info, &vertex_buffer, &vertex_buffer_alloc, nullptr);
+            gpu.create_buffer_persistent(vertices, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                vertex_buffer, vertex_buffer_alloc);
         }
 
         {
-            auto size = sizeof(u32) * m.indices.len;
-            gpu.create_buffer(index_buffer, index_buffer_memory, size,
-                VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-
-            // map it and write mesh data
-            void *data;
-            vkMapMemory(gpu.device, index_buffer_memory, 0, size, 0, &data);
-            memcpy(data, m.indices.data, size);
-            vkUnmapMemory(gpu.device, index_buffer_memory);
+            auto indices = slice<u32>((u32 *)m.indices.data, m.indices.len);
+            gpu.create_buffer_persistent(indices, VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+                index_buffer, index_buffer_alloc);
         }
     }
 

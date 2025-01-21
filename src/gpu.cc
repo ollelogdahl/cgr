@@ -293,6 +293,26 @@ void gpu_t::init(GLFWwindow *window) {
 
     recreate_swapchain(false);
 
+    // setup the command pools
+    {
+        VkCommandPoolCreateInfo poolInfo{};
+        poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+        poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+        // can also be transient.
+
+        poolInfo.queueFamilyIndex = queue_families.graphics;
+        VK_CHECK(vkCreateCommandPool(device, &poolInfo, nullptr, &command_pool));
+    }
+    {
+        VkCommandPoolCreateInfo poolInfo{};
+        poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+        poolInfo.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
+        // can also be transient.
+
+        poolInfo.queueFamilyIndex = queue_families.graphics;
+        VK_CHECK(vkCreateCommandPool(device, &poolInfo, nullptr, &transient_command_pool));
+    }
+
     // setup the allocator
     VmaAllocatorCreateInfo allocatorInfo = {};
     allocatorInfo.physicalDevice = pdev;
@@ -490,6 +510,92 @@ void gpu_t::recreate_swapchain(bool need_to_clear) {
             }
         }
     }
+}
+
+void gpu_t::create_buffer_persistent(slice<u8> data, VkBufferUsageFlags usage, VkBuffer &buffer, VmaAllocation &allocation) {
+
+    VkBuffer staging_buffer;
+    VmaAllocation staging_allocation;
+    VmaAllocationInfo staging_allocation_info;
+
+    {
+        VkBufferCreateInfo buffer_info{};
+        buffer_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        buffer_info.size = data.len;
+        buffer_info.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+        buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+        VmaAllocationCreateInfo alloc_info{};
+        alloc_info.usage = VMA_MEMORY_USAGE_AUTO;
+        alloc_info.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT;
+
+        vmaCreateBuffer(allocator, &buffer_info, &alloc_info, &staging_buffer, &staging_allocation, &staging_allocation_info);
+    }
+
+    {
+        // do copy
+        vmaCopyMemoryToAllocation(allocator, data.data, staging_allocation, 0, data.len);
+    }
+
+    {
+        VkBufferCreateInfo buffer_info{};
+        buffer_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        buffer_info.size = data.len;
+        buffer_info.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT | usage;
+        buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+        VmaAllocationCreateInfo alloc_info{};
+        alloc_info.usage = VMA_MEMORY_USAGE_GPU_ONLY;
+
+        vmaCreateBuffer(allocator, &buffer_info, &alloc_info, &buffer, &allocation, nullptr);
+    }
+
+    {
+        // perform move from staging to real
+        VkCommandBuffer cmd = begin_single_use_command_buffer();
+
+        VkBufferCopy copyRegion{};
+        copyRegion.srcOffset = 0;
+        copyRegion.dstOffset = 0;
+        copyRegion.size = data.len;
+
+        vkCmdCopyBuffer(cmd, staging_buffer, buffer, 1, &copyRegion);
+
+        end_single_use_command_buffer(cmd);
+    }
+}
+
+VkCommandBuffer gpu_t::begin_single_use_command_buffer() {
+    VkCommandBufferAllocateInfo allocInfo{};
+    allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    allocInfo.commandPool = transient_command_pool;
+    allocInfo.commandBufferCount = 1;
+
+    VkCommandBuffer commandBuffer;
+    vkAllocateCommandBuffers(device, &allocInfo, &commandBuffer);
+
+    VkCommandBufferBeginInfo beginInfo{};
+    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+
+    vkBeginCommandBuffer(commandBuffer, &beginInfo);
+
+    return commandBuffer;
+}
+
+void gpu_t::end_single_use_command_buffer(VkCommandBuffer cmd) {
+    vkEndCommandBuffer(cmd);
+
+    VkSubmitInfo submitInfo{};
+    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submitInfo.commandBufferCount = 1;
+    submitInfo.pCommandBuffers = &cmd;
+
+    vkQueueSubmit(graphics_queue, 1, &submitInfo, VK_NULL_HANDLE);
+    vkQueueWaitIdle(graphics_queue);
+
+    vkFreeCommandBuffers(device, transient_command_pool, 1, &cmd);
 }
 
 void dump_available_validation_layers() {
