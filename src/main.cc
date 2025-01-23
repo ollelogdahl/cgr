@@ -18,7 +18,6 @@
 #include <set>
 #include <vulkan/vulkan_core.h>
 
-static logger_t gpu_log = logger_t("gpu");
 
 #include <imgui/imgui.h>
 #include <imgui/imgui_impl_glfw.h>
@@ -30,12 +29,11 @@ static logger_t gpu_log = logger_t("gpu");
 #include "resource.h"
 #include "camera.h"
 #include "freefly_controller.h"
+#include "vks.h"
+
+#define MAX_FRAMES_IN_FLIGHT 3
 
 loader_t g_loader;
-
-struct imgui_renderer_state_t {
-    VkCommandBuffer cmds;
-};
 
 void imgui_init(gpu_t &gpu) {
     ImGui::CreateContext();
@@ -69,6 +67,7 @@ void imgui_init(gpu_t &gpu) {
     }
 
     // create unique gpu stuffs for imgui...
+    // @todo: recreate this when swapchain is recreated ? HMM.
     ImGui_ImplGlfw_InitForVulkan(gpu.window, true);
     ImGui_ImplVulkan_InitInfo init_info = {};
     init_info.Instance = gpu.instance;
@@ -78,13 +77,20 @@ void imgui_init(gpu_t &gpu) {
     init_info.Queue = gpu.graphics_queue,
     init_info.PipelineCache = VK_NULL_HANDLE;
     init_info.DescriptorPool = descriptor_pool;
-    init_info.RenderPass = gpu.display_render_pass;
+    init_info.UseDynamicRendering = true;
     init_info.Subpass = 0;
-    init_info.MinImageCount = 2;
-    init_info.ImageCount = gpu.swapchain.images.size();
+    init_info.MinImageCount = gpu.swapchain.image_count;
+    init_info.ImageCount = gpu.swapchain.image_count;
     init_info.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
     init_info.Allocator = VK_NULL_HANDLE;
     init_info.CheckVkResultFn = nullptr;
+
+    init_info.PipelineRenderingCreateInfo = {};
+    init_info.PipelineRenderingCreateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
+	init_info.PipelineRenderingCreateInfo.colorAttachmentCount = 1;
+	init_info.PipelineRenderingCreateInfo.pColorAttachmentFormats = &gpu.swapchain.image_format;
+	init_info.PipelineRenderingCreateInfo.depthAttachmentFormat = VK_FORMAT_D32_SFLOAT;
+
     ImGui_ImplVulkan_Init(&init_info);
 }
 
@@ -113,7 +119,7 @@ struct cpu_timer_t {
         measure_idx = (measure_idx + 1) % array_size(measures);
     }
 
-    float measure_ns() {
+    f32 measure_ms() {
         i64 idx = (i64)measure_idx - 1;
         if (idx < 0) {
             idx = array_size(measures) - 1;
@@ -177,13 +183,26 @@ struct gpu_timer_t {
     VkQueryPool query_pool;
 };
 
-int main(void) {
+struct material_push_block_t {
+    f32 color_r, color_g, color_b;
+    f32 roughness;
+    f32 metallic;
+
+    f32 padding[3];
+};
+
+int main(int argc, char **argv) {
     oc_init();
     glfwInit();
 
     modimp::scene_t scene_test;
     {
-        auto res = modimp::scene_load(scene_test, "assets/dragon.obj");
+        const char *obj_path = "assets/dragon.obj";
+        if (argc > 1) {
+            obj_path = argv[1];
+        }
+
+        auto res = modimp::scene_load(scene_test, obj_path);
         if (res.is_err()) {
             g_log.error("failed to load model: {}", res.unwrap_err());
             return 1;
@@ -215,38 +234,10 @@ int main(void) {
     imgui_init(gpu);
     g_log.info("imgui initialized");
 
-    // setup the camera ubo
-    struct camera_uniform_t {
-        m4f view;
-        m4f proj;
-    };
-
     // create a test pipeline and pass
     ref_t<gpu_pipeline_t> pipeline;
     VkDescriptorSetLayout descriptorSetLayout;
     {
-        VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
-        inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
-        inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-        inputAssembly.primitiveRestartEnable = VK_FALSE;
-
-        VkPipelineViewportStateCreateInfo viewportState{};
-        viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
-        viewportState.viewportCount = 1;
-        viewportState.scissorCount = 1;
-
-        VkPipelineRasterizationStateCreateInfo rasterizer{};
-        rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
-        rasterizer.depthClampEnable = VK_FALSE; // useful to set as true for shadow mapping
-        rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
-        rasterizer.lineWidth = 1.0f;
-        rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
-        rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
-        rasterizer.depthBiasEnable = VK_FALSE;
-        rasterizer.depthBiasConstantFactor = 0.0f; // Optional
-        rasterizer.depthBiasClamp = 0.0f; // Optional
-        rasterizer.depthBiasSlopeFactor = 0.0f; // Optional
-
         VkPipelineMultisampleStateCreateInfo multisampling{};
         multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
         multisampling.sampleShadingEnable = VK_FALSE;
@@ -256,34 +247,13 @@ int main(void) {
         multisampling.alphaToCoverageEnable = VK_FALSE; // Optional
         multisampling.alphaToOneEnable = VK_FALSE; // Optional
 
-        VkPipelineColorBlendAttachmentState colorBlendAttachment{};
-        colorBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
-        colorBlendAttachment.blendEnable = VK_FALSE;
-        colorBlendAttachment.srcColorBlendFactor = VK_BLEND_FACTOR_ONE; // Optional
-        colorBlendAttachment.dstColorBlendFactor = VK_BLEND_FACTOR_ZERO; // Optional
-        colorBlendAttachment.colorBlendOp = VK_BLEND_OP_ADD; // Optional
-        colorBlendAttachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE; // Optional
-        colorBlendAttachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO; // Optional
-        colorBlendAttachment.alphaBlendOp = VK_BLEND_OP_ADD; // Optional
-
-        VkPipelineColorBlendStateCreateInfo colorBlending{};
-        colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-        colorBlending.logicOpEnable = VK_FALSE;
-        colorBlending.logicOp = VK_LOGIC_OP_COPY; // Optional
-        colorBlending.attachmentCount = 1;
-        colorBlending.pAttachments = &colorBlendAttachment;
-        colorBlending.blendConstants[0] = 0.0f; // Optional
-        colorBlending.blendConstants[1] = 0.0f; // Optional
-        colorBlending.blendConstants[2] = 0.0f; // Optional
-        colorBlending.blendConstants[3] = 0.0f; // Optional
-
         // @todo: temp
         {
             VkDescriptorSetLayoutBinding uboLayoutBinding{};
             uboLayoutBinding.binding = 0;
             uboLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
             uboLayoutBinding.descriptorCount = 1;
-            uboLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+            uboLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
 
             VkDescriptorSetLayoutCreateInfo layoutInfo{};
             layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
@@ -295,15 +265,20 @@ int main(void) {
             }
         }
 
-        VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
-        pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-        pipelineLayoutInfo.setLayoutCount = 1;
-        pipelineLayoutInfo.pSetLayouts = &descriptorSetLayout;
-        pipelineLayoutInfo.pushConstantRangeCount = 0; // Optional
-        pipelineLayoutInfo.pPushConstantRanges = nullptr; // Optional
+        VkPushConstantRange ranges[2] = {
+            { VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(m4f) },
+            { VK_SHADER_STAGE_FRAGMENT_BIT, sizeof(material_push_block_t), sizeof(m4f) }
+        };
+        VkPipelineLayoutCreateInfo layout_info{};
+        layout_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+        layout_info.setLayoutCount = 1;
+        layout_info.pSetLayouts = &descriptorSetLayout;
+        layout_info.pushConstantRangeCount = array_size(ranges);
+        layout_info.pPushConstantRanges = ranges;
 
-        VkPipelineLayout pipelineLayout;
-        VK_CHECK(vkCreatePipelineLayout(gpu.device, &pipelineLayoutInfo, nullptr, &pipelineLayout));
+        // @todo: this gets lost!
+        VkPipelineLayout pipeline_layout;
+        VK_CHECK(vkCreatePipelineLayout(gpu.device, &layout_info, nullptr, &pipeline_layout));
 
         auto shader = g_loader.load_shader_program({
            .vertex_hlsl_path = "eassets/shaders/test.vert",
@@ -311,12 +286,6 @@ int main(void) {
         });
 
         // @todo: It would be fun to try to de-interlace the properties.
-        //
-        // Buffer1:
-        //  - position v3f
-        //  - normals v3f
-        //  - uv v2f
-        // Buffer2: index
         pipeline = g_loader.make_pipeline({
             .shader = shader,
             .vertex_input_info = {
@@ -349,49 +318,16 @@ int main(void) {
 
                 },
             },
-            .input_assembly = inputAssembly,
-            .viewport_state = viewportState,
-            .rasterizer = rasterizer,
-            .multisampling = multisampling,
-            .dynamic_state = {
-                VK_DYNAMIC_STATE_VIEWPORT,
-                VK_DYNAMIC_STATE_SCISSOR
+            .depth_stencil = {
+                .depth_test = true,
+                .depth_write = true,
+                .depth_compare_op = VK_COMPARE_OP_LESS,
             },
-            .pipeline_layout = pipelineLayout,
-            .render_pass = gpu.display_render_pass,
+            .multisampling = multisampling,
+            .pipeline_layout = pipeline_layout,
+            .color_attachment_formats = { VK_FORMAT_B8G8R8A8_UNORM },
+            .depth_attachment_format = VK_FORMAT_D32_SFLOAT,
         });
-    }
-
-    // setup the command-buffers.
-    // i do not think these must be owned by the gpu.
-
-    VkCommandBuffer cmds;
-    {
-        VkCommandBufferAllocateInfo allocInfo{};
-        allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-        allocInfo.commandPool = gpu.command_pool;
-        allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-        allocInfo.commandBufferCount = 1;
-
-        VK_CHECK(vkAllocateCommandBuffers(gpu.device, &allocInfo, &cmds));
-    }
-
-    VkSemaphore imageAvailableSemaphore;
-    VkSemaphore renderFinishedSemaphore;
-    VkFence inFlightFence;
-
-    // create sync objects
-    {
-        VkSemaphoreCreateInfo semaphoreInfo{};
-        semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
-
-        VkFenceCreateInfo fenceInfo{};
-        fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
-        fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
-
-        VK_CHECK(vkCreateSemaphore(gpu.device, &semaphoreInfo, nullptr, &imageAvailableSemaphore));
-        VK_CHECK(vkCreateSemaphore(gpu.device, &semaphoreInfo, nullptr, &renderFinishedSemaphore));
-        VK_CHECK(vkCreateFence(gpu.device, &fenceInfo, nullptr, &inFlightFence));
     }
 
     cpu_timer_t full_loop_timer;
@@ -404,10 +340,7 @@ int main(void) {
     vkDeviceWaitIdle(gpu.device);
 
     // create a gpu buffer
-    VkBuffer vertex_buffer;
-    VmaAllocation vertex_buffer_alloc;
-    VkBuffer index_buffer;
-    VmaAllocation index_buffer_alloc;
+    gpu_buffer_t vertex_buffer, index_buffer;
     {
         // we can extract the model from the test_scene first.
         auto &m = scene_test.meshes[0];
@@ -446,34 +379,32 @@ int main(void) {
             }
 
             gpu.create_buffer_persistent(vertices, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-                vertex_buffer, vertex_buffer_alloc);
+                vertex_buffer);
         }
 
         {
             auto indices = slice<u32>((u32 *)m.indices.data, m.indices.len);
             gpu.create_buffer_persistent(indices, VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
-                index_buffer, index_buffer_alloc);
+                index_buffer);
         }
     }
 
     struct env_ubo_t {
         m4f view;
         m4f proj;
+        v3f view_pos;
     };
 
     camera_t camera = camera_t(
         v3f{0, 0, 5}, v3f{0, 0, 0},
-        m4f::perspective(anglef::from_deg(45.0f), 1200.0f / 900.0f, 0.1f, 60.0f)
+        m4f::perspective(anglef::from_deg(80.0f), 1200.0f / 900.0f, 0.01f, 20.0f)
     );
     freefly_controller_t controller;
     controller.camera = &camera;
 
-    VkBuffer env_ubo_buffer;
-    VmaAllocation env_ubo_buffer_alloc;
-    {
-        gpu.create_buffer(sizeof(camera_uniform_t), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-            env_ubo_buffer, env_ubo_buffer_alloc);
-    }
+    gpu_buffer_t env_ubo_buffer;
+    gpu.create_buffer(sizeof(env_ubo_t), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+        env_ubo_buffer);
 
     // create the ubo thingy
     VkDescriptorPool descriptor_pool;
@@ -504,7 +435,7 @@ int main(void) {
     {
         // also, update it to point to the correct buffer.
         VkDescriptorBufferInfo bufferInfo{};
-        bufferInfo.buffer = env_ubo_buffer;
+        bufferInfo.buffer = env_ubo_buffer.handle;
         bufferInfo.offset = 0;
         bufferInfo.range = sizeof(env_ubo_t);
 
@@ -521,6 +452,15 @@ int main(void) {
 
         vkUpdateDescriptorSets(gpu.device, 1, &descriptorWrite, 0, nullptr);
     }
+
+    material_push_block_t material = {
+        .color_r = 0.4f,
+        .color_g = 0.7f,
+        .color_b = 0.7f,
+        .roughness = 0.5f,
+        .metallic = 0.0f,
+        .padding = {0}
+    };
 
     g_log.info("running...");
     while(!glfwWindowShouldClose(window)) {
@@ -548,150 +488,112 @@ int main(void) {
                 ImPlot::SetupAxes("Frame", "Time (ms)", ImPlotAxisFlags_AutoFit, ImPlotAxisFlags_None);
                 ImPlot::SetupAxisLimitsConstraints(ImAxis_Y1, 0, INFINITY);
                 ImPlot::PlotLine("Loop", full_loop_timer.measures, array_size(full_loop_timer.measures));
-                ImPlot::PlotLine("Frame", full_frame_timer.measures, array_size(full_frame_timer.measures));
-                ImPlot::PlotLine("ImGui", imgui_render_timer.measures, array_size(imgui_render_timer.measures));
-
                 ImPlot::EndPlot();
             }
+            auto last_frame_time = full_loop_timer.measure_ms();
+            ImGui::Text("Frame time: %.2f ms", last_frame_time);
+            ImGui::Text("FPS: %.2f", 1000.0f / last_frame_time);
+        }
+
+        {
+            ImGui::SeparatorText("Material");
+            ImGui::ColorEdit3("Color", &material.color_r);
+            ImGui::SliderFloat("Roughness", &material.roughness, 0.0f, 1.0f);
+            ImGui::SliderFloat("Metallic", &material.metallic, 0.0f, 1.0f);
         }
 
         if (ImGui::Button("Show ImGui demo")) show_imgui_demo = !show_imgui_demo;
         if (ImGui::Button("Show ImPlot demo")) show_implot_demo = !show_implot_demo;
 
+
         ImGui::End();
         ImGui::Render();
 
-        // draw frame
-        // @todo: support multiple frames in flight.
-        {
-            VK_CHECK(vkWaitForFences(gpu.device, 1, &inFlightFence, VK_TRUE, UINT64_MAX));
-            VK_CHECK(vkResetFences(gpu.device, 1, &inFlightFence));
+        env_ubo_t env_ubo = {
+            .view = camera.view_matrix,
+            .proj = camera.projection_matrix,
+            .view_pos = camera.position,
+        };
+        gpu.write_buffer(env_ubo_buffer, slice<u8>((u8 *)&env_ubo, sizeof(env_ubo_t)));
 
-            u32 image_idx;
-            auto swapchain_result = vkAcquireNextImageKHR(gpu.device, gpu.swapchain.handle, UINT64_MAX, imageAvailableSemaphore, VK_NULL_HANDLE, &image_idx);
-            {
-                // @note: we can also do || swapchain_result == VK_SUBOPTIMAL_KHR here,
-                // but I'm not sure it has a big impact. On my machine, this causes swapchain recreation
-                // every time i move ANY window.
-                if (swapchain_result == VK_ERROR_OUT_OF_DATE_KHR) {
-                    vkDeviceWaitIdle(gpu.device);
-                    gpu.recreate_swapchain();
+        gpu.frame([&](gpu_t &gpu, gpu_t::frame_t &frame) {
 
-                    // signal the fence to avoid waiting for it.
-                    vkQueueSubmit(gpu.graphics_queue, 0, nullptr, inFlightFence);
-
-                    continue;
-                } if (swapchain_result == VK_SUBOPTIMAL_KHR) {
-
-                } else VK_CHECK(swapchain_result);
-            }
-
-            VkViewport full_viewport{};
-            full_viewport.x = 0.0f;
-            full_viewport.y = 0.0f;
-            full_viewport.width = (float) gpu.swapchain.extent.width;
-            full_viewport.height = (float) gpu.swapchain.extent.height;
-            full_viewport.minDepth = 0.0f;
-            full_viewport.maxDepth = 1.0f;
-
-            VkRect2D full_scissor{};
-            full_scissor.offset = {0, 0};
-            full_scissor.extent = gpu.swapchain.extent;
-
-            VK_CHECK(vkResetCommandBuffer(cmds, 0));
-            // use the command buffer
-            {
-                VkCommandBufferBeginInfo beginInfo{};
-                beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-                beginInfo.flags = 0; // Optional
-                beginInfo.pInheritanceInfo = nullptr; // Optional
-
-                VK_CHECK(vkBeginCommandBuffer(cmds, &beginInfo));
-            }
-            full_frame_timer.reset(gpu, cmds);
-            imgui_render_timer.reset(gpu, cmds);
-
-            full_frame_timer.start(gpu, cmds);
-
-            // begin render pass
-            {
-                VkRenderPassBeginInfo renderPassInfo{};
-                renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-                renderPassInfo.renderPass = gpu.display_render_pass;
-                renderPassInfo.framebuffer = gpu.swapchain.framebuffers[image_idx];
-                renderPassInfo.renderArea.offset = {0, 0};
-                renderPassInfo.renderArea.extent = gpu.swapchain.extent;
-
-                VkClearValue clearColor = {{{0.0f, 0.0f, 0.0f, 1.0f}}};
-                renderPassInfo.clearValueCount = 1;
-                renderPassInfo.pClearValues = &clearColor;
-
-                vkCmdBeginRenderPass(cmds, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
-            }
-
-            vkCmdBindPipeline(cmds, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline->pipeline);
-
-            vkCmdSetViewport(cmds, 0, 1, &full_viewport);
-            vkCmdSetScissor(cmds, 0, 1, &full_scissor);
-
-            // @þœðœ: vad händer ens här??? BLOCK?
-            env_ubo_t env = {
-                .view = camera.view_matrix,
-                .proj = camera.projection_matrix,
+            VkRenderingAttachmentInfo color_attachments[] = {
+                {
+                    .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+                    .pNext = nullptr,
+                    .imageView = gpu.swapchain.image_views[frame.image_idx],
+                    .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                    .resolveMode = VK_RESOLVE_MODE_NONE,
+                    .resolveImageView = VK_NULL_HANDLE,
+                    .resolveImageLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+                    .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+                    .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+                    .clearValue = {{{0.0f, 0.0f, 0.0f, 1.0f}}},
+                }
             };
-            gpu.write_buffer(slice<u8>((u8 *)&env, sizeof(env)), env_ubo_buffer_alloc);
+            VkRenderingAttachmentInfo depth_attachment = {
+                .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+                .pNext = nullptr,
+                .imageView = gpu.depth_image.view,
+                .imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                .resolveMode = VK_RESOLVE_MODE_NONE,
+                .resolveImageView = VK_NULL_HANDLE,
+                .resolveImageLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+                .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+                .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+                .clearValue = {{{1.0f, 0}}},
+            };
 
-            vkCmdBindDescriptorSets(cmds, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline->config.pipeline_layout, 0, 1, &descriptor_set, 0, nullptr);
+            VkRenderingInfo rendering_info{};
+            rendering_info.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
+            rendering_info.renderArea = {
+                .offset = {0, 0},
+                .extent = gpu.swapchain.extent
+            };
+            rendering_info.layerCount = 1;
+            rendering_info.colorAttachmentCount = array_size(color_attachments);
+            rendering_info.pColorAttachments = color_attachments;
+            rendering_info.pDepthAttachment = &depth_attachment;
 
-            VkBuffer buffers[] = {vertex_buffer};
-            VkDeviceSize offsets[] = {0};
+            vkCmdBeginRendering(frame.cmds, &rendering_info);
 
-            vkCmdBindVertexBuffers(cmds, 0, array_size(buffers), buffers, offsets);
-            vkCmdBindIndexBuffer(cmds, index_buffer, 0, VK_INDEX_TYPE_UINT32);
+            vkCmdBindPipeline(frame.cmds, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline->pipeline);
 
-            vkCmdDrawIndexed(cmds, scene_test.meshes[0].indices.len, 1, 0, 0, 0);
+            VkViewport viewport{
+                .x = 0.0f,
+                .y = 0.0f,
+                .width = (f32)gpu.swapchain.extent.width,
+                .height = (f32)gpu.swapchain.extent.height,
+                .minDepth = 0.0f,
+                .maxDepth = 1.0f,
+            };
+            VkRect2D scissor{
+                .offset = {0, 0},
+                .extent = gpu.swapchain.extent,
+            };
 
-            imgui_render_timer.start(gpu, cmds);
-            ImDrawData* draw_data = ImGui::GetDrawData();
-            ImGui_ImplVulkan_RenderDrawData(draw_data, cmds);
-            imgui_render_timer.stop(gpu, cmds);
+            vkCmdSetViewport(frame.cmds, 0, 1, &viewport);
+            vkCmdSetScissor(frame.cmds, 0, 1, &scissor);
+            vkCmdBindDescriptorSets(frame.cmds, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline->config.pipeline_layout, 0, 1, &descriptor_set, 0, nullptr);
 
-            vkCmdEndRenderPass(cmds);
+            {
+                m4f transform = m4f::scale(v3f{0.02, 0.02, 0.02}) * m4f::identity();
+                vkCmdPushConstants(frame.cmds, pipeline->config.pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(m4f), &transform);
+                vkCmdPushConstants(frame.cmds, pipeline->config.pipeline_layout, VK_SHADER_STAGE_FRAGMENT_BIT, sizeof(m4f), sizeof(material_push_block_t), &material);
 
-            full_frame_timer.stop(gpu, cmds);
-            VK_CHECK(vkEndCommandBuffer(cmds));
+                VkBuffer buffers[] = {vertex_buffer.handle};
+                VkDeviceSize offsets[] = {0};
+                vkCmdBindVertexBuffers(frame.cmds, 0, 1, buffers, offsets);
+                vkCmdBindIndexBuffer(frame.cmds, index_buffer.handle, 0, VK_INDEX_TYPE_UINT32);
+                vkCmdDrawIndexed(frame.cmds, scene_test.meshes[0].indices.len, 1, 0, 0, 0);
+            }
 
-            // submit command buffer
-            VkSubmitInfo submitInfo{};
-            submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+            // imgui should probably be rendered with another rendering.
+            ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), frame.cmds);
 
-            VkPipelineStageFlags waitStages[] = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
-            submitInfo.waitSemaphoreCount = 1;
-            submitInfo.pWaitSemaphores = &imageAvailableSemaphore;
-            submitInfo.pWaitDstStageMask = waitStages;
-
-            submitInfo.commandBufferCount = 1;
-            submitInfo.pCommandBuffers = &cmds;
-
-            submitInfo.signalSemaphoreCount = 1;
-            submitInfo.pSignalSemaphores = &renderFinishedSemaphore;
-
-            VK_CHECK(vkQueueSubmit(gpu.graphics_queue, 1, &submitInfo, inFlightFence));
-
-            // present
-            VkPresentInfoKHR presentInfo{};
-            presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
-
-            presentInfo.waitSemaphoreCount = 1;
-            presentInfo.pWaitSemaphores = &renderFinishedSemaphore;
-
-            presentInfo.swapchainCount = 1;
-            presentInfo.pSwapchains = &gpu.swapchain.handle;
-            presentInfo.pImageIndices = &image_idx;
-            presentInfo.pResults = nullptr;
-
-            vkQueuePresentKHR(gpu.present_queue, &presentInfo);
-        }
+            vkCmdEndRendering(frame.cmds);
+        });
 
         glfwPollEvents();
 

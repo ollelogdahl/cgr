@@ -3,6 +3,7 @@
 #include "oc.h"
 #include <string>
 #include <unordered_map>
+#include <vulkan/vulkan_core.h>
 
 #include "gpu.h"
 
@@ -26,15 +27,21 @@ struct pipeline_config_t {
         slice<const VkVertexInputBindingDescription> bindings;
         slice<const VkVertexInputAttributeDescription> attributes;
     } vertex_input_info;
-    VkPipelineInputAssemblyStateCreateInfo input_assembly;
-    VkPipelineViewportStateCreateInfo viewport_state;
-    VkPipelineRasterizationStateCreateInfo rasterizer;
+
+    struct {
+        bool depth_test;
+        bool depth_write;
+        VkCompareOp depth_compare_op;
+    } depth_stencil;
+
     VkPipelineMultisampleStateCreateInfo multisampling;
-    slice<const VkDynamicState> dynamic_state;
     VkPipelineLayout pipeline_layout;
-    VkRenderPass render_pass;
+
+    slice<const VkFormat> color_attachment_formats;
+    VkFormat depth_attachment_format;
 
     bool operator ==(const pipeline_config_t &other) const {
+        // @todo: fix this up when the config is done.
         return shader == other.shader;
     }
 };
@@ -47,9 +54,13 @@ struct shader_program_t {
 
 struct gpu_pipeline_t {
     VkPipeline pipeline;
+    VkPipelineLayout layout;
+
     pipeline_config_t config;
 
-    std::vector<VkDynamicState> dynamic_states;
+    std::vector<VkFormat> color_attachment_formats;
+
+
     struct {
         std::vector<VkVertexInputBindingDescription> bindings;
         std::vector<VkVertexInputAttributeDescription> attributes;

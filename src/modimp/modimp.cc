@@ -58,7 +58,6 @@ result_t<void, std::string> scene_load_obj(scene_t &scene, slice<byte> data) {
 
         std::vector<u32> curr_obj_triangles;
 
-        bool has_normals = false;
         bool has_texcoords = false;
 
         std::unordered_map<vertex_attribs_t, u32> index_map;
@@ -78,17 +77,17 @@ result_t<void, std::string> scene_load_obj(scene_t &scene, slice<byte> data) {
 
             auto vertices_ptr = new v3f[curr_vertices.size()];
             auto triangles_ptr = new u32[curr_triangles.size()];
-            auto normals_ptr = has_normals ? new v3f[curr_normals.size()] : nullptr;
+            auto normals_ptr = new v3f[curr_normals.size()];
             auto texcoords_ptr = has_texcoords ? new v2f[curr_texcoords.size()] : nullptr;
 
             memcpy(vertices_ptr, curr_vertices.data(), curr_vertices.size() * sizeof(v3f));
             memcpy(triangles_ptr, curr_triangles.data(), curr_triangles.size() * sizeof(u32));
-            if (has_normals) memcpy(normals_ptr, curr_normals.data(), curr_normals.size() * sizeof(v3f));
+            memcpy(normals_ptr, curr_normals.data(), curr_normals.size() * sizeof(v3f));
             if (has_texcoords) memcpy(texcoords_ptr, curr_texcoords.data(), curr_texcoords.size() * sizeof(v2f));
 
             auto vertices = slice<v3f>{vertices_ptr, curr_vertices.size()};
             auto triangles = slice<u32>{triangles_ptr, curr_triangles.size()};
-            auto normals = has_normals ? slice<v3f>{normals_ptr, curr_normals.size()} : slice<v3f>{};
+            auto normals = slice<v3f>{normals_ptr, curr_normals.size()};
             auto texcoords = has_texcoords ? slice<v2f>{texcoords_ptr, curr_texcoords.size()} : slice<v2f>{};
 
             mesh_t mesh = {
@@ -151,9 +150,23 @@ result_t<void, std::string> scene_load_obj(scene_t &scene, slice<byte> data) {
             u32 nis[3] = { normal_idxs[0], normal_idxs[i - 1], normal_idxs[i] };
             u32 tis[3] = { texcoord[0], texcoord[i - 1], texcoord[i] };
 
+            auto gen_normals = [&](u32 vi[3]) {
+                v3f p0 = ctx->curr_obj_vertices[vi[0] - 1];
+                v3f p1 = ctx->curr_obj_vertices[vi[1] - 1];
+                v3f p2 = ctx->curr_obj_vertices[vi[2] - 1];
+
+                v3f v0 = p1 - p0;
+                v3f v1 = p2 - p0;
+                return v3f::normalize(v3f::cross(v0, v1));
+            };
+
+            // i guess we should only generate normals if the user wants that.
+            // Not sure how to handle this, nor do i care.
+            v3f gen_normal = gen_normals(vis);
+
             for (auto i = 0; i < 3; ++i) {
                 if (tis[i] != 0) ctx->has_texcoords = true;
-                if (nis[i] != 0) ctx->has_normals = true;
+                bool defined_normals = nis[i] != 0;
 
                 auto key = vertex_attribs_t{vis[i], nis[i], tis[i]};
                 auto it = ctx->index_map.find(key);
@@ -162,11 +175,14 @@ result_t<void, std::string> scene_load_obj(scene_t &scene, slice<byte> data) {
                     ctx->index_map[key] = idx;
 
                     v3f v = ctx->curr_obj_vertices[vis[i] - 1];
-                    v3f n = ctx->has_normals ? ctx->curr_obj_normals[nis[i] - 1] : v3f{};
+                    v3f n = defined_normals
+                        ? ctx->curr_obj_normals[nis[i] - 1]
+                        : gen_normal;
+
                     v2f t = ctx->has_texcoords ? ctx->curr_obj_texcoords[tis[i] - 1] : v2f{};
 
                     ctx->curr_vertices.push_back(v);
-                    if (ctx->has_normals) ctx->curr_normals.push_back(n);
+                    ctx->curr_normals.push_back(n);
                     if (ctx->has_texcoords) ctx->curr_texcoords.push_back(t);
 
                     ctx->curr_triangles.push_back(idx);

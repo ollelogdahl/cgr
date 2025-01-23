@@ -5,6 +5,8 @@
 #include <sys/stat.h>
 
 #include <fcntl.h>
+#include "vks.h"
+#include <vulkan/vulkan_core.h>
 
 #define SHADER_STAGE_VERTEX 0
 #define SHADER_STAGE_FRAGMENT 1
@@ -60,8 +62,8 @@ ref_t<gpu_pipeline_t> loader_t::make_pipeline(const pipeline_config_t &config) {
     memcpy(pipeline->vertex_input_info.bindings.data(), config.vertex_input_info.bindings.data, config.vertex_input_info.bindings.len * sizeof(VkVertexInputBindingDescription));
     memcpy(pipeline->vertex_input_info.attributes.data(), config.vertex_input_info.attributes.data, config.vertex_input_info.attributes.len * sizeof(VkVertexInputAttributeDescription));
 
-    pipeline->dynamic_states = std::vector<VkDynamicState>(config.dynamic_state.len);
-    memcpy(pipeline->dynamic_states.data(), config.dynamic_state.data, config.dynamic_state.len * sizeof(VkDynamicState));
+    pipeline->color_attachment_formats = std::vector<VkFormat>(config.color_attachment_formats.len);
+    memcpy(pipeline->color_attachment_formats.data(), config.color_attachment_formats.data, config.color_attachment_formats.len * sizeof(VkFormat));
 
     loaded_pipelines[config] = pipeline;
 
@@ -106,6 +108,13 @@ void loader_t::process_hotreload() {
                 pipeline->pipeline = VK_NULL_HANDLE;
             }
 
+            VkPipelineRenderingCreateInfoKHR rendering_info{};
+            rendering_info.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR;
+            rendering_info.colorAttachmentCount = pipeline->color_attachment_formats.size();
+            rendering_info.pColorAttachmentFormats = pipeline->color_attachment_formats.data();
+            rendering_info.depthAttachmentFormat = pipeline->config.depth_attachment_format;
+            rendering_info.stencilAttachmentFormat = VK_FORMAT_UNDEFINED;
+
             // @todo: make this configurable:
             // it has to be here for now as we need to shuffle the pointers around.
             VkPipelineColorBlendAttachmentState colorBlendAttachment{};
@@ -118,16 +127,37 @@ void loader_t::process_hotreload() {
             colorBlendAttachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO; // Optional
             colorBlendAttachment.alphaBlendOp = VK_BLEND_OP_ADD; // Optional
 
-            VkPipelineColorBlendStateCreateInfo colorBlending{};
-            colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-            colorBlending.logicOpEnable = VK_FALSE;
-            colorBlending.logicOp = VK_LOGIC_OP_COPY; // Optional
-            colorBlending.attachmentCount = 1;
-            colorBlending.pAttachments = &colorBlendAttachment;
-            colorBlending.blendConstants[0] = 0.0f; // Optional
-            colorBlending.blendConstants[1] = 0.0f; // Optional
-            colorBlending.blendConstants[2] = 0.0f; // Optional
-            colorBlending.blendConstants[3] = 0.0f; // Optional
+            VkPipelineViewportStateCreateInfo viewport_state{};
+            {
+                viewport_state.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+                viewport_state.viewportCount = 1;
+                viewport_state.scissorCount = 1;
+            }
+
+            VkPipelineRasterizationStateCreateInfo rasterizer{};
+            {
+                rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+                rasterizer.depthClampEnable = VK_FALSE; // useful to set as true for shadow mapping
+                rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+                rasterizer.lineWidth = 1.0f;
+                rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
+                rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+                rasterizer.depthBiasEnable = VK_FALSE;
+                rasterizer.depthBiasConstantFactor = 0.0f; // Optional
+                rasterizer.depthBiasClamp = 0.0f; // Optional
+                rasterizer.depthBiasSlopeFactor = 0.0f; // Optional
+            }
+
+            VkPipelineColorBlendStateCreateInfo color_blending{};
+            color_blending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+            color_blending.logicOpEnable = VK_FALSE;
+            color_blending.logicOp = VK_LOGIC_OP_COPY; // Optional
+            color_blending.attachmentCount = 1;
+            color_blending.pAttachments = &colorBlendAttachment;
+            color_blending.blendConstants[0] = 0.0f; // Optional
+            color_blending.blendConstants[1] = 0.0f; // Optional
+            color_blending.blendConstants[2] = 0.0f; // Optional
+            color_blending.blendConstants[3] = 0.0f; // Optional
 
             VkGraphicsPipelineCreateInfo pipeline_info{};
             pipeline_info.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
@@ -135,6 +165,7 @@ void loader_t::process_hotreload() {
             pipeline_info.stageCount = pipeline->config.shader->stages.size();
             pipeline_info.pStages = pipeline->config.shader->stages.data();
 
+            pipeline_info.pNext = &rendering_info;
 
             VkPipelineVertexInputStateCreateInfo vertex_input_info{};
             {
@@ -148,21 +179,40 @@ void loader_t::process_hotreload() {
             }
 
             VkPipelineDynamicStateCreateInfo dynamic_state{};
+            VkDynamicState dynamic_states[] = {
+                VK_DYNAMIC_STATE_VIEWPORT,
+                VK_DYNAMIC_STATE_SCISSOR
+            };
             {
                 dynamic_state.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
-                dynamic_state.dynamicStateCount = pipeline->dynamic_states.size();
-                dynamic_state.pDynamicStates = pipeline->dynamic_states.data();
+                dynamic_state.dynamicStateCount = 2;
+                dynamic_state.pDynamicStates = dynamic_states;
             }
 
-            pipeline_info.pInputAssemblyState = &pipeline->config.input_assembly;
-            pipeline_info.pViewportState = &pipeline->config.viewport_state;
-            pipeline_info.pRasterizationState = &pipeline->config.rasterizer;
+            VkPipelineDepthStencilStateCreateInfo depth_stencil_state{};
+            {
+                depth_stencil_state.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+                depth_stencil_state.depthTestEnable = pipeline->config.depth_stencil.depth_test;
+                depth_stencil_state.depthWriteEnable = pipeline->config.depth_stencil.depth_write;
+                depth_stencil_state.depthCompareOp = pipeline->config.depth_stencil.depth_compare_op;
+                depth_stencil_state.depthBoundsTestEnable = VK_FALSE;
+                depth_stencil_state.minDepthBounds = 0.0f;
+                depth_stencil_state.maxDepthBounds = 1.0f;
+            }
+
+            VkPipelineInputAssemblyStateCreateInfo input_assembly{};
+            input_assembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+            input_assembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+            input_assembly.primitiveRestartEnable = VK_FALSE;
+
+            pipeline_info.pInputAssemblyState = &input_assembly;
+            pipeline_info.pViewportState = &viewport_state;
+            pipeline_info.pRasterizationState = &rasterizer;
             pipeline_info.pMultisampleState = &pipeline->config.multisampling;
-            pipeline_info.pDepthStencilState = nullptr;
-            pipeline_info.pColorBlendState = &colorBlending;
+            pipeline_info.pDepthStencilState = &depth_stencil_state;
+            pipeline_info.pColorBlendState = &color_blending;
             pipeline_info.pDynamicState = &dynamic_state;
             pipeline_info.layout = pipeline->config.pipeline_layout;
-            pipeline_info.renderPass = pipeline->config.render_pass;
             pipeline_info.subpass = 0;
             pipeline_info.basePipelineHandle = VK_NULL_HANDLE;
 
@@ -200,7 +250,7 @@ VkPipelineShaderStageCreateInfo compile_shader(gpu_t &gpu, const char *path, int
     if (file_a_is_newer_than_b(path, tmp_path.c_str())) {
         logger.info("compiling shader {}", path);
         // @todo: the path to glslc should maybe be compile-time configurable? or taken from env?
-        auto cmd = fmt::format("/home/dv20/dv20oll/bin/glslc -fshader-stage={} -o {} {}", glslc_stage, tmp_path, path);
+        auto cmd = fmt::format("glslc -fshader-stage={} -o {} {}", glslc_stage, tmp_path, path);
 
         // @todo: use exec instead of system.
         // we want to be able to do these things in parallel i think.
