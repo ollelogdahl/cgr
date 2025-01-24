@@ -493,15 +493,40 @@ public:
         return ptr == nullptr;
     }
 
-private:
     T *ptr;
     u32 *ref_count;
+private:
 
     template <typename U, typename ...Args>
     friend ref_t<U> make_ref(Args... args);
 
     template <typename U, typename ...Args>
     friend ref_t<U> make_ref_owned(Args... args);
+};
+
+template <typename T>
+struct fmt::formatter<ref_t<T>> {
+    bool as_ptr = false;
+
+    constexpr auto parse(format_parse_context& ctx) {
+        auto it = ctx.begin();
+        while (it != ctx.end() && *it != '}') {
+            if (*it == 'p') {
+                as_ptr = true;
+            }
+            ++it;
+        }
+        return it;
+    }
+
+    auto format(const ref_t<T>& ref, auto& ctx) const {
+        if (as_ptr) {
+            return format_to(ctx.out(), "{}", (void *)ref.ptr);
+        }
+
+        // return format_to(ctx.out(), "{}", *ref);
+        return format_to(ctx.out(), "");
+    }
 };
 
 template <typename T, typename ...Args>

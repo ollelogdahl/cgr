@@ -1,9 +1,11 @@
-#version 460
+#version 450
+#extension GL_EXT_nonuniform_qualifier : require
 
 #define M_PI 3.1415926535897932384626433832795
 
 layout(location = 0) in vec3 frag_pos_ws;
 layout(location = 1) in vec3 normal_ws;
+layout(location = 2) in vec2 frag_uv;
 
 layout(location = 0) out vec4 outColor;
 
@@ -13,13 +15,18 @@ layout(binding = 0) uniform Env {
     vec3 cam_pos;
 } env;
 
+
 layout(push_constant) uniform PushConsts {
-    layout(offset = 64) float color_r;
-    layout(offset = 68) float color_g;
-    layout(offset = 72) float color_b;
-    layout(offset = 76) float roughness;
-    layout(offset = 80) float metallic;
+    layout(offset = 64) uint  flags;
+    layout(offset = 68) float color_r;
+    layout(offset = 72) float color_g;
+    layout(offset = 76) float color_b;
+    layout(offset = 80) float roughness;
+    layout(offset = 84) float metallic;
+    layout(offset = 88) uint albedo_tex_idx;
 } element;
+
+layout(set = 2, binding = 0) uniform sampler2D textures[];
 
 vec3 fresnel_schlick(float cosTheta, vec3 F0)
 {
@@ -142,8 +149,12 @@ void main() {
     vec3 N = normalize(normal_ws);
 
 
+
+    vec3 albedo_from_colors = vec3(element.color_r, element.color_g, element.color_b);
+    vec3 albedo_texture = texture(textures[element.albedo_tex_idx], frag_uv).rgb;
+
     PbrProperties props = PbrProperties(
-        vec3(element.color_r, element.color_g, element.color_b),
+        albedo_texture,
         element.roughness,
         element.metallic
     );

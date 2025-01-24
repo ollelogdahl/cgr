@@ -16,6 +16,7 @@ layout(push_constant) uniform PushConsts {
 
 layout(location = 0) out vec3 frag_pos_ws;
 layout(location = 1) out vec3 frag_normal_ws;
+layout(location = 2) out vec3 frag_uv;
 
 void main() {
     // gl_Position = renderer.cam_proj * renderer.cam_view * vec4(position, 1.0);
@@ -34,4 +35,5 @@ void main() {
     gl_Position = env.cam_proj * env.cam_view * p;
     frag_pos_ws = vec3(p);
     frag_normal_ws = normal;
+    frag_uv = uv;
 }

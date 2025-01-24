@@ -184,12 +184,17 @@ struct gpu_timer_t {
 };
 
 struct material_push_block_t {
+    u32 flags;
     f32 color_r, color_g, color_b;
     f32 roughness;
     f32 metallic;
 
-    f32 padding[3];
+    u32 albedo_tex_idx;
+
+    f32 padding[1];
 };
+
+#include <stb/stb_image.h>
 
 int main(int argc, char **argv) {
     oc_init();
@@ -234,6 +239,37 @@ int main(int argc, char **argv) {
     imgui_init(gpu);
     g_log.info("imgui initialized");
 
+    VkImageView texture_view;
+    gpu_image_t texture;
+    {
+        const char *path = "assets/grayrock_color.png";
+        i32 width, height, channels;
+        auto data = stbi_load(path, &width, &height, &channels, 0);
+        if (!data) {
+            auto cause = stbi_failure_reason();
+            g_log.error("failed to load texture: {}: {}", path, cause);
+        }
+
+        // pick suitable format
+        VkFormat format = VK_FORMAT_R8G8B8A8_UNORM;
+        VkImageUsageFlags usage = VK_IMAGE_USAGE_SAMPLED_BIT;
+
+        gpu.create_image(slice<u8>((u8 *)data, width * height * 4), (usize)width, (usize)height, format, usage, false, texture);
+
+        VkImageViewCreateInfo view_info = {};
+        view_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        view_info.image = texture.image;
+        view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        view_info.format = format;
+        view_info.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        view_info.subresourceRange.baseMipLevel = 0;
+        view_info.subresourceRange.levelCount = 1;
+        view_info.subresourceRange.baseArrayLayer = 0;
+        view_info.subresourceRange.layerCount = 1;
+
+        VK_CHECK(vkCreateImageView(gpu.device, &view_info, nullptr, &texture_view));
+    }
+
     // create a test pipeline and pass
     ref_t<gpu_pipeline_t> pipeline;
     VkDescriptorSetLayout descriptorSetLayout;
@@ -265,20 +301,10 @@ int main(int argc, char **argv) {
             }
         }
 
-        VkPushConstantRange ranges[2] = {
+        const VkPushConstantRange ranges[2] = {
             { VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(m4f) },
             { VK_SHADER_STAGE_FRAGMENT_BIT, sizeof(material_push_block_t), sizeof(m4f) }
         };
-        VkPipelineLayoutCreateInfo layout_info{};
-        layout_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-        layout_info.setLayoutCount = 1;
-        layout_info.pSetLayouts = &descriptorSetLayout;
-        layout_info.pushConstantRangeCount = array_size(ranges);
-        layout_info.pPushConstantRanges = ranges;
-
-        // @todo: this gets lost!
-        VkPipelineLayout pipeline_layout;
-        VK_CHECK(vkCreatePipelineLayout(gpu.device, &layout_info, nullptr, &pipeline_layout));
 
         auto shader = g_loader.load_shader_program({
            .vertex_hlsl_path = "eassets/shaders/test.vert",
@@ -286,8 +312,13 @@ int main(int argc, char **argv) {
         });
 
         // @todo: It would be fun to try to de-interlace the properties.
-        pipeline = g_loader.make_pipeline({
+        pipeline = gpu.make_pipeline({
             .shader = shader,
+            .layout = {
+                .flags = 0,
+                .descriptor_set_layouts = { descriptorSetLayout },
+                .push_constant_ranges = { ranges[0], ranges[1] },
+            },
             .vertex_input_info = {
                 .bindings = {
                     {
@@ -324,7 +355,6 @@ int main(int argc, char **argv) {
                 .depth_compare_op = VK_COMPARE_OP_LESS,
             },
             .multisampling = multisampling,
-            .pipeline_layout = pipeline_layout,
             .color_attachment_formats = { VK_FORMAT_B8G8R8A8_UNORM },
             .depth_attachment_format = VK_FORMAT_D32_SFLOAT,
         });
@@ -454,11 +484,13 @@ int main(int argc, char **argv) {
     }
 
     material_push_block_t material = {
+        .flags = 1,
         .color_r = 0.4f,
         .color_g = 0.7f,
         .color_b = 0.7f,
         .roughness = 0.5f,
         .metallic = 0.0f,
+        .albedo_tex_idx = 0,
         .padding = {0}
     };
 
@@ -516,7 +548,7 @@ int main(int argc, char **argv) {
         };
         gpu.write_buffer(env_ubo_buffer, slice<u8>((u8 *)&env_ubo, sizeof(env_ubo_t)));
 
-        gpu.frame([&](gpu_t &gpu, gpu_t::frame_t &frame) {
+        gpu.frame([&](gpu_t::frame_t &frame) {
 
             VkRenderingAttachmentInfo color_attachments[] = {
                 {
@@ -575,12 +607,12 @@ int main(int argc, char **argv) {
 
             vkCmdSetViewport(frame.cmds, 0, 1, &viewport);
             vkCmdSetScissor(frame.cmds, 0, 1, &scissor);
-            vkCmdBindDescriptorSets(frame.cmds, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline->config.pipeline_layout, 0, 1, &descriptor_set, 0, nullptr);
+            vkCmdBindDescriptorSets(frame.cmds, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline->layout, 0, 1, &descriptor_set, 0, nullptr);
 
             {
                 m4f transform = m4f::scale(v3f{0.02, 0.02, 0.02}) * m4f::identity();
-                vkCmdPushConstants(frame.cmds, pipeline->config.pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(m4f), &transform);
-                vkCmdPushConstants(frame.cmds, pipeline->config.pipeline_layout, VK_SHADER_STAGE_FRAGMENT_BIT, sizeof(m4f), sizeof(material_push_block_t), &material);
+                vkCmdPushConstants(frame.cmds, pipeline->layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(m4f), &transform);
+                vkCmdPushConstants(frame.cmds, pipeline->layout, VK_SHADER_STAGE_FRAGMENT_BIT, sizeof(m4f), sizeof(material_push_block_t), &material);
 
                 VkBuffer buffers[] = {vertex_buffer.handle};
                 VkDeviceSize offsets[] = {0};
