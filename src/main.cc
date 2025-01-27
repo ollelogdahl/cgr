@@ -224,7 +224,7 @@ int main(int argc, char **argv) {
         .path = "assets/arena.obj",
         .lod_settings = {
             { 10.0f, 4e-3f },
-            { 20.0f, 9e-1f },
+            { 20.0f, 1e-2f },
         }
     });
 

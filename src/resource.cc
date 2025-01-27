@@ -201,11 +201,14 @@ ref_t<model_t> loader_t::load_model(const model_load_params_t &params) {
 
             f32 lod_error = 0.0;
             auto new_len = meshopt_simplify(&lod_indices[0], indices.data, indices.len,
-                (f32 *)interleaved.data, vertex_count, interleaved_vertex_size, 0, lod.error_limit,
-                0, &lod_error);
+                (f32 *)interleaved.data, vertex_count, interleaved_vertex_size, 0,
+                lod.error_limit, 0, &lod_error);
             lod_indices.resize(new_len);
 
             logger.info("    lod {} ({:.2}): {} (e: {})", i, lod.distance, new_len, new_len, lod_error);
+            if (new_len == 0) {
+                break;
+            }
 
             gpu->create_buffer_persistent(slice<u32>(lod_indices.data(), lod_indices.size()), VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
                 lod_new.index_buffer);

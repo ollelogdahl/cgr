@@ -1,6 +1,22 @@
 #include "renderer.h"
 #include "gpu.h"
 
+struct env_ubo_t {
+    m4f view;
+    m4f proj;
+    v3f view_pos;
+    u32 _pad1 = 0;
+
+    struct light_t {
+        v3f position;
+        u32 _pad1 = 0;
+        v3f color;
+        f32 linear;
+        f32 quadratic;
+        u32 _pad2 = 0;
+    } lights[16];
+};
+
 struct material_push_block_t {
     u32 flags;
     f32 color_r, color_g, color_b;
@@ -17,8 +33,7 @@ struct material_push_block_t {
 void renderer_t::init(gpu_t &gpu, loader_t &loader) {
     this->gpu = &gpu;
 
-    VkDescriptorSetLayout descriptorSetLayout1;
-    VkDescriptorSetLayout descriptorSetLayout2;
+    // setup pipeline
     {
         VkPipelineMultisampleStateCreateInfo multisampling{};
         multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
@@ -42,7 +57,7 @@ void renderer_t::init(gpu_t &gpu, loader_t &loader) {
             layoutInfo.bindingCount = 1;
             layoutInfo.pBindings = &uboLayoutBinding;
 
-            if (vkCreateDescriptorSetLayout(gpu.device, &layoutInfo, nullptr, &descriptorSetLayout1) != VK_SUCCESS) {
+            if (vkCreateDescriptorSetLayout(gpu.device, &layoutInfo, nullptr, &this->main_descriptor_set_layout) != VK_SUCCESS) {
                 throw std::runtime_error("failed to create descriptor set layout!");
             }
         }
@@ -73,7 +88,7 @@ void renderer_t::init(gpu_t &gpu, loader_t &loader) {
             create_info.bindingCount = array_size(layout_bindings);
             create_info.pBindings = layout_bindings;
 
-            if (vkCreateDescriptorSetLayout(gpu.device, &create_info, nullptr, &descriptorSetLayout2) != VK_SUCCESS) {
+            if (vkCreateDescriptorSetLayout(gpu.device, &create_info, nullptr, &this->texture_descriptor_set_layout) != VK_SUCCESS) {
                 throw std::runtime_error("failed to create descriptor set layout!");
             }
         }
@@ -93,7 +108,7 @@ void renderer_t::init(gpu_t &gpu, loader_t &loader) {
             .shader = shader,
             .layout = {
                 .flags = 0,
-                .descriptor_set_layouts = { descriptorSetLayout1, descriptorSetLayout2 },
+                .descriptor_set_layouts = { main_descriptor_set_layout, texture_descriptor_set_layout },
                 .push_constant_ranges = { ranges[0], ranges[1] },
             },
             .vertex_input_info = {
@@ -136,6 +151,85 @@ void renderer_t::init(gpu_t &gpu, loader_t &loader) {
             .depth_attachment_format = VK_FORMAT_D32_SFLOAT,
         });
     }
+
+    // setup descriptor sets
+    {
+        VkDescriptorPoolSize pool_sizes[] = {
+            { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1 },
+            { VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 65536 }
+        };
+
+        VkDescriptorPoolCreateInfo poolInfo{};
+        poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+        poolInfo.poolSizeCount = array_size(pool_sizes);
+        poolInfo.pPoolSizes = pool_sizes;
+        poolInfo.maxSets = 16;
+
+        VK_CHECK(vkCreateDescriptorPool(gpu.device, &poolInfo, nullptr, &descriptor_pool));
+    }
+    {
+        VkDescriptorSetAllocateInfo allocInfo{};
+        allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+        allocInfo.descriptorPool = descriptor_pool;
+        allocInfo.descriptorSetCount = 1;
+        allocInfo.pSetLayouts = &main_descriptor_set_layout;
+
+        VK_CHECK(vkAllocateDescriptorSets(gpu.device, &allocInfo, &main_descriptor_set));
+    }
+
+    {
+        u32 counts[] = { 65536 };
+        VkDescriptorSetVariableDescriptorCountAllocateInfo variable_descriptor_count_info = {};
+        variable_descriptor_count_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_VARIABLE_DESCRIPTOR_COUNT_ALLOCATE_INFO;
+        variable_descriptor_count_info.descriptorSetCount = array_size(counts);
+        variable_descriptor_count_info.pDescriptorCounts = counts;
+
+        VkDescriptorSetAllocateInfo alloc_info = {};
+        alloc_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+        alloc_info.pNext = &variable_descriptor_count_info;
+        alloc_info.descriptorPool = descriptor_pool;
+        alloc_info.descriptorSetCount = 1;
+        alloc_info.pSetLayouts = &texture_descriptor_set_layout;
+
+        VK_CHECK(vkAllocateDescriptorSets(gpu.device, &alloc_info, &texture_descriptor_set));
+    }
+
+    // create the shared sampler
+    {
+        VkSamplerCreateInfo sampler_info = {};
+        sampler_info.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+        sampler_info.magFilter = VK_FILTER_LINEAR;
+        sampler_info.minFilter = VK_FILTER_LINEAR;
+        sampler_info.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+        sampler_info.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+        sampler_info.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+        sampler_info.anisotropyEnable = VK_FALSE;
+        sampler_info.maxAnisotropy = 1.0f;
+        sampler_info.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
+        sampler_info.unnormalizedCoordinates = VK_FALSE;
+        sampler_info.compareEnable = VK_FALSE;
+        sampler_info.compareOp = VK_COMPARE_OP_ALWAYS;
+        sampler_info.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+        sampler_info.mipLodBias = 0.0f;
+        sampler_info.minLod = 0.0f;
+        sampler_info.maxLod = 0.0f;
+
+        VK_CHECK(vkCreateSampler(gpu.device, &sampler_info, nullptr, &shared_sampler));
+    }
+
+    {
+        // create the ubo buffer.
+        gpu.create_buffer(sizeof(env_ubo_t),
+            VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+            env_ubo_buffer);
+    }
+
+    {
+        // populate main descriptor set
+        auto writer = descriptor_writer_t();
+        writer.write_buffer(0, 0, env_ubo_buffer.handle, 0, sizeof(env_ubo_t));
+        writer.update_set(gpu, main_descriptor_set);
+    }
 }
 
 texhnd_t renderer_t::define_texture(ref_t<texture_t> texture) {
@@ -143,7 +237,9 @@ texhnd_t renderer_t::define_texture(ref_t<texture_t> texture) {
     u32 id = defined_textures.size() - 1;
 
     descriptor_writer_t writer;
-    // writer.write_combined_image_sampler(0, id, texture->image.view, gpu->sampler);
+    writer.write_combined_image_sampler(0, id, texture->image.view, shared_sampler);
+
+    // @todo: batch these calls some way.
     writer.update_set(*gpu, texture_descriptor_set);
 
     return id;
@@ -222,7 +318,7 @@ void renderer_t::draw(gpu_t::frame_t &frame) {
 
     vkCmdSetViewport(frame.cmds, 0, 1, &viewport);
     vkCmdSetScissor(frame.cmds, 0, 1, &scissor);
-    VkDescriptorSet sets[] = { descriptor_set, texture_descriptor_set };
+    VkDescriptorSet sets[] = { main_descriptor_set, texture_descriptor_set };
     vkCmdBindDescriptorSets(frame.cmds, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline->layout,
         0, array_size(sets), sets, 0, nullptr);
 

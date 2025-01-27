@@ -5,6 +5,7 @@
 #include "resource.h"
 #include "oc.h"
 #include "linalg.h"
+#include <vulkan/vulkan_core.h>
 
 typedef u32 texhnd_t;
 
@@ -73,6 +74,13 @@ private:
 
     camera_t *camera;
 
-    VkDescriptorSet descriptor_set;
+    VkSampler shared_sampler;
+
+    VkDescriptorPool descriptor_pool;
+    VkDescriptorSetLayout main_descriptor_set_layout;
+    VkDescriptorSetLayout texture_descriptor_set_layout;
+    VkDescriptorSet main_descriptor_set;
     VkDescriptorSet texture_descriptor_set;
+
+    gpu_buffer_t env_ubo_buffer;
 };
