@@ -21,7 +21,7 @@ CCFLAGS_COMMON = -std=c++2a -Wall -Wextra -Werror -Ivendor/include -Isrc -I. -DD
     -Wno-missing-field-initializers
 LDFLAGS_COMMON = -ldl -lglfw -lvulkan
 
-CCFLAGS_RELEASE = $(CCFLAGS_COMMON) -O3
+CCFLAGS_RELEASE = $(CCFLAGS_COMMON) -O1
 
 LDFLAGS_RELEASE = $(LDFLAGS_COMMON)
 

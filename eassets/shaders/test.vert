@@ -2,7 +2,7 @@
 
 layout(location = 0) in vec3 position;
 layout(location = 1) in vec3 normal;
-layout(location = 2) in vec3 uv;
+layout(location = 2) in vec2 uv;
 
 layout(binding = 0) uniform Env {
     mat4 cam_view;
@@ -16,7 +16,7 @@ layout(push_constant) uniform PushConsts {
 
 layout(location = 0) out vec3 frag_pos_ws;
 layout(location = 1) out vec3 frag_normal_ws;
-layout(location = 2) out vec3 frag_uv;
+layout(location = 2) out vec2 frag_uv;
 
 void main() {
     // gl_Position = renderer.cam_proj * renderer.cam_view * vec4(position, 1.0);

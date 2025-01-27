@@ -2,6 +2,7 @@
 #include <cerrno>
 #include <cmath>
 #include <cstdint>
+#include <deque>
 #include <stdexcept>
 
 #include <sys/types.h>
@@ -190,8 +191,10 @@ struct material_push_block_t {
     f32 metallic;
 
     u32 albedo_tex_idx;
+    u32 normal_tex_idx;
+    u32 roughness_tex_idx;
 
-    f32 padding[1];
+    u32 padding[5];
 };
 
 #include <stb/stb_image.h>
@@ -239,40 +242,14 @@ int main(int argc, char **argv) {
     imgui_init(gpu);
     g_log.info("imgui initialized");
 
-    VkImageView texture_view;
-    gpu_image_t texture;
-    {
-        const char *path = "assets/grayrock_color.png";
-        i32 width, height, channels;
-        auto data = stbi_load(path, &width, &height, &channels, 0);
-        if (!data) {
-            auto cause = stbi_failure_reason();
-            g_log.error("failed to load texture: {}: {}", path, cause);
-        }
-
-        // pick suitable format
-        VkFormat format = VK_FORMAT_R8G8B8A8_UNORM;
-        VkImageUsageFlags usage = VK_IMAGE_USAGE_SAMPLED_BIT;
-
-        gpu.create_image(slice<u8>((u8 *)data, width * height * 4), (usize)width, (usize)height, format, usage, false, texture);
-
-        VkImageViewCreateInfo view_info = {};
-        view_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-        view_info.image = texture.image;
-        view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
-        view_info.format = format;
-        view_info.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-        view_info.subresourceRange.baseMipLevel = 0;
-        view_info.subresourceRange.levelCount = 1;
-        view_info.subresourceRange.baseArrayLayer = 0;
-        view_info.subresourceRange.layerCount = 1;
-
-        VK_CHECK(vkCreateImageView(gpu.device, &view_info, nullptr, &texture_view));
-    }
+    auto tex_color = g_loader.load_texture({.path = "assets/tiles074_color.jpg"});
+    auto tex_normal = g_loader.load_texture({.path = "assets/tiles074_normal.jpg"});
+    auto tex_roughness = g_loader.load_texture({.path = "assets/tiles074_roughness.jpg"});
 
     // create a test pipeline and pass
     ref_t<gpu_pipeline_t> pipeline;
-    VkDescriptorSetLayout descriptorSetLayout;
+    VkDescriptorSetLayout descriptorSetLayout1;
+    VkDescriptorSetLayout descriptorSetLayout2;
     {
         VkPipelineMultisampleStateCreateInfo multisampling{};
         multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
@@ -296,8 +273,44 @@ int main(int argc, char **argv) {
             layoutInfo.bindingCount = 1;
             layoutInfo.pBindings = &uboLayoutBinding;
 
-            if (vkCreateDescriptorSetLayout(gpu.device, &layoutInfo, nullptr, &descriptorSetLayout) != VK_SUCCESS) {
+            if (vkCreateDescriptorSetLayout(gpu.device, &layoutInfo, nullptr, &descriptorSetLayout1) != VK_SUCCESS) {
                 throw std::runtime_error("failed to create descriptor set layout!");
+            }
+        }
+
+        {
+            VkDescriptorBindingFlags binding_flags[] = {
+                VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT | VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT
+            };
+
+            VkDescriptorSetLayoutBinding layout_bindings[] = {
+                VkDescriptorSetLayoutBinding{
+                    .binding = 0,
+                    .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                    .descriptorCount = 65536,
+                    .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
+                    .pImmutableSamplers = nullptr,
+                },
+            };
+
+            VkDescriptorSetLayoutBindingFlagsCreateInfo binding_flags_create_info{};
+            binding_flags_create_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO;
+            binding_flags_create_info.bindingCount = array_size(layout_bindings);
+            binding_flags_create_info.pBindingFlags = binding_flags;
+
+            VkDescriptorSetLayoutCreateInfo create_info{};
+            create_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+            create_info.pNext = &binding_flags_create_info;
+            create_info.bindingCount = array_size(layout_bindings);
+            create_info.pBindings = layout_bindings;
+
+            if (vkCreateDescriptorSetLayout(gpu.device, &create_info, nullptr, &descriptorSetLayout2) != VK_SUCCESS) {
+                throw std::runtime_error("failed to create descriptor set layout!");
+            }
+
+            g_log.info("bindless set layout: {}", (void *)descriptorSetLayout2);
+            for (auto &b : layout_bindings) {
+                g_log.info("    [{}]: {}", b.binding, b.descriptorCount);
             }
         }
 
@@ -316,7 +329,7 @@ int main(int argc, char **argv) {
             .shader = shader,
             .layout = {
                 .flags = 0,
-                .descriptor_set_layouts = { descriptorSetLayout },
+                .descriptor_set_layouts = { descriptorSetLayout1, descriptorSetLayout2 },
                 .push_constant_ranges = { ranges[0], ranges[1] },
             },
             .vertex_input_info = {
@@ -436,51 +449,90 @@ int main(int argc, char **argv) {
     gpu.create_buffer(sizeof(env_ubo_t), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
         env_ubo_buffer);
 
-    // create the ubo thingy
+    // we will not be using UPDATE_AFTER_BIND.
     VkDescriptorPool descriptor_pool;
     {
         VkDescriptorPoolSize pool_sizes[] = {
-            { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1 }
+            { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1 },
+            { VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 65536 }
         };
 
         VkDescriptorPoolCreateInfo poolInfo{};
         poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-        poolInfo.poolSizeCount = 1;
+        poolInfo.poolSizeCount = array_size(pool_sizes);
         poolInfo.pPoolSizes = pool_sizes;
-        poolInfo.maxSets = 1;
+        poolInfo.maxSets = 16;
 
         VK_CHECK(vkCreateDescriptorPool(gpu.device, &poolInfo, nullptr, &descriptor_pool));
     }
+
     VkDescriptorSet descriptor_set;
+    VkDescriptorSet bindless_descriptor_set;
     {
         VkDescriptorSetAllocateInfo allocInfo{};
         allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
         allocInfo.descriptorPool = descriptor_pool;
         allocInfo.descriptorSetCount = 1;
-        allocInfo.pSetLayouts = &descriptorSetLayout;
+        allocInfo.pSetLayouts = &descriptorSetLayout1;
 
         VK_CHECK(vkAllocateDescriptorSets(gpu.device, &allocInfo, &descriptor_set));
     }
 
     {
-        // also, update it to point to the correct buffer.
-        VkDescriptorBufferInfo bufferInfo{};
-        bufferInfo.buffer = env_ubo_buffer.handle;
-        bufferInfo.offset = 0;
-        bufferInfo.range = sizeof(env_ubo_t);
+        u32 counts[] = { 65536 };
+        VkDescriptorSetVariableDescriptorCountAllocateInfo variable_descriptor_count_info = {};
+        variable_descriptor_count_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_VARIABLE_DESCRIPTOR_COUNT_ALLOCATE_INFO;
+        variable_descriptor_count_info.descriptorSetCount = array_size(counts);
+        variable_descriptor_count_info.pDescriptorCounts = counts;
 
-        VkWriteDescriptorSet descriptorWrite{};
-        descriptorWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        descriptorWrite.dstSet = descriptor_set;
-        descriptorWrite.dstBinding = 0;
-        descriptorWrite.dstArrayElement = 0;
+        VkDescriptorSetAllocateInfo alloc_info = {};
+        alloc_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+        alloc_info.pNext = &variable_descriptor_count_info;
+        alloc_info.descriptorPool = descriptor_pool;
+        alloc_info.descriptorSetCount = 1;
+        alloc_info.pSetLayouts = &descriptorSetLayout2;
 
-        descriptorWrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        descriptorWrite.descriptorCount = 1;
+        VK_CHECK(vkAllocateDescriptorSets(gpu.device, &alloc_info, &bindless_descriptor_set));
+    }
 
-        descriptorWrite.pBufferInfo = &bufferInfo;
 
-        vkUpdateDescriptorSets(gpu.device, 1, &descriptorWrite, 0, nullptr);
+
+    // upload some textures to the bindless descriptor set
+    {
+        VkSampler sampler;
+        {
+            VkSamplerCreateInfo sampler_info = {};
+            sampler_info.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+            sampler_info.magFilter = VK_FILTER_LINEAR;
+            sampler_info.minFilter = VK_FILTER_LINEAR;
+            sampler_info.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+            sampler_info.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+            sampler_info.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+            sampler_info.anisotropyEnable = VK_FALSE;
+            sampler_info.maxAnisotropy = 1.0f;
+            sampler_info.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
+            sampler_info.unnormalizedCoordinates = VK_FALSE;
+            sampler_info.compareEnable = VK_FALSE;
+            sampler_info.compareOp = VK_COMPARE_OP_ALWAYS;
+            sampler_info.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+            sampler_info.mipLodBias = 0.0f;
+            sampler_info.minLod = 0.0f;
+            sampler_info.maxLod = 0.0f;
+
+            VK_CHECK(vkCreateSampler(gpu.device, &sampler_info, nullptr, &sampler));
+        }
+
+        auto writer = descriptor_writer_t();
+        writer.write_combined_image_sampler(0, 0, tex_color->image.view, sampler);
+        writer.write_combined_image_sampler(0, 1, tex_normal->image.view, sampler);
+        writer.write_combined_image_sampler(0, 2, tex_roughness->image.view, sampler);
+        writer.update_set(gpu, bindless_descriptor_set);
+    }
+
+    {
+        auto writer = descriptor_writer_t();
+        writer.write_buffer(0, 0, env_ubo_buffer.handle, 0, sizeof(env_ubo_t));
+        writer.update_set(gpu, descriptor_set);
     }
 
     material_push_block_t material = {
@@ -491,8 +543,12 @@ int main(int argc, char **argv) {
         .roughness = 0.5f,
         .metallic = 0.0f,
         .albedo_tex_idx = 0,
+        .normal_tex_idx = 1,
+        .roughness_tex_idx = 2,
         .padding = {0}
     };
+
+    v3f scale = {0.02, 0.02, 0.02};
 
     g_log.info("running...");
     while(!glfwWindowShouldClose(window)) {
@@ -532,6 +588,15 @@ int main(int argc, char **argv) {
             ImGui::ColorEdit3("Color", &material.color_r);
             ImGui::SliderFloat("Roughness", &material.roughness, 0.0f, 1.0f);
             ImGui::SliderFloat("Metallic", &material.metallic, 0.0f, 1.0f);
+
+            ImGui::CheckboxFlags("Use Albedo Texture", &material.flags, 1);
+            ImGui::CheckboxFlags("Use Normal Texture", &material.flags, 2);
+            ImGui::CheckboxFlags("Use Roughness Texture", &material.flags, 4);
+        }
+
+        {
+            ImGui::SeparatorText("Transform");
+            ImGui::SliderFloat3("Scale", &scale.x, 0.0f, 1.0f);
         }
 
         if (ImGui::Button("Show ImGui demo")) show_imgui_demo = !show_imgui_demo;
@@ -607,10 +672,13 @@ int main(int argc, char **argv) {
 
             vkCmdSetViewport(frame.cmds, 0, 1, &viewport);
             vkCmdSetScissor(frame.cmds, 0, 1, &scissor);
-            vkCmdBindDescriptorSets(frame.cmds, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline->layout, 0, 1, &descriptor_set, 0, nullptr);
+            VkDescriptorSet sets[] = { descriptor_set, bindless_descriptor_set };
+            vkCmdBindDescriptorSets(frame.cmds, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline->layout,
+                0, array_size(sets), sets, 0, nullptr);
+
 
             {
-                m4f transform = m4f::scale(v3f{0.02, 0.02, 0.02}) * m4f::identity();
+                m4f transform = m4f::scale(scale) * m4f::identity();
                 vkCmdPushConstants(frame.cmds, pipeline->layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(m4f), &transform);
                 vkCmdPushConstants(frame.cmds, pipeline->layout, VK_SHADER_STAGE_FRAGMENT_BIT, sizeof(m4f), sizeof(material_push_block_t), &material);
 

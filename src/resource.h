@@ -9,15 +9,29 @@
 
 struct texture_load_params_t {
     const char *path;
+
+    bool operator==(const texture_load_params_t &other) const {
+        return strcmp(path, other.path) == 0;
+    }
+};
+
+template <>
+struct std::hash<texture_load_params_t> {
+    std::size_t operator()(const texture_load_params_t &params) const {
+        return std::hash<const char*>{}(params.path);
+    }
 };
 
 struct texture_t {
     struct {
         u32 width;
         u32 height;
+        u32 channels;
+
+        VkFormat format;
     } info;
 
-    ref_t<gpu_image_t> image;
+    gpu_image_t image;
 };
 
 // used for watching files for changes.
@@ -42,10 +56,13 @@ struct fswatcher_t {
 struct loader_t {
     ref_t<shader_program_t> load_shader_program(const shader_program_load_params_t &params);
 
+    ref_t<texture_t> load_texture(const texture_load_params_t &params);
+
     void init(gpu_t &gpu);
     void process_hotreload();
 
     std::unordered_map<shader_program_load_params_t, ref_t<shader_program_t>> loaded_shaders;
+    std::unordered_map<texture_load_params_t, ref_t<texture_t>> loaded_textures;
 
     fswatcher_t watcher;
     gpu_t *gpu;

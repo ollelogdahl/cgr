@@ -8,6 +8,8 @@
 #include "vks.h"
 #include <vulkan/vulkan_core.h>
 
+#include <stb/stb_image.h>
+
 #define SHADER_STAGE_VERTEX 0
 #define SHADER_STAGE_FRAGMENT 1
 
@@ -43,6 +45,70 @@ ref_t<shader_program_t> loader_t::load_shader_program(const shader_program_load_
     }, &program);
 
     return loaded_shaders[params];
+}
+
+ref_t<texture_t> loader_t::load_texture(const texture_load_params_t &params) {
+    auto exists_it = loaded_textures.find(params);
+    if (exists_it != loaded_textures.end()) {
+        return exists_it->second;
+    }
+
+    loaded_textures[params] = make_ref<texture_t>();
+    texture_t &texture = *loaded_textures[params];
+    {
+        i32 width, height, channels;
+        auto data = stbi_load(params.path, &width, &height, &channels, 0);
+        if (!data) {
+            auto cause = stbi_failure_reason();
+            g_log.error("failed to load texture: {}: {}", params.path, cause);
+            // @todo: return a 'default' texture.
+        }
+
+        VkFormat format;
+        slice<byte> pixel_data;
+        if (channels == 3 || channels == 4) {
+            texture.info.channels = channels;
+            format = VK_FORMAT_R8G8B8A8_UNORM;
+
+            // the problem is that we need a r8b8g8a8 array to the gpu, but we only get
+            // a 3-component from stb_image.
+            // @todo: only when channels == 3
+            byte *new_data = new byte[width * height * 4];
+            for (auto i = 0; i < width * height; ++i) {
+                new_data[i * 4 + 0] = data[i * 3 + 0];
+                new_data[i * 4 + 1] = data[i * 3 + 1];
+                new_data[i * 4 + 2] = data[i * 3 + 2];
+                new_data[i * 4 + 3] = 255;
+            }
+            pixel_data = {new_data, (usize)(width * height * 4)};
+
+        } else if (channels == 1) {
+            texture.info.channels = 1;
+            format = VK_FORMAT_R8_UNORM;
+            pixel_data = {data, (usize)(width * height)};
+        } else {
+            format = VK_FORMAT_UNDEFINED;
+            g_log.error("unsupported number of channels in texture: {}", channels);
+        }
+
+        VkImageUsageFlags usage = VK_IMAGE_USAGE_SAMPLED_BIT;
+        gpu->create_image(pixel_data, (usize)width, (usize)height, format, usage, false, texture.image);
+
+        VkImageViewCreateInfo view_info = {};
+        view_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        view_info.image = texture.image.image;
+        view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        view_info.format = format;
+        view_info.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        view_info.subresourceRange.baseMipLevel = 0;
+        view_info.subresourceRange.levelCount = 1;
+        view_info.subresourceRange.baseArrayLayer = 0;
+        view_info.subresourceRange.layerCount = 1;
+
+        VK_CHECK(vkCreateImageView(gpu->device, &view_info, nullptr, &texture.image.view));
+    }
+
+    return loaded_textures[params];
 }
 
 void loader_t::init(gpu_t &gpu) {

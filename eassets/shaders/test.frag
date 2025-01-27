@@ -24,9 +24,11 @@ layout(push_constant) uniform PushConsts {
     layout(offset = 80) float roughness;
     layout(offset = 84) float metallic;
     layout(offset = 88) uint albedo_tex_idx;
+    layout(offset = 92) uint normal_tex_idx;
+    layout(offset = 96) uint roughness_tex_idx;
 } element;
 
-layout(set = 2, binding = 0) uniform sampler2D textures[];
+layout(set = 1, binding = 0) uniform sampler2D textures[];
 
 vec3 fresnel_schlick(float cosTheta, vec3 F0)
 {
@@ -135,7 +137,66 @@ vec3 calculate_pl_radiance(PointLight pl, vec3 P) {
     return pl.color * attenuation;
 }
 
+// Based on:
+// Christian Schüler, “Normal Mapping without Precomputed Tangents”,
+// ShaderX 5, Chapter 2.6, pp. 131 – 140
+//
+// taken from http://www.thetenthplanet.de/archives/1180
+
+mat3 shuler_cotangent_frame(vec3 N, vec3 p, vec2 uv) {
+    // get edge vectors of the pixel triangle
+    vec3 dp1 = dFdx(p);
+    vec3 dp2 = dFdy(p);
+    vec2 duv1 = dFdx(uv);
+    vec2 duv2 = dFdy(uv);
+
+    // solve the linear system
+    vec3 dp2perp = cross(dp2, N);
+    vec3 dp1perp = cross(N, dp1);
+    vec3 T = dp2perp * duv1.x + dp1perp * duv2.x;
+    vec3 B = dp2perp * duv1.y + dp1perp * duv2.y;
+
+    // construct a scale-invariant frame
+    float invmax = inversesqrt(max(dot(T, T), dot(B, B)));
+    return mat3(T * invmax, B * invmax, N);
+}
+
+vec3 shuler_perturb_normal(sampler2D bumpmap, vec3 N, vec3 V, vec2 texcoord) {
+    // assume N, the interpolated vertex normal and
+    // V, the view vector (vertex to eye)
+    vec3 pn = texture(bumpmap, texcoord).xyz;
+
+    pn = pn * 2. - 1.;
+    // map = map * 255. / 127. - 128. / 127.;
+    // pn.z = sqrt(1. - dot(pn.xy, pn.xy));
+    pn.y = -pn.y;
+
+    mat3 TBN = shuler_cotangent_frame(N, -V, texcoord);
+    return normalize(TBN * pn);
+}
+
+
 void main() {
+    vec3 albedo;
+    if ((element.flags & 1) != 0) {
+        albedo = texture(textures[element.albedo_tex_idx], frag_uv).rgb;
+    } else {
+        albedo = vec3(element.color_r, element.color_g, element.color_b);
+    }
+
+    float roughness;
+    if ((element.flags & 4) != 0) {
+        roughness = texture(textures[element.roughness_tex_idx], frag_uv).r;
+    } else {
+        roughness = element.roughness;
+    }
+
+    PbrProperties props = PbrProperties(
+        albedo,
+        roughness,
+        element.metallic
+    );
+
     PointLight pl = PointLight(
         vec3(0.0, 1.0, 1.0),
         vec3(1.0, 1.0, 1.0),
@@ -148,16 +209,9 @@ void main() {
     vec3 V = normalize(env.cam_pos - frag_pos_ws);
     vec3 N = normalize(normal_ws);
 
-
-
-    vec3 albedo_from_colors = vec3(element.color_r, element.color_g, element.color_b);
-    vec3 albedo_texture = texture(textures[element.albedo_tex_idx], frag_uv).rgb;
-
-    PbrProperties props = PbrProperties(
-        albedo_texture,
-        element.roughness,
-        element.metallic
-    );
+    if ((element.flags & 2) != 0) {
+        N = shuler_perturb_normal(textures[element.normal_tex_idx], N, V, frag_uv);
+    }
 
     vec3 color = pbr(L, V, N, props, calculate_pl_radiance(pl, P), 1.0);
 

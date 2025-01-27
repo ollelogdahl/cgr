@@ -1,5 +1,6 @@
 #pragma once
 
+#include <deque>
 #include <vulkan/vulkan.h>
 #include <GLFW/glfw3.h>
 
@@ -233,4 +234,18 @@ struct gpu_t {
 private:
     std::unordered_map<pipeline_config_t, ref_t<gpu_pipeline_t>> loaded_pipelines;
     std::unordered_map<pipeline_layout_config_t, VkPipelineLayout> pipeline_layouts;
+};
+
+class descriptor_writer_t {
+public:
+    descriptor_writer_t() = default;
+    void clear();
+    void update_set(gpu_t &gpu, VkDescriptorSet set);
+
+    void write_combined_image_sampler(u32 binding, u32 array_index, VkImageView view, VkSampler sampler);
+    void write_buffer(u32 binding, u32 array_index, VkBuffer buffer, VkDeviceSize offset, VkDeviceSize range);
+private:
+    std::deque<VkDescriptorImageInfo> image_infos;
+    std::deque<VkDescriptorBufferInfo> buffer_infos;
+    std::vector<VkWriteDescriptorSet> writes;
 };
