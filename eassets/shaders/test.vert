@@ -34,6 +34,6 @@ void main() {
 
     gl_Position = env.cam_proj * env.cam_view * p;
     frag_pos_ws = vec3(p);
-    frag_normal_ws = normal;
-    frag_uv = uv;
+    frag_normal_ws = transpose(inverse(mat3(element.transform))) * normal;
+    frag_uv = vec2(uv.x, -uv.y);
 }

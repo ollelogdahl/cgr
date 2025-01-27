@@ -5,10 +5,13 @@
 #include <sys/stat.h>
 
 #include <fcntl.h>
+#include "modimp.h"
 #include "vks.h"
 #include <vulkan/vulkan_core.h>
 
 #include <stb/stb_image.h>
+
+#include <meshoptimizer/meshoptimizer.h>
 
 #define SHADER_STAGE_VERTEX 0
 #define SHADER_STAGE_FRAGMENT 1
@@ -109,6 +112,113 @@ ref_t<texture_t> loader_t::load_texture(const texture_load_params_t &params) {
     }
 
     return loaded_textures[params];
+}
+
+ref_t<model_t> loader_t::load_model(const model_load_params_t &params) {
+    auto exists_it = loaded_models.find(params);
+    if (exists_it != loaded_models.end()) {
+        return exists_it->second;
+    }
+
+    loaded_models[params] = make_ref<model_t>();
+    model_t &model = *loaded_models[params];
+
+    modimp::scene_t scene;
+    auto res = modimp::scene_load(scene, params.path);
+    if (res.is_err()) {
+        g_log.error("failed to load model: {}", res.unwrap_err());
+        return nullptr;
+    }
+
+    logger.info("loaded model: {} with {} meshes", params.path, scene.meshes.len);
+
+    const usize interleaved_vertex_size = 8 * sizeof(f32);
+    auto interleave_attributes = [](slice<v3f> vertices, slice<v3f> normals, slice<v2f> uvs, slice<u8> &out) {
+        auto size = interleaved_vertex_size * vertices.len;
+        out = slice<u8>((u8 *)malloc(size), size);
+        for (usize i = 0; i < vertices.len; i++) {
+            auto &v = vertices[i];
+
+            f32 *ptr = (f32 *)out.data + i * 8;
+            ptr[0] = v.x;
+            ptr[1] = v.y;
+            ptr[2] = v.z;
+
+            if (normals.data != nullptr) {
+                auto &n = normals[i];
+                ptr[3] = n.x;
+                ptr[4] = n.y;
+                ptr[5] = n.z;
+            }
+            if (uvs.data != nullptr) {
+                auto &uv = uvs[i];
+                ptr[6] = uv.x;
+                ptr[7] = uv.y;
+            }
+        }
+    };
+
+    aabb_t model_aabb = aabb_t();
+    for (auto &m : scene.meshes) {
+        mesh_t mesh;
+        mesh.bounds = m.bounds;
+        model_aabb.include(m.bounds.min);
+        model_aabb.include(m.bounds.max);
+
+        mesh_t::lod_t lod_default;
+        lod_default.lod_distance_sq = 0.0f;
+
+        slice<byte> interleaved;
+        interleave_attributes(m.vertices, m.normals, m.texcoords[0], interleaved);
+        slice<u32> indices = m.indices;
+        usize vertex_count = m.vertices.len;
+
+        /*
+        meshopt_optimizeVertexCache(indices.data, indices.data, indices.len, interleaved.len);
+        meshopt_optimizeOverdraw(indices.data, indices.data, indices.len, (f32 *)interleaved.data,
+            vertex_count, interleaved_vertex_size, 1.05f);
+        */
+
+        gpu->create_buffer_persistent(indices, VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+            lod_default.index_buffer);
+        lod_default.index_count = indices.len;
+
+        gpu->create_buffer_persistent(interleaved, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+            mesh.vertex_buffer);
+
+        logger.info("generating lod levels for model: {}", params.path);
+        logger.info("    vertices: {}", vertex_count);
+        mesh.lods.push_back(lod_default);
+
+        usize i = 0;
+        for (auto &lod : params.lod_settings) {
+            i++;
+            mesh_t::lod_t lod_new;
+            lod_new.lod_distance_sq = lod.distance * lod.distance;
+
+            auto lod_indices = std::vector<u32>();
+            lod_indices.resize(indices.len);
+
+            f32 lod_error = 0.0;
+            auto new_len = meshopt_simplify(&lod_indices[0], indices.data, indices.len,
+                (f32 *)interleaved.data, vertex_count, interleaved_vertex_size, 0, lod.error_limit,
+                0, &lod_error);
+            lod_indices.resize(new_len);
+
+            logger.info("    lod {} ({:.2}): {} (e: {})", i, lod.distance, new_len, new_len, lod_error);
+
+            gpu->create_buffer_persistent(slice<u32>(lod_indices.data(), lod_indices.size()), VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+                lod_new.index_buffer);
+            lod_new.index_count = lod_indices.size();
+
+            mesh.lods.push_back(lod_new);
+        }
+
+        model.meshes.push_back(mesh);
+    }
+    model.aabb = model_aabb;
+
+    return loaded_models[params];
 }
 
 void loader_t::init(gpu_t &gpu) {

@@ -200,32 +200,10 @@ struct material_push_block_t {
 #include <stb/stb_image.h>
 
 int main(int argc, char **argv) {
+    (void)argc;
+    (void)argv;
     oc_init();
     glfwInit();
-
-    modimp::scene_t scene_test;
-    {
-        const char *obj_path = "assets/dragon.obj";
-        if (argc > 1) {
-            obj_path = argv[1];
-        }
-
-        auto res = modimp::scene_load(scene_test, obj_path);
-        if (res.is_err()) {
-            g_log.error("failed to load model: {}", res.unwrap_err());
-            return 1;
-        }
-
-        g_log.info("loaded model");
-        g_log.info("   num meshes: {}", scene_test.meshes.len);
-
-        for (auto &m : scene_test.meshes) {
-            g_log.info("   mesh");
-            g_log.info("   num vertices: {}", m.vertices.len);
-            g_log.info("   num indices: {}", m.indices.len);
-            g_log.info("   bounds: {}", m.bounds);
-        }
-    }
 
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
     glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
@@ -242,7 +220,15 @@ int main(int argc, char **argv) {
     imgui_init(gpu);
     g_log.info("imgui initialized");
 
-    auto tex_color = g_loader.load_texture({.path = "assets/tiles074_color.jpg"});
+    auto mesh = g_loader.load_model({
+        .path = "assets/arena.obj",
+        .lod_settings = {
+            { 10.0f, 4e-3f },
+            { 20.0f, 9e-1f },
+        }
+    });
+
+    auto tex_color = g_loader.load_texture({.path = "assets/img0.jpg"});
     auto tex_normal = g_loader.load_texture({.path = "assets/tiles074_normal.jpg"});
     auto tex_roughness = g_loader.load_texture({.path = "assets/tiles074_roughness.jpg"});
 
@@ -382,56 +368,6 @@ int main(int argc, char **argv) {
 
     vkDeviceWaitIdle(gpu.device);
 
-    // create a gpu buffer
-    gpu_buffer_t vertex_buffer, index_buffer;
-    {
-        // we can extract the model from the test_scene first.
-        auto &m = scene_test.meshes[0];
-
-        // @todo: use a staging buffer for this.
-        // upload into a buffer with TRANSFER_SRC, and move into a buffer with TRANSFER_DST.
-        // this would be more optimal.
-        {
-
-            auto size = 8 * sizeof(f32) * m.vertices.len;
-            auto buffer = new u8[size];
-            auto vertices = slice<u8>((u8 *)buffer, size);
-            for (usize i = 0; i < m.vertices.len; i++) {
-                auto &v = m.vertices[i];
-
-                auto &normals = m.normals;
-
-                auto &uvp = m.texcoords[0];
-
-                f32 *ptr = (f32 *)buffer + i * 8;
-                ptr[0] = v.x;
-                ptr[1] = v.y;
-                ptr[2] = v.z;
-
-                if (normals.data != nullptr) {
-                    auto &n = normals[i];
-                    ptr[3] = n.x;
-                    ptr[4] = n.y;
-                    ptr[5] = n.z;
-                }
-                if (uvp.data != nullptr) {
-                    auto &uv = uvp[i];
-                    ptr[6] = uv.x;
-                    ptr[7] = uv.y;
-                }
-            }
-
-            gpu.create_buffer_persistent(vertices, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-                vertex_buffer);
-        }
-
-        {
-            auto indices = slice<u32>((u32 *)m.indices.data, m.indices.len);
-            gpu.create_buffer_persistent(indices, VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
-                index_buffer);
-        }
-    }
-
     struct env_ubo_t {
         m4f view;
         m4f proj;
@@ -549,6 +485,8 @@ int main(int argc, char **argv) {
     };
 
     v3f scale = {0.02, 0.02, 0.02};
+    bool lod_override = false;
+    i32 lod_override_value = 0;
 
     g_log.info("running...");
     while(!glfwWindowShouldClose(window)) {
@@ -581,6 +519,12 @@ int main(int argc, char **argv) {
             auto last_frame_time = full_loop_timer.measure_ms();
             ImGui::Text("Frame time: %.2f ms", last_frame_time);
             ImGui::Text("FPS: %.2f", 1000.0f / last_frame_time);
+        }
+
+        {
+            ImGui::SeparatorText("Debug");
+            ImGui::Checkbox("LOD override", &lod_override);
+            ImGui::SliderInt("LOD", &lod_override_value, 0, mesh->meshes[0].lods.size() - 1);
         }
 
         {
@@ -677,16 +621,25 @@ int main(int argc, char **argv) {
                 0, array_size(sets), sets, 0, nullptr);
 
 
-            {
-                m4f transform = m4f::scale(scale) * m4f::identity();
+            for (auto &m : mesh->meshes) {
+                auto lod = 0;
+
+                // we need to get the distance from the camera to the object. This
+                // is used for lod selection.
+                if(lod_override) {
+                    lod = lod_override_value;
+                }
+
+                m4f transform = m4f::translate(m.bounds.center()) * m4f::scale(scale) * m4f::identity();
                 vkCmdPushConstants(frame.cmds, pipeline->layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(m4f), &transform);
                 vkCmdPushConstants(frame.cmds, pipeline->layout, VK_SHADER_STAGE_FRAGMENT_BIT, sizeof(m4f), sizeof(material_push_block_t), &material);
 
-                VkBuffer buffers[] = {vertex_buffer.handle};
+                VkBuffer buffers[] = {m.vertex_buffer.handle};
                 VkDeviceSize offsets[] = {0};
                 vkCmdBindVertexBuffers(frame.cmds, 0, 1, buffers, offsets);
-                vkCmdBindIndexBuffer(frame.cmds, index_buffer.handle, 0, VK_INDEX_TYPE_UINT32);
-                vkCmdDrawIndexed(frame.cmds, scene_test.meshes[0].indices.len, 1, 0, 0, 0);
+
+                vkCmdBindIndexBuffer(frame.cmds, m.lods[lod].index_buffer.handle, 0, VK_INDEX_TYPE_UINT32);
+                vkCmdDrawIndexed(frame.cmds, m.lods[lod].index_count, 1, 0, 0, 0);
             }
 
             // imgui should probably be rendered with another rendering.

@@ -62,6 +62,7 @@ public:
 
     void new_frame();
     void draw(gpu_t::frame_t &frame);
+
 private:
     gpu_t *gpu;
     ref_t<gpu_pipeline_t> pipeline;
