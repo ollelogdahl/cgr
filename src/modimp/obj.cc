@@ -38,9 +38,10 @@ result_t<void, std::string> parse_obj(slice<byte> obj_contents, obj_parser_confi
             vertex.y = next_number(rem);
             vertex.z = next_number(rem);
 
-            if(rem.len > 0) {
-                vertex.w = next_number(rem);
-            }
+            // not too sure about this.
+            // if(rem.len > 0) {
+            //     vertex.w = next_number(rem);
+            // }
 
             bool has_color = false;
             v3f color;
@@ -171,7 +172,7 @@ result_t<void, std::string> parse_obj(slice<byte> obj_contents, obj_parser_confi
 }
 
 face_vertex_t next_face_vertex(slice<byte> &content) {
-    
+
     slice<byte> vertex_str;
     content.split(' ', vertex_str, content);
 

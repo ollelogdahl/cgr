@@ -127,28 +127,35 @@ ref_t<model_t> loader_t::load_model(const model_load_params_t &params) {
 
     logger.info("loaded model: {} with {} meshes", params.path, scene.meshes.len);
 
-    const usize interleaved_vertex_size = 8 * sizeof(f32);
-    auto interleave_attributes = [](slice<v3f> vertices, slice<v3f> normals, slice<v2f> uvs, slice<u8> &out) {
-        auto size = interleaved_vertex_size * vertices.len;
+    const usize interleaved_vertex_size = 11 * sizeof(f32);
+    auto interleave_attributes = [](slice<v3f> vertices, slice<v3f> colors, slice<v3f> normals, slice<v2f> uvs, slice<u8> &out) {
+        usize size = interleaved_vertex_size * vertices.len;
         out = slice<u8>((u8 *)malloc(size), size);
-        for (usize i = 0; i < vertices.len; i++) {
-            auto &v = vertices[i];
 
-            f32 *ptr = (f32 *)out.data + i * 8;
+        for (usize i = 0; i < vertices.len; i++) {
+            f32 *ptr = (f32 *)(out.data + i * interleaved_vertex_size);
+
+            auto &v = vertices[i];
             ptr[0] = v.x;
             ptr[1] = v.y;
             ptr[2] = v.z;
 
-            if (normals.data != nullptr) {
-                auto &n = normals[i];
-                ptr[3] = n.x;
-                ptr[4] = n.y;
-                ptr[5] = n.z;
+            auto &n = normals[i];
+            ptr[3] = n.x;
+            ptr[4] = n.y;
+            ptr[5] = n.z;
+
+            if (colors.data != nullptr) {
+                auto &c = colors[i];
+                ptr[6] = c.x;
+                ptr[7] = c.y;
+                ptr[8] = c.z;
             }
+
             if (uvs.data != nullptr) {
                 auto &uv = uvs[i];
-                ptr[6] = uv.x;
-                ptr[7] = uv.y;
+                ptr[9] = uv.x;
+                ptr[10] = uv.y;
             }
         }
     };
@@ -164,7 +171,7 @@ ref_t<model_t> loader_t::load_model(const model_load_params_t &params) {
         lod_default.lod_distance_sq = 0.0f;
 
         slice<byte> interleaved;
-        interleave_attributes(m.vertices, m.normals, m.texcoords[0], interleaved);
+        interleave_attributes(m.vertices, m.colors[0], m.normals, m.texcoords[0], interleaved);
         slice<u32> indices = m.indices;
         usize vertex_count = m.vertices.len;
 

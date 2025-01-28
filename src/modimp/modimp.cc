@@ -52,16 +52,22 @@ result_t<void, std::string> scene_load_obj(scene_t &scene, slice<byte> data) {
 
     struct ctx_t {
         std::vector<v3f> curr_obj_vertices;
+        std::vector<v3f> curr_obj_vertex_colors;
         std::vector<v3f> curr_obj_normals;
         std::vector<v2f> curr_obj_texcoords;
         slice<byte> curr_material;
 
         std::vector<u32> curr_obj_triangles;
 
+        bool first_vertex = true;
+        bool has_color = false;
+
         bool has_texcoords = false;
+        bool knows_if_has_texcoords = false;
 
         std::unordered_map<vertex_attribs_t, u32> index_map;
         std::vector<v3f> curr_vertices;
+        std::vector<v3f> curr_colors;
         std::vector<v3f> curr_normals;
         std::vector<v2f> curr_texcoords;
         std::vector<u32> curr_triangles;
@@ -78,25 +84,38 @@ result_t<void, std::string> scene_load_obj(scene_t &scene, slice<byte> data) {
             auto vertices_ptr = new v3f[curr_vertices.size()];
             auto triangles_ptr = new u32[curr_triangles.size()];
             auto normals_ptr = new v3f[curr_normals.size()];
-            auto texcoords_ptr = has_texcoords ? new v2f[curr_texcoords.size()] : nullptr;
+            auto texcoords_ptr = has_texcoords
+                ? new v2f[curr_texcoords.size()]
+                : nullptr;
+            auto colors_ptr = has_color
+                ? new v3f[curr_colors.size()]
+                : nullptr;
 
             memcpy(vertices_ptr, curr_vertices.data(), curr_vertices.size() * sizeof(v3f));
             memcpy(triangles_ptr, curr_triangles.data(), curr_triangles.size() * sizeof(u32));
             memcpy(normals_ptr, curr_normals.data(), curr_normals.size() * sizeof(v3f));
+
             if (has_texcoords) memcpy(texcoords_ptr, curr_texcoords.data(), curr_texcoords.size() * sizeof(v2f));
+            if (has_color) memcpy(colors_ptr, curr_colors.data(), curr_colors.size() * sizeof(v3f));
 
             auto vertices = slice<v3f>{vertices_ptr, curr_vertices.size()};
             auto triangles = slice<u32>{triangles_ptr, curr_triangles.size()};
             auto normals = slice<v3f>{normals_ptr, curr_normals.size()};
-            auto texcoords = has_texcoords ? slice<v2f>{texcoords_ptr, curr_texcoords.size()} : slice<v2f>{};
+
+            auto texcoords = has_texcoords
+                ? slice<v2f>{texcoords_ptr, curr_texcoords.size()}
+                : slice<v2f>{};
+            auto colors = has_color
+                ? slice<v3f>{colors_ptr, curr_colors.size()}
+                : slice<v3f>{};
 
             mesh_t mesh = {
                 .material_index = 0,
                 .vertices = vertices,
                 .indices = triangles,
-                .bounds = curr_bounds,
                 .normals = normals,
-                .colors = {},
+                .bounds = curr_bounds,
+                .colors = { colors },
                 .texcoords = {texcoords},
                 .name = {},
             };
@@ -107,19 +126,26 @@ result_t<void, std::string> scene_load_obj(scene_t &scene, slice<byte> data) {
 
             index_map.clear();
             curr_vertices.clear();
+            curr_colors.clear();
             curr_normals.clear();
             curr_texcoords.clear();
             curr_triangles.clear();
+
+            knows_if_has_texcoords = false;
+            first_vertex = true;
         }
     } ctx = {};
 
     auto on_vertex = [](void *user_ctx, bool has_color, v4f vertex, v3f color) {
         auto ctx = (struct ctx_t *)user_ctx;
         auto v = v3f{vertex.x, vertex.y, vertex.z};
-        (void)has_color;
-        (void)color;
+
+        if (ctx->first_vertex) ctx->has_color = has_color;
+        ctx->first_vertex = false;
 
         ctx->curr_obj_vertices.push_back(v);
+        if (has_color)
+            ctx->curr_obj_vertex_colors.push_back(color);
         ctx->curr_bounds.include(v);
     };
 
@@ -165,8 +191,13 @@ result_t<void, std::string> scene_load_obj(scene_t &scene, slice<byte> data) {
             v3f gen_normal = gen_normals(vis);
 
             for (auto i = 0; i < 3; ++i) {
-                if (tis[i] != 0) ctx->has_texcoords = true;
+                bool has_texcoords = tis[i] != 0;
                 bool defined_normals = nis[i] != 0;
+
+                if (!ctx->knows_if_has_texcoords) {
+                    ctx->has_texcoords = has_texcoords;
+                    ctx->knows_if_has_texcoords = true;
+                }
 
                 auto key = vertex_attribs_t{vis[i], nis[i], tis[i]};
                 auto it = ctx->index_map.find(key);
@@ -175,15 +206,24 @@ result_t<void, std::string> scene_load_obj(scene_t &scene, slice<byte> data) {
                     ctx->index_map[key] = idx;
 
                     v3f v = ctx->curr_obj_vertices[vis[i] - 1];
+
+                    v3f c = ctx->has_color
+                        ? ctx->curr_obj_vertex_colors[vis[i] - 1]
+                        : v3f{1.0f, 1.0f, 1.0f};
+
                     v3f n = defined_normals
                         ? ctx->curr_obj_normals[nis[i] - 1]
                         : gen_normal;
 
-                    v2f t = ctx->has_texcoords ? ctx->curr_obj_texcoords[tis[i] - 1] : v2f{};
+                    v2f t = has_texcoords
+                        ? ctx->curr_obj_texcoords[tis[i] - 1]
+                        : v2f{};
 
                     ctx->curr_vertices.push_back(v);
                     ctx->curr_normals.push_back(n);
-                    if (ctx->has_texcoords) ctx->curr_texcoords.push_back(t);
+
+                    if (ctx->has_color) ctx->curr_colors.push_back(c);
+                    if (has_texcoords) ctx->curr_texcoords.push_back(t);
 
                     ctx->curr_triangles.push_back(idx);
                 } else {

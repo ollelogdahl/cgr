@@ -16,12 +16,12 @@ CC_OFILES_VENDOR_RELEASE = $(patsubst vendor/%.cc,${ODIR_REL}/vendor/%.cc.o,$(CC
 
 OFILES_RELEASE = $(CC_OFILES_VENDOR_RELEASE) $(CC_OFILES_SRC_RELEASE)
 
-CCFLAGS_COMMON = -std=c++2a -Wall -Wextra -Werror -Ivendor/include -Isrc -I. -DDEBUG -g -fsanitize=undefined \
+CCFLAGS_COMMON = -std=c++2a -Wall -Wextra -Werror -Ivendor/include -Isrc -I. -DDEBUG -g -fsanitize=address \
     -Wno-nullability-completeness -Wno-unused-parameter -Wno-unused-variable -Wno-unused-function -Wno-unused-private-field \
     -Wno-missing-field-initializers
 LDFLAGS_COMMON = -ldl -lglfw -lvulkan
 
-CCFLAGS_RELEASE = $(CCFLAGS_COMMON) -O1
+CCFLAGS_RELEASE = $(CCFLAGS_COMMON) -O0
 
 LDFLAGS_RELEASE = $(LDFLAGS_COMMON)
 

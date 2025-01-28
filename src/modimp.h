@@ -27,12 +27,12 @@ struct mesh_t {
 
     slice<v3f> vertices;
     slice<u32> indices; // note: contains 3 indices per triangle
+    slice<v3f> normals;
 
     aabb_t bounds;
 
     // optional fields
-    slice<v3f> normals;
-    slice<v4f> colors[MODIMP_MAX_COLOR_SETS];
+    slice<v3f> colors[MODIMP_MAX_COLOR_SETS];
     slice<v2f> texcoords[MODIMP_MAX_TEXCOORD_SETS];
 
     slice<char> name;

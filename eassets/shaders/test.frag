@@ -6,26 +6,38 @@
 layout(location = 0) in vec3 frag_pos_ws;
 layout(location = 1) in vec3 normal_ws;
 layout(location = 2) in vec2 frag_uv;
+layout(location = 3) in vec4 frag_vertex_color;
 
 layout(location = 0) out vec4 outColor;
+
+struct PointLight {
+    vec3 position;
+    float linear;
+    vec3 color;
+    float quadratic;
+};
 
 layout(binding = 0) uniform Env {
     mat4 cam_view;
     mat4 cam_proj;
     vec3 cam_pos;
+    uint num_point_lights;
+
+    PointLight point_lights[16];
 } env;
 
-
 layout(push_constant) uniform PushConsts {
-    layout(offset = 64) uint  flags;
+    layout(offset = 64) uint flags;
     layout(offset = 68) float color_r;
     layout(offset = 72) float color_g;
     layout(offset = 76) float color_b;
     layout(offset = 80) float roughness;
     layout(offset = 84) float metallic;
-    layout(offset = 88) uint albedo_tex_idx;
-    layout(offset = 92) uint normal_tex_idx;
-    layout(offset = 96) uint roughness_tex_idx;
+    layout(offset = 88) uint albedo0_idx;
+    layout(offset = 92) uint albedo1_idx;
+    layout(offset = 96) uint albedo2_idx;
+    layout(offset = 100) uint normal_idx;
+    layout(offset = 104) uint roughness_idx;
 } element;
 
 layout(set = 1, binding = 0) uniform sampler2D textures[];
@@ -37,12 +49,12 @@ vec3 fresnel_schlick(float cosTheta, vec3 F0)
 
 float distribution_ggx(vec3 N, vec3 H, float roughness)
 {
-    float a      = roughness*roughness;
-    float a2     = a*a;
-    float NdotH  = max(dot(N, H), 0.0);
-    float NdotH2 = NdotH*NdotH;
+    float a = roughness * roughness;
+    float a2 = a * a;
+    float NdotH = max(dot(N, H), 0.0);
+    float NdotH2 = NdotH * NdotH;
 
-    float num   = a2;
+    float num = a2;
     float denom = (NdotH2 * (a2 - 1.0) + 1.0);
     denom = M_PI * denom * denom;
 
@@ -51,7 +63,7 @@ float distribution_ggx(vec3 N, vec3 H, float roughness)
 
 float geometry_schlick_ggx(float dot, float k)
 {
-    float num   = dot;
+    float num = dot;
     float denom = dot * (1.0 - k) + k;
 
     return num / denom;
@@ -63,8 +75,8 @@ float geometry_smith(vec3 N, vec3 V, vec3 L, float roughness)
 
     float k = roughness * roughness / 2.0;
 
-    float ggx2  = geometry_schlick_ggx(NdotV, k);
-    float ggx1  = geometry_schlick_ggx(NdotL, k);
+    float ggx2 = geometry_schlick_ggx(NdotV, k);
+    float ggx1 = geometry_schlick_ggx(NdotL, k);
 
     return ggx1 * ggx2;
 }
@@ -119,13 +131,6 @@ vec3 pbr(
     return (kD * diffuse + specular) * radiance * NdotL * shadow;
 }
 
-struct PointLight {
-    vec3 position;
-    vec3 color;
-    float linear;
-    float quadratic;
-};
-
 float calculate_attenuation(PointLight pl, vec3 P) {
     float dist = length(pl.position - P);
 
@@ -175,45 +180,53 @@ vec3 shuler_perturb_normal(sampler2D bumpmap, vec3 N, vec3 V, vec2 texcoord) {
     return normalize(TBN * pn);
 }
 
-
 void main() {
     vec3 albedo;
     if ((element.flags & 1) != 0) {
-        albedo = texture(textures[element.albedo_tex_idx], frag_uv).rgb;
+        if ((element.flags & 8) != 0) {
+            vec3 a1 = texture(textures[element.albedo0_idx], frag_uv).rgb * frag_vertex_color.x;
+            vec3 a2 = texture(textures[element.albedo1_idx], frag_uv).rgb * frag_vertex_color.y;
+            vec3 a3 = texture(textures[element.albedo2_idx], frag_uv).rgb * frag_vertex_color.z;
+            albedo = a1 + a2 + a3;
+        } else {
+            albedo = texture(textures[element.albedo0_idx], frag_uv).rgb;
+        }
     } else {
         albedo = vec3(element.color_r, element.color_g, element.color_b);
     }
 
     float roughness;
     if ((element.flags & 4) != 0) {
-        roughness = texture(textures[element.roughness_tex_idx], frag_uv).r;
+        roughness = texture(textures[element.roughness_idx], frag_uv).r;
     } else {
         roughness = element.roughness;
     }
 
     PbrProperties props = PbrProperties(
-        albedo,
-        roughness,
-        element.metallic
-    );
-
-    PointLight pl = PointLight(
-        vec3(0.0, 1.0, 1.0),
-        vec3(1.0, 1.0, 1.0),
-        0.09,
-        0.032
-    );
+            albedo,
+            roughness,
+            element.metallic
+        );
 
     vec3 P = frag_pos_ws;
-    vec3 L = normalize(pl.position - frag_pos_ws);
     vec3 V = normalize(env.cam_pos - frag_pos_ws);
     vec3 N = normalize(normal_ws);
 
     if ((element.flags & 2) != 0) {
-        N = shuler_perturb_normal(textures[element.normal_tex_idx], N, V, frag_uv);
+        N = shuler_perturb_normal(textures[element.normal_idx], N, V, frag_uv);
     }
 
-    vec3 color = pbr(L, V, N, props, calculate_pl_radiance(pl, P), 1.0);
+    vec4 out_color = vec4(0.0, 0.0, 0.0, 1.0);
+    for (uint i = 0; i < env.num_point_lights; i++) {
+        PointLight pl = env.point_lights[i];
+        vec3 L = normalize(pl.position - frag_pos_ws);
 
-    outColor = vec4(color, 1.0);
+        vec3 color = pbr(L, V, N, props, calculate_pl_radiance(pl, P), 1.0);
+        out_color += vec4(color, 1.0);
+    }
+
+    float ambient = 0.02;
+    out_color += vec4(ambient, ambient, ambient, 0.0);
+
+    outColor = out_color;
 }

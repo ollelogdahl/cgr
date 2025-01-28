@@ -160,8 +160,10 @@ void gpu_t::init(GLFWwindow *window) {
                 VK_VERSION_MINOR(device_properties.apiVersion),
                 VK_VERSION_PATCH(device_properties.apiVersion)).c_str();
         }
-        gpu_log.info("selected physical device: {}", device_name);
-        gpu_log.info("vukan version: {}", api_version);
+        (void)device_name;
+        (void)api_version;
+        // gpu_log.info("selected physical device: {}", device_name);
+        // gpu_log.info("vukan version: {}", api_version);
     }
 
     {

@@ -8,15 +8,13 @@ struct env_ubo_t {
     m4f view;
     m4f proj;
     v3f view_pos;
-    u32 _pad1 = 0;
+    u32 num_point_lights;
 
     struct {
         v3f position;
-        u32 _pad1 = 0;
-        v3f color;
         f32 linear;
+        v3f color;
         f32 quadratic;
-        u32 _pad2 = 0;
     } point_lights[16];
 };
 
@@ -26,11 +24,14 @@ struct material_push_block_t {
     f32 roughness;
     f32 metallic;
 
-    u32 albedo_tex_idx;
-    u32 normal_tex_idx;
-    u32 roughness_tex_idx;
+    texhnd_t albedo0_idx;
+    texhnd_t albedo1_idx;
+    texhnd_t albedo2_idx;
 
-    u32 padding[5];
+    texhnd_t normal_idx;
+    texhnd_t roughness_idx;
+
+    u32 padding[1] = {0};
 };
 
 void imgui_init(gpu_t &gpu);
@@ -122,7 +123,7 @@ void renderer_t::init(gpu_t &gpu, loader_t &loader) {
                 .bindings = {
                     {
                         .binding = 0,
-                        .stride = 8 * sizeof(f32),
+                        .stride = 11 * sizeof(f32),
                         .inputRate = VK_VERTEX_INPUT_RATE_VERTEX,
                     }
                 },
@@ -143,6 +144,12 @@ void renderer_t::init(gpu_t &gpu, loader_t &loader) {
                         .location = 2,
                         .binding = 0,
                         .format = VK_FORMAT_R32G32_SFLOAT,
+                        .offset = 9 * sizeof(f32),
+                    },
+                    {
+                        .location = 3,
+                        .binding = 0,
+                        .format = VK_FORMAT_R32G32B32_SFLOAT,
                         .offset = 6 * sizeof(f32),
                     }
 
@@ -255,11 +262,12 @@ texhnd_t renderer_t::define_texture(ref_t<texture_t> texture) {
 void renderer_t::add_model(const model_element_t &element) {
 
     for (auto &m : element.model->meshes) {
+        m4f transform = m4f::translate(m.bounds.center()) * element.transform;
         draw_element_t elem = {
             .vertex_buffer = m.vertex_buffer,
             .index_buffer = m.lods[element.lod].index_buffer,
             .index_count = m.lods[element.lod].index_count,
-            .transform = m4f::translate(element.model->aabb.center()) * element.transform,
+            .transform = transform,
             .material = element.material,
         };
         draw_elements.push_back(elem);
@@ -293,6 +301,7 @@ void renderer_t::update_frame_data() {
     ubo.view = camera->view_matrix;
     ubo.proj = camera->projection_matrix;
     ubo.view_pos = camera->position;
+    ubo.num_point_lights = point_lights.size();
 
     for (usize i = 0; i < point_lights.size(); ++i) {
         ubo.point_lights[i].position = point_lights[i].position;
@@ -384,10 +393,11 @@ void renderer_t::draw(gpu_t::frame_t &frame) {
             .color_b = element.material.color.z,
             .roughness = element.material.roughness,
             .metallic = element.material.metallic,
-            .albedo_tex_idx = element.material.albedo_tex_idx,
-            .normal_tex_idx = element.material.normal_tex_idx,
-            .roughness_tex_idx = element.material.roughness_tex_idx,
-            .padding = {0}
+            .albedo0_idx = element.material.albedo0_idx,
+            .albedo1_idx = element.material.albedo1_idx,
+            .albedo2_idx = element.material.albedo2_idx,
+            .normal_idx = element.material.normal_idx,
+            .roughness_idx = element.material.roughness_idx,
         };
 
         vkCmdPushConstants(frame.cmds, pipeline->layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(m4f), &transform);

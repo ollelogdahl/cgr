@@ -125,6 +125,14 @@ struct gpu_timer_t {
 loader_t g_loader;
 renderer_t g_renderer;
 
+void gui();
+
+float scale = 0.5;
+camera_t g_camera;
+u32 lod_override;
+
+ref_t<model_t> g_model;
+
 int main(int argc, char **argv) {
     (void)argc;
     (void)argv;
@@ -150,7 +158,7 @@ int main(int argc, char **argv) {
         model_path = argv[1];
     }
 
-    auto mesh = g_loader.load_model({
+    g_model = g_loader.load_model({
         .path = model_path,
         .lod_settings = {
             { 10.0f, 4e-3f },
@@ -158,35 +166,38 @@ int main(int argc, char **argv) {
         }
     });
 
-    auto tex_color = g_loader.load_texture({.path = "assets/img0.jpg"});
+    auto tex_color1 = g_loader.load_texture({.path = "assets/tiles074_color.jpg"});
+    auto tex_color2 = g_loader.load_texture({.path = "assets/tiles133a_color.jpg"});
+    auto tex_color3 = g_loader.load_texture({.path = "assets/tiles081_color.jpg"});
     auto tex_normal = g_loader.load_texture({.path = "assets/tiles074_normal.jpg"});
     auto tex_roughness = g_loader.load_texture({.path = "assets/tiles074_roughness.jpg"});
 
     cpu_timer_t full_loop_timer;
 
-    camera_t camera = camera_t(
+    g_camera = camera_t(
         v3f{0, 0, 5}, v3f{0, 0, 0},
         m4f::perspective(anglef::from_deg(80.0f), 1200.0f / 900.0f, 0.01f, 20.0f)
     );
     freefly_controller_t controller;
-    controller.camera = &camera;
+    controller.camera = &g_camera;
 
-    v3f scale = {0.02, 0.02, 0.02};
-    bool lod_override = false;
-    i32 lod_override_value = 0;
-
+    u32 flags = (u32)draw_element_flags_t::use_albedo_tex | (u32)draw_element_flags_t::use_multi_tex;
     draw_element_material_t material = {
-        .flags = draw_element_flags_t::use_albedo_tex,
+        .flags = (draw_element_flags_t)flags,
         .color = v3f{0.3, 0.3, 0.3},
         .roughness = 0.5f,
         .metallic = 0.5f,
-        .albedo_tex_idx = g_renderer.define_texture(tex_color),
-        .normal_tex_idx = g_renderer.define_texture(tex_normal),
-        .roughness_tex_idx = g_renderer.define_texture(tex_roughness),
+        .albedo0_idx = g_renderer.define_texture(tex_color1),
+        .albedo1_idx = g_renderer.define_texture(tex_color2),
+        .albedo2_idx = g_renderer.define_texture(tex_color3),
+        .normal_idx = g_renderer.define_texture(tex_normal),
+        .roughness_idx = g_renderer.define_texture(tex_roughness),
     };
 
+    float t = 0.0f;
     g_log.info("running...");
     while(!glfwWindowShouldClose(window)) {
+        t += 0.017f;
         g_loader.process_hotreload();
         g_renderer.new_frame();
 
@@ -194,62 +205,43 @@ int main(int argc, char **argv) {
 
         controller.update(window, 0.16);
 
-        static bool show_imgui_demo = false;
-        static bool show_implot_demo = false;
-        if (show_imgui_demo)
-            ImGui::ShowDemoWindow(&show_imgui_demo);
+        gui();
 
-        if (show_implot_demo)
-            ImPlot::ShowDemoWindow(&show_implot_demo);
-
-        ImGui::Begin("test");
-
-        {
-            if (ImPlot::BeginPlot("Frame Times")) {
-                ImPlot::SetupAxes("Frame", "Time (ms)", ImPlotAxisFlags_AutoFit, ImPlotAxisFlags_None);
-                ImPlot::SetupAxisLimitsConstraints(ImAxis_Y1, 0, INFINITY);
-                ImPlot::PlotLine("Loop", full_loop_timer.measures, array_size(full_loop_timer.measures));
-                ImPlot::EndPlot();
-            }
-            auto last_frame_time = full_loop_timer.measure_ms();
-            ImGui::Text("Frame time: %.2f ms", last_frame_time);
-            ImGui::Text("FPS: %.2f", 1000.0f / last_frame_time);
+        u32 lod = 0;
+        if (lod_override) {
+            lod = lod_override;
         }
-
-        {
-            ImGui::SeparatorText("Debug");
-            ImGui::Checkbox("LOD override", &lod_override);
-            ImGui::SliderInt("LOD", &lod_override_value, 0, mesh->meshes[0].lods.size() - 1);
-        }
-
-        {
-            ImGui::SeparatorText("Material");
-            ImGui::ColorEdit3("Color", &material.color.x);
-            ImGui::SliderFloat("Roughness", &material.roughness, 0.0f, 1.0f);
-            ImGui::SliderFloat("Metallic", &material.metallic, 0.0f, 1.0f);
-
-            ImGui::CheckboxFlags("Use Albedo Texture", (int *)&material.flags, (int)draw_element_flags_t::use_albedo_tex);
-            ImGui::CheckboxFlags("Use Normal Texture", (int *)&material.flags, (int)draw_element_flags_t::use_normal_tex);
-            ImGui::CheckboxFlags("Use Roughness Texture", (int *)&material.flags, (int)draw_element_flags_t::use_roughness_tex);
-        }
-
-        {
-            ImGui::SeparatorText("Transform");
-            ImGui::SliderFloat3("Scale", &scale.x, 0.0f, 1.0f);
-        }
-
-        if (ImGui::Button("Show ImGui demo")) show_imgui_demo = !show_imgui_demo;
-        if (ImGui::Button("Show ImPlot demo")) show_implot_demo = !show_implot_demo;
-        ImGui::End();
 
         g_renderer.add_model({
-            .model = mesh.get(),
-            .transform = m4f::translate(v3f{0, 0, 0}) * m4f::scale(scale),
+            .model = g_model.get(),
+            .transform = m4f::translate(v3f{0, 0, 0}) * m4f::scale(v3f{scale, scale, scale}),
             .material = material,
-            .lod = 0,
+            .lod = lod,
         });
 
-        g_renderer.set_camera(camera);
+        g_renderer.set_camera(g_camera);
+
+        v3f lamp1_pos = v3f{4 * sin(t), 2, 4 * cos(t)};
+        g_renderer.add_point_light({
+            .position = lamp1_pos,
+            .color = v3f{1, 1, 1},
+            .linear = 0.09f,
+            .quadratic = 0.032f,
+        });
+
+
+        g_renderer.add_point_light({
+            .position = v3f{3, 2, 0},
+            .color = v3f{1, 0.5, 0.3},
+            .linear = 0.09f,
+            .quadratic = 0.032f,
+        });
+        g_renderer.add_point_light({
+            .position = v3f{-3, -1, 0},
+            .color = v3f{0.3, 0.5, 1},
+            .linear = 0.09f,
+            .quadratic = 0.032f,
+        });
 
         g_renderer.update_frame_data();
         gpu.frame([&](gpu_t::frame_t &frame) {
@@ -264,4 +256,57 @@ int main(int argc, char **argv) {
     glfwDestroyWindow(window);
 
     glfwTerminate();
+}
+
+void gui() {
+    static bool show_imgui_demo = false;
+    static bool show_implot_demo = false;
+    if (show_imgui_demo)
+        ImGui::ShowDemoWindow(&show_imgui_demo);
+
+    if (show_implot_demo)
+        ImPlot::ShowDemoWindow(&show_implot_demo);
+
+    ImGui::Begin("test");
+
+    /*
+    {
+        if (ImPlot::BeginPlot("Frame Times")) {
+            ImPlot::SetupAxes("Frame", "Time (ms)", ImPlotAxisFlags_AutoFit, ImPlotAxisFlags_None);
+            ImPlot::SetupAxisLimitsConstraints(ImAxis_Y1, 0, INFINITY);
+            ImPlot::PlotLine("Loop", full_loop_timer.measures, array_size(full_loop_timer.measures));
+            ImPlot::EndPlot();
+        }
+        auto last_frame_time = full_loop_timer.measure_ms();
+        ImGui::Text("Frame time: %.2f ms", last_frame_time);
+        ImGui::Text("FPS: %.2f", 1000.0f / last_frame_time);
+    }
+
+    {
+        ImGui::SeparatorText("Debug");
+        ImGui::SliderInt("LOD", &lod_override, 0, mesh->meshes[0].lods.size() - 1);
+    }
+
+    {
+        ImGui::SeparatorText("Material");
+        ImGui::ColorEdit3("Color", &material.color.x);
+        ImGui::SliderFloat("Roughness", &material.roughness, 0.0f, 1.0f);
+        ImGui::SliderFloat("Metallic", &material.metallic, 0.0f, 1.0f);
+
+        ImGui::CheckboxFlags("Use Albedo Texture", (int *)&material.flags, (int)draw_element_flags_t::use_albedo_tex);
+        ImGui::CheckboxFlags("Use Normal Texture", (int *)&material.flags, (int)draw_element_flags_t::use_normal_tex);
+        ImGui::CheckboxFlags("Use Roughness Texture", (int *)&material.flags, (int)draw_element_flags_t::use_roughness_tex);
+    }
+
+    {
+        ImGui::SeparatorText("Transform");
+        ImGui::Text("C Position: %.2f %.2f %.2f", g_camera.position.x, g_camera.position.y, g_camera.position.z);
+
+        ImGui::DragFloat("Scale", &scale, 0.01f, 0.01f, 10.0f);
+    }
+     */
+
+    if (ImGui::Button("Show ImGui demo")) show_imgui_demo = !show_imgui_demo;
+    if (ImGui::Button("Show ImPlot demo")) show_implot_demo = !show_implot_demo;
+    ImGui::End();
 }

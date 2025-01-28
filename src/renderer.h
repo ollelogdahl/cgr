@@ -14,6 +14,7 @@ enum struct draw_element_flags_t {
     use_albedo_tex = 1 << 0,
     use_normal_tex = 1 << 1,
     use_roughness_tex = 1 << 2,
+    use_multi_tex = 1 << 3,
 };
 
 struct draw_element_material_t {
@@ -22,9 +23,13 @@ struct draw_element_material_t {
     v3f color;
     f32 roughness;
     f32 metallic;
-    texhnd_t albedo_tex_idx;
-    texhnd_t normal_tex_idx;
-    texhnd_t roughness_tex_idx;
+
+    texhnd_t albedo0_idx;
+    texhnd_t albedo1_idx;
+    texhnd_t albedo2_idx;
+
+    texhnd_t normal_idx;
+    texhnd_t roughness_idx;
 };
 
 struct model_element_t {
