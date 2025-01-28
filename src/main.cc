@@ -33,6 +33,8 @@
 #include "freefly_controller.h"
 #include "vks.h"
 
+#include "cg.h"
+
 #include <time.h>
 
 struct cpu_timer_t {
@@ -133,6 +135,22 @@ u32 lod_override;
 
 ref_t<model_t> g_model;
 
+class renderer_visitor_t : public cg::node_visitor_t {
+public:
+    void visit(cg::group_t &group) override {
+        g_log.info("visiting group");
+    }
+    void visit(cg::geometry_t &geometry) override {
+        g_log.info("visiting geometry");
+    }
+    void visit(cg::point_light_t &point_light) override {
+        g_log.info("visiting point_light");
+    }
+    void visit(cg::transform_t &transform) override {
+        g_log.info("visiting transform");
+    }
+};
+
 int main(int argc, char **argv) {
     (void)argc;
     (void)argv;
@@ -171,6 +189,23 @@ int main(int argc, char **argv) {
     auto tex_color3 = g_loader.load_texture({.path = "assets/tiles081_color.jpg"});
     auto tex_normal = g_loader.load_texture({.path = "assets/tiles074_normal.jpg"});
     auto tex_roughness = g_loader.load_texture({.path = "assets/tiles074_roughness.jpg"});
+
+    // bygger upp en skitdålig scene-graf
+    cg::scene_t scene;
+    {
+        auto t1 = cg::transform_t{};
+        t1.position = v3f{3, 0, 0};
+
+        auto g1 = cg::geometry_t{};
+        t1.add(g1);
+        scene.add(t1);
+
+        // @todo: ownership. Nodes should probably only be 'creatable'
+        // inplace, and automatically allocated into the scene.
+
+        renderer_visitor_t visitor;
+        scene.accept(visitor);
+    }
 
     cpu_timer_t full_loop_timer;
 
