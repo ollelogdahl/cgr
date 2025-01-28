@@ -33,10 +33,6 @@
 #include "freefly_controller.h"
 #include "vks.h"
 
-#define MAX_FRAMES_IN_FLIGHT 3
-
-loader_t g_loader;
-
 #include <time.h>
 
 struct cpu_timer_t {
@@ -126,21 +122,7 @@ struct gpu_timer_t {
     VkQueryPool query_pool;
 };
 
-struct material_push_block_t {
-    u32 flags;
-    f32 color_r, color_g, color_b;
-    f32 roughness;
-    f32 metallic;
-
-    u32 albedo_tex_idx;
-    u32 normal_tex_idx;
-    u32 roughness_tex_idx;
-
-    u32 padding[5];
-};
-
-#include <stb/stb_image.h>
-
+loader_t g_loader;
 renderer_t g_renderer;
 
 int main(int argc, char **argv) {
@@ -163,8 +145,13 @@ int main(int argc, char **argv) {
 
     g_renderer.init(gpu, g_loader);
 
+    const char *model_path = "assets/dragon.obj";
+    if (argc > 1) {
+        model_path = argv[1];
+    }
+
     auto mesh = g_loader.load_model({
-        .path = "assets/arena.obj",
+        .path = model_path,
         .lod_settings = {
             { 10.0f, 4e-3f },
             { 20.0f, 1e-2f },

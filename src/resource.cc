@@ -16,7 +16,7 @@
 #define SHADER_STAGE_VERTEX 0
 #define SHADER_STAGE_FRAGMENT 1
 
-static VkPipelineShaderStageCreateInfo compile_shader(gpu_t &gpu, const char *path, int type);
+static VkPipelineShaderStageCreateInfo compile_shader(const loader_t &loader, gpu_t &gpu, const char *path, int type);
 static bool file_a_is_newer_than_b(const char *a, const char *b);
 
 static logger_t logger = logger_t("loader");
@@ -26,11 +26,6 @@ ref_t<shader_program_t> loader_t::load_shader_program(const shader_program_load_
     if (exists_it != loaded_shaders.end()) {
         return exists_it->second;
     }
-
-    // lazy-load: compile later.
-    // std::vector<VkPipelineShaderStageCreateInfo> stages;
-    // stages.push_back(compile_shader(*gpu, params.vertex_hlsl_path, SHADER_STAGE_VERTEX));
-    // stages.push_back(compile_shader(*gpu, params.fragment_hlsl_path, SHADER_STAGE_FRAGMENT));
 
     loaded_shaders[params] = make_ref<shader_program_t>();
     shader_program_t &program = *loaded_shaders[params];
@@ -236,6 +231,12 @@ ref_t<model_t> loader_t::load_model(const model_load_params_t &params) {
 void loader_t::init(gpu_t &gpu) {
     this->gpu = &gpu;
     watcher.init();
+
+    this->glslc_path = getenv("GLSLC_PATH");
+    if (this->glslc_path == nullptr) {
+        this->glslc_path = "glslc";
+    }
+    logger.info("using glslc: {}", this->glslc_path);
 }
 
 void loader_t::process_hotreload() {
@@ -246,8 +247,8 @@ void loader_t::process_hotreload() {
         if (program->modified) {
             program->stages.clear();
 
-            program->stages.push_back(compile_shader(*gpu, program->params.vertex_hlsl_path, SHADER_STAGE_VERTEX));
-            program->stages.push_back(compile_shader(*gpu, program->params.fragment_hlsl_path, SHADER_STAGE_FRAGMENT));
+            program->stages.push_back(compile_shader(*this, *gpu, program->params.vertex_hlsl_path, SHADER_STAGE_VERTEX));
+            program->stages.push_back(compile_shader(*this, *gpu, program->params.fragment_hlsl_path, SHADER_STAGE_FRAGMENT));
         }
     }
 
@@ -259,7 +260,7 @@ void loader_t::process_hotreload() {
     }
 }
 
-VkPipelineShaderStageCreateInfo compile_shader(gpu_t &gpu, const char *path, int type) {
+VkPipelineShaderStageCreateInfo compile_shader(const loader_t &loader, gpu_t &gpu, const char *path, int type) {
     // in dev mode, we compile the shader into the tmp dir. The filename in tmp is
     // based on the hash of the original file name.
 
@@ -286,7 +287,7 @@ VkPipelineShaderStageCreateInfo compile_shader(gpu_t &gpu, const char *path, int
     if (file_a_is_newer_than_b(path, tmp_path.c_str())) {
         logger.info("compiling shader {}", path);
         // @todo: the path to glslc should maybe be compile-time configurable? or taken from env?
-        auto cmd = fmt::format("glslc -fshader-stage={} -o {} {}", glslc_stage, tmp_path, path);
+        auto cmd = fmt::format("{} -fshader-stage={} -o {} {}", loader.glslc_path, glslc_stage, tmp_path, path);
 
         // @todo: use exec instead of system.
         // we want to be able to do these things in parallel i think.

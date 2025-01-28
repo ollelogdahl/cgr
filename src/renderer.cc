@@ -274,7 +274,7 @@ void renderer_t::set_camera(camera_t &camera) {
 
 void renderer_t::new_frame() {
     ImGui_ImplVulkan_NewFrame();
-    ImGui_ImplVulkan_NewFrame();
+    ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
 
     // reset the draw elements
@@ -441,7 +441,7 @@ void imgui_init(gpu_t &gpu) {
     }
 
     // create unique gpu stuffs for imgui...
-    // @todo: recreate this when swapchain is recreated ? HMM.
+    // @todo: technically, we should recreate this on swapchain recreation. I think.
     ImGui_ImplGlfw_InitForVulkan(gpu.window, true);
     ImGui_ImplVulkan_InitInfo init_info = {};
     init_info.Instance = gpu.instance;

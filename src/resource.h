@@ -110,4 +110,6 @@ struct loader_t {
 
     fswatcher_t watcher;
     gpu_t *gpu;
+
+    const char *glslc_path;
 };
