@@ -29,6 +29,7 @@ struct model_load_params_t {
     struct lod_setting_t {
         f32 distance;
         f32 error_limit;
+        bool sloppy = false;
     };
 
     slice<const lod_setting_t> lod_settings = {};

@@ -458,6 +458,13 @@ public:
         return *this;
     }
 
+    constexpr inline T* get() {
+        return ptr;
+    }
+    constexpr inline const T* get() const {
+        return ptr;
+    }
+
     constexpr inline T& operator*() {
         return *ptr;
     }
@@ -493,9 +500,9 @@ public:
         return ptr == nullptr;
     }
 
+private:
     T *ptr;
     u32 *ref_count;
-private:
 
     template <typename U, typename ...Args>
     friend ref_t<U> make_ref(Args... args);
@@ -521,7 +528,7 @@ struct fmt::formatter<ref_t<T>> {
 
     auto format(const ref_t<T>& ref, auto& ctx) const {
         if (as_ptr) {
-            return format_to(ctx.out(), "{}", (void *)ref.ptr);
+            return format_to(ctx.out(), "{}", (void *)ref.get());
         }
 
         // return format_to(ctx.out(), "{}", *ref);

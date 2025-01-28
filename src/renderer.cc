@@ -1,5 +1,8 @@
 #include "renderer.h"
 #include "gpu.h"
+#include "imgui/imgui_impl_glfw.h"
+#include "imgui/imgui_impl_vulkan.h"
+#include "implot/implot.h"
 
 struct env_ubo_t {
     m4f view;
@@ -7,14 +10,14 @@ struct env_ubo_t {
     v3f view_pos;
     u32 _pad1 = 0;
 
-    struct light_t {
+    struct {
         v3f position;
         u32 _pad1 = 0;
         v3f color;
         f32 linear;
         f32 quadratic;
         u32 _pad2 = 0;
-    } lights[16];
+    } point_lights[16];
 };
 
 struct material_push_block_t {
@@ -30,8 +33,12 @@ struct material_push_block_t {
     u32 padding[5];
 };
 
+void imgui_init(gpu_t &gpu);
+
 void renderer_t::init(gpu_t &gpu, loader_t &loader) {
     this->gpu = &gpu;
+
+    imgui_init(gpu);
 
     // setup pipeline
     {
@@ -245,10 +252,20 @@ texhnd_t renderer_t::define_texture(ref_t<texture_t> texture) {
     return id;
 }
 
-void renderer_t::add_element(draw_element_t &element) {
-    draw_elements.push_back(element);
+void renderer_t::add_model(const model_element_t &element) {
+
+    for (auto &m : element.model->meshes) {
+        draw_element_t elem = {
+            .vertex_buffer = m.vertex_buffer,
+            .index_buffer = m.lods[element.lod].index_buffer,
+            .index_count = m.lods[element.lod].index_count,
+            .transform = m4f::translate(element.model->aabb.center()) * element.transform,
+            .material = element.material,
+        };
+        draw_elements.push_back(elem);
+    }
 }
-void renderer_t::add_point_light(pl_element_t &element) {
+void renderer_t::add_point_light(const pl_element_t &element) {
     point_lights.push_back(element);
 }
 void renderer_t::set_camera(camera_t &camera) {
@@ -256,9 +273,35 @@ void renderer_t::set_camera(camera_t &camera) {
 }
 
 void renderer_t::new_frame() {
+    ImGui_ImplVulkan_NewFrame();
+    ImGui_ImplVulkan_NewFrame();
+    ImGui::NewFrame();
+
+    // reset the draw elements
     draw_elements.clear();
     point_lights.clear();
     camera = nullptr;
+}
+
+void renderer_t::update_frame_data() {
+    // save off imgui
+    ImGui::Render();
+
+    // write to ubo buffers.
+
+    env_ubo_t ubo = {};
+    ubo.view = camera->view_matrix;
+    ubo.proj = camera->projection_matrix;
+    ubo.view_pos = camera->position;
+
+    for (usize i = 0; i < point_lights.size(); ++i) {
+        ubo.point_lights[i].position = point_lights[i].position;
+        ubo.point_lights[i].color = point_lights[i].color;
+        ubo.point_lights[i].linear = point_lights[i].linear;
+        ubo.point_lights[i].quadratic = point_lights[i].quadratic;
+    }
+
+    gpu->write_buffer(env_ubo_buffer, slice<u8>((u8 *)&ubo, sizeof(ubo)));
 }
 void renderer_t::draw(gpu_t::frame_t &frame) {
     VkRenderingAttachmentInfo color_attachments[] = {
@@ -322,18 +365,23 @@ void renderer_t::draw(gpu_t::frame_t &frame) {
     vkCmdBindDescriptorSets(frame.cmds, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline->layout,
         0, array_size(sets), sets, 0, nullptr);
 
+    // @todo: implement instancing.
+    // this is actually really simple. If we can sort the elements by the mesh,
+    // we can just bind the vertex buffer once, and then draw all the instances
+    // of that mesh.
+    //
+    // the problem is that the material is defined as a push constant, so we cannot
+    // draw the same mesh with different materials. But that is probably unusual.
+    //
+    // I think this is a viable route.
     for (auto &element : draw_elements) {
         m4f transform = element.transform;
-        u32 flags = 0;
-        flags |= (element.material.use_albedo_tex << 0);
-        flags |= (element.material.use_normal_tex << 1);
-        flags |= (element.material.use_roughness_tex << 2);
 
         material_push_block_t push_block = {
-            .flags = flags,
-            .color_r = element.material.color_r,
-            .color_g = element.material.color_g,
-            .color_b = element.material.color_b,
+            .flags = (u32)element.material.flags,
+            .color_r = element.material.color.x,
+            .color_g = element.material.color.y,
+            .color_b = element.material.color.z,
             .roughness = element.material.roughness,
             .metallic = element.material.metallic,
             .albedo_tex_idx = element.material.albedo_tex_idx,
@@ -345,12 +393,77 @@ void renderer_t::draw(gpu_t::frame_t &frame) {
         vkCmdPushConstants(frame.cmds, pipeline->layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(m4f), &transform);
         vkCmdPushConstants(frame.cmds, pipeline->layout, VK_SHADER_STAGE_FRAGMENT_BIT, sizeof(m4f), sizeof(material_push_block_t), &push_block);
 
-        VkBuffer buffers[] = {element.vertex_buffer->handle};
+        VkBuffer buffers[] = {element.vertex_buffer.handle};
         VkDeviceSize offsets[] = {0};
         vkCmdBindVertexBuffers(frame.cmds, 0, 1, buffers, offsets);
-        vkCmdBindIndexBuffer(frame.cmds, element.index_buffer->handle, 0, VK_INDEX_TYPE_UINT32);
-        vkCmdDrawIndexed(frame.cmds, element.index_count, 1, element.index_start, 0, 0);
+        vkCmdBindIndexBuffer(frame.cmds, element.index_buffer.handle, 0, VK_INDEX_TYPE_UINT32);
+        vkCmdDrawIndexed(frame.cmds, element.index_count, 1, 0, 0, 0);
+    }
+
+    // @todo: move imgui into separate pass
+    {
+        ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), frame.cmds);
     }
 
     vkCmdEndRendering(frame.cmds);
+}
+
+// @todo: probably doesn't belong here. Its fine for now.
+void imgui_init(gpu_t &gpu) {
+    ImGui::CreateContext();
+    ImPlot::CreateContext();
+
+    ImGuiIO& io = ImGui::GetIO();
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;     // Enable Keyboard Controls
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;      // Enable Gamepad Controls
+    io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
+
+    // Setup Dear ImGui style
+    ImGui::StyleColorsDark();
+
+    // setup implot style
+    ImPlot::PushStyleColor(ImPlotCol_FrameBg, {0.15,0.15,0.15,0.0});
+
+    VkDescriptorPool descriptor_pool;
+    {
+        VkDescriptorPoolSize imgui_pool_sizes[] = {
+            { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1 }
+        };
+        VkDescriptorPoolCreateInfo pool_info = {};
+        pool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+        pool_info.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
+        pool_info.maxSets = 1;
+        pool_info.poolSizeCount = array_size(imgui_pool_sizes);
+        pool_info.pPoolSizes = imgui_pool_sizes;
+        if (vkCreateDescriptorPool(gpu.device, &pool_info, nullptr, &descriptor_pool) != VK_SUCCESS) {
+            throw std::runtime_error("failed to create descriptor pool");
+        }
+    }
+
+    // create unique gpu stuffs for imgui...
+    // @todo: recreate this when swapchain is recreated ? HMM.
+    ImGui_ImplGlfw_InitForVulkan(gpu.window, true);
+    ImGui_ImplVulkan_InitInfo init_info = {};
+    init_info.Instance = gpu.instance;
+    init_info.PhysicalDevice = gpu.pdev;
+    init_info.Device = gpu.device;
+    init_info.QueueFamily = gpu.queue_families.graphics,
+    init_info.Queue = gpu.graphics_queue,
+    init_info.PipelineCache = VK_NULL_HANDLE;
+    init_info.DescriptorPool = descriptor_pool;
+    init_info.UseDynamicRendering = true;
+    init_info.Subpass = 0;
+    init_info.MinImageCount = gpu.swapchain.image_count;
+    init_info.ImageCount = gpu.swapchain.image_count;
+    init_info.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
+    init_info.Allocator = VK_NULL_HANDLE;
+    init_info.CheckVkResultFn = nullptr;
+
+    init_info.PipelineRenderingCreateInfo = {};
+    init_info.PipelineRenderingCreateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
+	init_info.PipelineRenderingCreateInfo.colorAttachmentCount = 1;
+	init_info.PipelineRenderingCreateInfo.pColorAttachmentFormats = &gpu.swapchain.image_format;
+	init_info.PipelineRenderingCreateInfo.depthAttachmentFormat = VK_FORMAT_D32_SFLOAT;
+
+    ImGui_ImplVulkan_Init(&init_info);
 }

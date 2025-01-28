@@ -9,35 +9,29 @@
 
 typedef u32 texhnd_t;
 
-struct draw_element_material_t {
-    bool use_albedo_tex;
-    bool use_normal_tex;
-    bool use_roughness_tex;
-
-    union {
-        struct {
-            f32 color_r, color_g, color_b;
-        };
-        texhnd_t albedo_tex_idx;
-    };
-
-    union {
-        f32 roughness;
-        texhnd_t roughness_tex_idx;
-    };
-
-    f32 metallic;
-    texhnd_t normal_tex_idx;
+enum struct draw_element_flags_t {
+    none = 0,
+    use_albedo_tex = 1 << 0,
+    use_normal_tex = 1 << 1,
+    use_roughness_tex = 1 << 2,
 };
 
-struct draw_element_t {
-    gpu_buffer_t *vertex_buffer;
-    gpu_buffer_t *index_buffer;
-    u32 index_count;
-    u32 index_start;
+struct draw_element_material_t {
+    draw_element_flags_t flags;
 
+    v3f color;
+    f32 roughness;
+    f32 metallic;
+    texhnd_t albedo_tex_idx;
+    texhnd_t normal_tex_idx;
+    texhnd_t roughness_tex_idx;
+};
+
+struct model_element_t {
+    model_t *model;
     m4f transform;
     draw_element_material_t material;
+    u32 lod;
 };
 
 struct pl_element_t {
@@ -56,15 +50,24 @@ public:
     texhnd_t define_texture(ref_t<texture_t> texture);
 
     // adds a draw element to be rendered in the next frame.
-    void add_element(draw_element_t &element);
-    void add_point_light(pl_element_t &element);
+    void add_model(const model_element_t &element);
+    void add_point_light(const pl_element_t &element);
 
     void set_camera(camera_t &camera);
 
     void new_frame();
+    void update_frame_data(); // @todo: pass rendering properties here.
     void draw(gpu_t::frame_t &frame);
 
 private:
+    struct draw_element_t {
+        gpu_buffer_t vertex_buffer;
+        gpu_buffer_t index_buffer;
+        u32 index_count;
+        m4f transform;
+        draw_element_material_t material;
+    };
+
     gpu_t *gpu;
     ref_t<gpu_pipeline_t> pipeline;
     std::vector<ref_t<texture_t>> defined_textures;
