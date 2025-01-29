@@ -123,7 +123,7 @@ void renderer_t::init(gpu_t &gpu, loader_t &loader) {
                 .bindings = {
                     {
                         .binding = 0,
-                        .stride = 11 * sizeof(f32),
+                        .stride = 9 * sizeof(f32),
                         .inputRate = VK_VERTEX_INPUT_RATE_VERTEX,
                     }
                 },
@@ -144,12 +144,12 @@ void renderer_t::init(gpu_t &gpu, loader_t &loader) {
                         .location = 2,
                         .binding = 0,
                         .format = VK_FORMAT_R32G32_SFLOAT,
-                        .offset = 9 * sizeof(f32),
+                        .offset = 7 * sizeof(f32),
                     },
                     {
                         .location = 3,
                         .binding = 0,
-                        .format = VK_FORMAT_R32G32B32_SFLOAT,
+                        .format = VK_FORMAT_R8G8B8A8_UNORM,
                         .offset = 6 * sizeof(f32),
                     }
 

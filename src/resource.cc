@@ -127,8 +127,8 @@ ref_t<model_t> loader_t::load_model(const model_load_params_t &params) {
 
     logger.info("loaded model: {} with {} meshes", params.path, scene.meshes.len);
 
-    const usize interleaved_vertex_size = 11 * sizeof(f32);
-    auto interleave_attributes = [](slice<v3f> vertices, slice<v3f> colors, slice<v3f> normals, slice<v2f> uvs, slice<u8> &out) {
+    const usize interleaved_vertex_size = 9 * sizeof(f32);
+    auto interleave_attributes = [](slice<v3f> vertices, slice<u32> colors, slice<v3f> normals, slice<v2f> uvs, slice<u8> &out) {
         usize size = interleaved_vertex_size * vertices.len;
         out = slice<u8>((u8 *)malloc(size), size);
 
@@ -146,16 +146,14 @@ ref_t<model_t> loader_t::load_model(const model_load_params_t &params) {
             ptr[5] = n.z;
 
             if (colors.data != nullptr) {
-                auto &c = colors[i];
-                ptr[6] = c.x;
-                ptr[7] = c.y;
-                ptr[8] = c.z;
+                u32 *uptr = (u32 *)(ptr + 6);
+                uptr[0] = colors[i];
             }
 
             if (uvs.data != nullptr) {
                 auto &uv = uvs[i];
-                ptr[9] = uv.x;
-                ptr[10] = uv.y;
+                ptr[7] = uv.x;
+                ptr[8] = uv.y;
             }
         }
     };
@@ -171,7 +169,7 @@ ref_t<model_t> loader_t::load_model(const model_load_params_t &params) {
         lod_default.lod_distance_sq = 0.0f;
 
         slice<byte> interleaved;
-        interleave_attributes(m.vertices, m.colors[0], m.normals, m.texcoords[0], interleaved);
+        interleave_attributes(m.vertices, m.colors, m.normals, m.texcoords, interleaved);
         slice<u32> indices = m.indices;
         usize vertex_count = m.vertices.len;
 

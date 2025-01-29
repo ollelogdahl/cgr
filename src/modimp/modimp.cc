@@ -3,6 +3,8 @@
 #include <vector>
 #include <unordered_map>
 
+#include "linalg.h"
+#include "modimp/m3d.h"
 #include "obj.h"
 
 struct vertex_attribs_t {
@@ -36,9 +38,13 @@ result_t<void, std::string> scene_load(scene_t &scene, const char *path) {
 }
 
 result_t<void, std::string> scene_load_obj(scene_t &scene, slice<byte> data);
+result_t<void, std::string> scene_load_m3d(scene_t &scene, slice<byte> data);
 
 result_t<void, std::string> scene_load(scene_t &scene, slice<byte> data, const char *hint) {
-    (void)hint;
+
+    if (strstr(hint, ".m3d") != nullptr) {
+        return scene_load_m3d(scene, data);
+    }
 
     // for now, assume all files are obj files
     return scene_load_obj(scene, data);
@@ -48,11 +54,162 @@ void scene_free(scene_t &scene) {
     (void)scene;
 }
 
+result_t<void, std::string> scene_load_m3d(scene_t &scene, slice<byte> data) {
+
+    auto read_file_stub = [](char *filename, u32 *size) -> u8 * {
+        (void)filename;
+        (void)size;
+        return nullptr;
+    };
+
+    m3d_t *m = m3d_load(data.data, read_file_stub, nullptr, nullptr);
+    if (m == nullptr) {
+        return std::string("failed to load m3d file");
+    }
+
+    // @todo: most likely, the memory model of m3d is wayy better than ours.
+    // The way we need to reshuffle the data is really not neccessary (we are not doing
+    // any real work).
+    //
+    // on the other hand, it does not seem like m3d uses a shared index array for
+    // vertices. So this might be the way.
+    //
+    // figure out how we should do this better.
+
+    std::vector<mesh_t> meshes = {};
+
+    std::vector<u32> curr_indices = {};
+    std::vector<v3f> curr_vertices = {};
+    std::vector<u32> curr_colors = {};
+    std::vector<v3f> curr_normals = {};
+    std::vector<v2f> curr_texcoords = {};
+    aabb_t curr_bounds = aabb_t();
+
+    std::unordered_map<vertex_attribs_t, u32> index_map = {};
+
+    u32 last_materialid = 0;
+
+    auto finish_mesh = [&]() {
+        auto indices_ptr = new u32[curr_indices.size()];
+        auto vertices_ptr = new v3f[curr_vertices.size()];
+        auto normals_ptr = new v3f[curr_normals.size()];
+        auto texcoords_ptr = curr_texcoords.size() > 0
+            ? new v2f[curr_texcoords.size()]
+            : nullptr;
+        auto colors_ptr = curr_colors.size() > 0
+            ? new u32[curr_colors.size()]
+            : nullptr;
+
+        memcpy(indices_ptr, curr_indices.data(), curr_indices.size() * sizeof(u32));
+        memcpy(vertices_ptr, curr_vertices.data(), curr_vertices.size() * sizeof(v3f));
+        memcpy(normals_ptr, curr_normals.data(), curr_normals.size() * sizeof(v3f));
+        if (curr_texcoords.size() > 0) memcpy(texcoords_ptr, curr_texcoords.data(), curr_texcoords.size() * sizeof(v2f));
+        if (curr_colors.size() > 0) memcpy(colors_ptr, curr_colors.data(), curr_colors.size() * sizeof(u32));
+
+        auto indices = slice<u32>{indices_ptr, curr_indices.size()};
+        auto vertices = slice<v3f>{vertices_ptr, curr_vertices.size()};
+        auto normals = slice<v3f>{normals_ptr, curr_normals.size()};
+        auto texcoords = curr_texcoords.size() > 0
+            ? slice<v2f>{texcoords_ptr, curr_texcoords.size()}
+            : slice<v2f>{};
+        auto colors = curr_colors.size() > 0
+            ? slice<u32>{colors_ptr, curr_colors.size()}
+            : slice<u32>{};
+
+        meshes.push_back({
+            .material_index = last_materialid,
+            .vertices = vertices,
+            .indices = indices,
+            .normals = normals,
+            .bounds = curr_bounds,
+            .colors = colors,
+            .texcoords = texcoords,
+            .name = {},
+        });
+
+        curr_indices.clear();
+        curr_vertices.clear();
+        curr_colors.clear();
+        curr_normals.clear();
+        curr_texcoords.clear();
+        curr_bounds = aabb_t();
+    };
+
+    for (u32 i = 0; i < m->numface; ++i) {
+        auto &face = m->face[i];
+        if (i != 0 && face.materialid != last_materialid) {
+            finish_mesh();
+        }
+        last_materialid = face.materialid;
+
+        v3f gen_normal;
+        {
+            auto &vx1 = m->vertex[face.vertex[0]];
+            auto &vx2 = m->vertex[face.vertex[1]];
+            auto &vx3 = m->vertex[face.vertex[2]];
+            v3f v1 = v3f{vx1.x, vx1.y, vx1.z};
+            v3f v2 = v3f{vx2.x, vx2.y, vx2.z};
+            v3f v3 = v3f{vx3.x, vx3.y, vx3.z};
+
+            v3f a = v2 - v1;
+            v3f b = v3 - v1;
+
+            gen_normal = v3f::cross(a, b);
+        }
+
+        for (u32 j = 0; j < 3; ++j) {
+            auto &vi = face.vertex[j];
+            auto &ni = face.normal[j];
+            auto &ti = face.texcoord[j];
+
+            vertex_attribs_t va = { vi, ni, ti };
+            auto it = index_map.find(va);
+            if (it == index_map.end()) {
+                u32 idx = curr_vertices.size();
+                index_map[va] = idx;
+
+                curr_indices.push_back(idx);
+
+                auto &vx = m->vertex[vi];
+                auto v = v3f{vx.x, vx.y, vx.z};
+                curr_bounds.include(v);
+
+                curr_vertices.push_back(v);
+                curr_colors.push_back(vx.color);
+
+                if (ni != -1U) {
+                    auto &n = m->vertex[ni];
+                    curr_normals.push_back(v3f{n.x, n.y, n.z});
+                } else {
+                    // generate normal
+                    curr_normals.push_back(gen_normal);
+                }
+
+                if (ti != -1U) {
+                    auto &t = m->tmap[ti];
+                    curr_texcoords.push_back(v2f{t.u, t.v});
+                }
+            } else {
+                curr_indices.push_back(it->second);
+            }
+        }
+    }
+
+    if (curr_indices.size() > 0)
+        finish_mesh();
+
+    auto meshes_ptr = new mesh_t[meshes.size()];
+    memcpy(meshes_ptr, meshes.data(), meshes.size() * sizeof(mesh_t));
+    scene.meshes = slice<mesh_t>{meshes_ptr, meshes.size()};
+
+    return {};
+}
+
 result_t<void, std::string> scene_load_obj(scene_t &scene, slice<byte> data) {
 
     struct ctx_t {
         std::vector<v3f> curr_obj_vertices;
-        std::vector<v3f> curr_obj_vertex_colors;
+        std::vector<u32> curr_obj_vertex_colors;
         std::vector<v3f> curr_obj_normals;
         std::vector<v2f> curr_obj_texcoords;
         slice<byte> curr_material;
@@ -67,7 +224,7 @@ result_t<void, std::string> scene_load_obj(scene_t &scene, slice<byte> data) {
 
         std::unordered_map<vertex_attribs_t, u32> index_map;
         std::vector<v3f> curr_vertices;
-        std::vector<v3f> curr_colors;
+        std::vector<u32> curr_colors;
         std::vector<v3f> curr_normals;
         std::vector<v2f> curr_texcoords;
         std::vector<u32> curr_triangles;
@@ -88,7 +245,7 @@ result_t<void, std::string> scene_load_obj(scene_t &scene, slice<byte> data) {
                 ? new v2f[curr_texcoords.size()]
                 : nullptr;
             auto colors_ptr = has_color
-                ? new v3f[curr_colors.size()]
+                ? new u32[curr_colors.size()]
                 : nullptr;
 
             memcpy(vertices_ptr, curr_vertices.data(), curr_vertices.size() * sizeof(v3f));
@@ -106,8 +263,8 @@ result_t<void, std::string> scene_load_obj(scene_t &scene, slice<byte> data) {
                 ? slice<v2f>{texcoords_ptr, curr_texcoords.size()}
                 : slice<v2f>{};
             auto colors = has_color
-                ? slice<v3f>{colors_ptr, curr_colors.size()}
-                : slice<v3f>{};
+                ? slice<u32>{colors_ptr, curr_colors.size()}
+                : slice<u32>{};
 
             mesh_t mesh = {
                 .material_index = 0,
@@ -144,8 +301,17 @@ result_t<void, std::string> scene_load_obj(scene_t &scene, slice<byte> data) {
         ctx->first_vertex = false;
 
         ctx->curr_obj_vertices.push_back(v);
-        if (has_color)
-            ctx->curr_obj_vertex_colors.push_back(color);
+        if (has_color) {
+            // decode it as a u32 r8g8b8a8
+            // alpha is fixed to 255.
+            u8 r = (u8)(color.x * 255.0f);
+            u8 g = (u8)(color.y * 255.0f);
+            u8 b = (u8)(color.z * 255.0f);
+            u32 rgba = (r << 24) | (g << 16) | (b << 8) | 0xff;
+
+            ctx->curr_obj_vertex_colors.push_back(rgba);
+        }
+
         ctx->curr_bounds.include(v);
     };
 
@@ -207,9 +373,9 @@ result_t<void, std::string> scene_load_obj(scene_t &scene, slice<byte> data) {
 
                     v3f v = ctx->curr_obj_vertices[vis[i] - 1];
 
-                    v3f c = ctx->has_color
+                    u32 c = ctx->has_color
                         ? ctx->curr_obj_vertex_colors[vis[i] - 1]
-                        : v3f{1.0f, 1.0f, 1.0f};
+                        : 0xffffffff;
 
                     v3f n = defined_normals
                         ? ctx->curr_obj_normals[nis[i] - 1]

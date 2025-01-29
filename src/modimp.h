@@ -5,9 +5,6 @@
 
 namespace modimp {
 
-#define MODIMP_MAX_COLOR_SETS 1
-#define MODIMP_MAX_TEXCOORD_SETS 1
-
 struct mesh_t;
 struct material_t;
 
@@ -20,8 +17,9 @@ result_t<void, std::string> scene_load(scene_t &scene, const char *path);
 result_t<void, std::string> scene_load(scene_t &scene, slice<byte> data, const char *hint);
 void scene_free(scene_t &scene);
 
-// @todo: could also do with a slice of faces accessor. This is not done now
-// for performance reasons; we always triangulate meshes.
+// @todo: figure out ownership. In the obj-loader, each slice refers to a freshly allocated
+// array. In the m3d case, it would be better to allocate globally, and refer into it.
+// this is done with the allocations list inside the scene_t.
 struct mesh_t {
     u32 material_index;
 
@@ -32,8 +30,10 @@ struct mesh_t {
     aabb_t bounds;
 
     // optional fields
-    slice<v3f> colors[MODIMP_MAX_COLOR_SETS];
-    slice<v2f> texcoords[MODIMP_MAX_TEXCOORD_SETS];
+    // @note: some model representations allow multiple vertex-colors and
+    // texcoords per vertex. We will just support one for now.
+    slice<u32> colors;
+    slice<v2f> texcoords;
 
     slice<char> name;
 };

@@ -185,8 +185,8 @@ int main(int argc, char **argv) {
     });
 
     auto tex_color1 = g_loader.load_texture({.path = "assets/tiles074_color.jpg"});
-    auto tex_color2 = g_loader.load_texture({.path = "assets/tiles133a_color.jpg"});
-    auto tex_color3 = g_loader.load_texture({.path = "assets/tiles081_color.jpg"});
+    // auto tex_color2 = g_loader.load_texture({.path = "assets/tiles133a_color.jpg"});
+    // auto tex_color3 = g_loader.load_texture({.path = "assets/tiles081_color.jpg"});
     auto tex_normal = g_loader.load_texture({.path = "assets/tiles074_normal.jpg"});
     auto tex_roughness = g_loader.load_texture({.path = "assets/tiles074_roughness.jpg"});
 
@@ -216,15 +216,18 @@ int main(int argc, char **argv) {
     freefly_controller_t controller;
     controller.camera = &g_camera;
 
-    u32 flags = (u32)draw_element_flags_t::use_albedo_tex | (u32)draw_element_flags_t::use_multi_tex;
+    //u32 flags = (u32)draw_element_flags_t::use_albedo_tex | (u32)draw_element_flags_t::use_multi_tex;
+    u32 flags = (u32)draw_element_flags_t::use_albedo_tex;
     draw_element_material_t material = {
         .flags = (draw_element_flags_t)flags,
         .color = v3f{0.3, 0.3, 0.3},
         .roughness = 0.5f,
         .metallic = 0.5f,
         .albedo0_idx = g_renderer.define_texture(tex_color1),
-        .albedo1_idx = g_renderer.define_texture(tex_color2),
-        .albedo2_idx = g_renderer.define_texture(tex_color3),
+        // .albedo1_idx = g_renderer.define_texture(tex_color2),
+        .albedo1_idx = 0,
+        // .albedo2_idx = g_renderer.define_texture(tex_color3),
+        .albedo2_idx = 0,
         .normal_idx = g_renderer.define_texture(tex_normal),
         .roughness_idx = g_renderer.define_texture(tex_roughness),
     };
