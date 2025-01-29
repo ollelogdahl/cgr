@@ -72,7 +72,7 @@ struct mesh_t {
 };
 
 struct model_t {
-    std::vector<mesh_t> meshes;
+    std::vector<ref_t<mesh_t>> meshes;
     aabb_t aabb;
 };
 

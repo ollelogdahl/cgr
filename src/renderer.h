@@ -32,11 +32,15 @@ struct draw_element_material_t {
     texhnd_t roughness_idx;
 };
 
-struct model_element_t {
-    model_t *model;
+struct draw_indexed_element_t {
+    gpu_buffer_t vertex_buffer;
+    gpu_buffer_t index_buffer;
+    u32 index_count;
+    u32 vertex_offset;
+    u32 index_offset;
+
     m4f transform;
     draw_element_material_t material;
-    u32 lod;
 };
 
 struct pl_element_t {
@@ -55,7 +59,7 @@ public:
     texhnd_t define_texture(ref_t<texture_t> texture);
 
     // adds a draw element to be rendered in the next frame.
-    void add_model(const model_element_t &element);
+    void add_draw_indexed(const draw_indexed_element_t &element);
     void add_point_light(const pl_element_t &element);
 
     void set_camera(camera_t &camera);
@@ -65,19 +69,11 @@ public:
     void draw(gpu_t::frame_t &frame);
 
 private:
-    struct draw_element_t {
-        gpu_buffer_t vertex_buffer;
-        gpu_buffer_t index_buffer;
-        u32 index_count;
-        m4f transform;
-        draw_element_material_t material;
-    };
-
     gpu_t *gpu;
     ref_t<gpu_pipeline_t> pipeline;
     std::vector<ref_t<texture_t>> defined_textures;
 
-    std::vector<draw_element_t> draw_elements;
+    std::vector<draw_indexed_element_t> draw_elements;
     std::vector<pl_element_t> point_lights;
 
     camera_t *camera;

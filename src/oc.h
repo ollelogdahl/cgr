@@ -13,6 +13,7 @@
 #include <bitset>
 #include <type_traits>
 #include <atomic>
+#include <vector>
 
 typedef uint8_t u8;
 typedef uint16_t u16;
@@ -553,6 +554,100 @@ ref_t<T> make_ref_owned(Args... args) {
     ref.ref_count = new u32(0);
     return ref;
 }
+
+namespace details {
+
+struct pool_allocator_block_t {
+    byte *data_start;
+    byte *free_list;
+    byte *data_end;
+
+    pool_allocator_block_t(usize size, usize count)
+        : data_start(nullptr), free_list(nullptr), data_end(nullptr) {
+        data_start = new byte[size * count];
+        free_list = data_start;
+        data_end = data_start + size * count;
+
+        for (usize i = 0; i < count - 1; i++) {
+            void **next_as_ptr = (void **)(data_start + size * i);
+            *next_as_ptr = &data_start + size * i + 1;
+        }
+        void **next_as_ptr = (void **)(data_start + size * (count - 1));
+        *next_as_ptr = nullptr;
+    }
+
+    void *alloc() {
+        if (!free_list) {
+            return nullptr;
+        }
+        void *result = free_list;
+        free_list = *(byte **)free_list;
+        return result;
+    }
+
+    void free(void *ptr) {
+        *(byte **)ptr = free_list;
+        free_list = (byte *)ptr;
+    }
+
+    bool contains(void *ptr) {
+        return ptr >= data_start && ptr < data_end;
+    }
+};
+
+};
+
+template <typename T>
+class pool_allocator_t {
+public:
+    pool_allocator_t(usize block_size = 1024) : block_size(block_size) {
+        current_block = new blocklist_t{
+            .block = details::pool_allocator_block_t(sizeof(T), block_size),
+            .next = nullptr
+        };
+    }
+
+    T *alloc() {
+        T *ptr = (T *)current_block->block.alloc();
+        if (!ptr) {
+            blocklist_t *new_block = new blocklist_t{
+                .block = details::pool_allocator_block_t(sizeof(T), block_size),
+                .next = current_block
+            };
+            current_block = new_block;
+            ptr = (T *)current_block->block.alloc();
+        }
+        return ptr;
+    }
+    template <typename ...Args>
+    T *alloc_make(Args... args) {
+        T *ptr = alloc();
+        new (ptr) T(args...);
+        return ptr;
+    }
+
+    void free(T *ptr) {
+        blocklist_t *block = current_block;
+        while (block) {
+            if (block->block.contains(ptr)) {
+                block->block.free(ptr);
+                return;
+            }
+            block = block->next;
+        }
+
+        panic("tried to free a pointer that was not allocated by this pool allocator");
+    }
+private:
+    usize block_size;
+
+    struct blocklist_t {
+        details::pool_allocator_block_t block;
+        blocklist_t *next;
+    };
+
+    blocklist_t *current_block;
+};
 
 // common os functions
 struct file_t {

@@ -259,19 +259,8 @@ texhnd_t renderer_t::define_texture(ref_t<texture_t> texture) {
     return id;
 }
 
-void renderer_t::add_model(const model_element_t &element) {
-
-    for (auto &m : element.model->meshes) {
-        m4f transform = m4f::translate(m.bounds.center()) * element.transform;
-        draw_element_t elem = {
-            .vertex_buffer = m.vertex_buffer,
-            .index_buffer = m.lods[element.lod].index_buffer,
-            .index_count = m.lods[element.lod].index_count,
-            .transform = transform,
-            .material = element.material,
-        };
-        draw_elements.push_back(elem);
-    }
+void renderer_t::add_draw_indexed(const draw_indexed_element_t &element) {
+    draw_elements.push_back(element);
 }
 void renderer_t::add_point_light(const pl_element_t &element) {
     point_lights.push_back(element);
@@ -386,6 +375,8 @@ void renderer_t::draw(gpu_t::frame_t &frame) {
     for (auto &element : draw_elements) {
         m4f transform = element.transform;
 
+        // @todo: I think push-blocks are really cheap, but we can probably here also
+        // only update the push block if the material has changed.
         material_push_block_t push_block = {
             .flags = (u32)element.material.flags,
             .color_r = element.material.color.x,
@@ -403,11 +394,13 @@ void renderer_t::draw(gpu_t::frame_t &frame) {
         vkCmdPushConstants(frame.cmds, pipeline->layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(m4f), &transform);
         vkCmdPushConstants(frame.cmds, pipeline->layout, VK_SHADER_STAGE_FRAGMENT_BIT, sizeof(m4f), sizeof(material_push_block_t), &push_block);
 
+        // @todo: for now, we rebind the buffer for each call. In reality,
+        // we should sort the elements by buffer and then bind the buffer only once.
         VkBuffer buffers[] = {element.vertex_buffer.handle};
         VkDeviceSize offsets[] = {0};
         vkCmdBindVertexBuffers(frame.cmds, 0, 1, buffers, offsets);
         vkCmdBindIndexBuffer(frame.cmds, element.index_buffer.handle, 0, VK_INDEX_TYPE_UINT32);
-        vkCmdDrawIndexed(frame.cmds, element.index_count, 1, 0, 0, 0);
+        vkCmdDrawIndexed(frame.cmds, element.index_count, 1, element.index_offset, element.vertex_offset, 0);
     }
 
     // @todo: move imgui into separate pass

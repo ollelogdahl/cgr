@@ -226,7 +226,7 @@ ref_t<model_t> loader_t::load_model(const model_load_params_t &params) {
             mesh.lods.push_back(lod_new);
         }
 
-        model.meshes.push_back(mesh);
+        model.meshes.push_back(make_ref<mesh_t>(mesh));
     }
     model.aabb = model_aabb;
 

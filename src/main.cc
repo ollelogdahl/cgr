@@ -33,7 +33,7 @@
 #include "freefly_controller.h"
 #include "vks.h"
 
-#include "cg.h"
+#include "sg.h"
 
 #include <time.h>
 
@@ -135,20 +135,73 @@ u32 lod_override;
 
 ref_t<model_t> g_model;
 
-class renderer_visitor_t : public cg::node_visitor_t {
+class log_dump_visitor_t : public sg::node_visitor_t {
 public:
-    void visit(cg::group_t &group) override {
-        g_log.info("visiting group");
+    void visit(sg::group_t &group) override {
+        g_log.info("visiting group {}", (void *)&group);
+        (void)group;
     }
-    void visit(cg::geometry_t &geometry) override {
-        g_log.info("visiting geometry");
+    void visit(sg::geometry_t &geometry) override {
+        g_log.info("visiting geometry {}", (void *)&geometry);
+        (void)geometry;
     }
-    void visit(cg::point_light_t &point_light) override {
-        g_log.info("visiting point_light");
+    void visit(sg::point_light_t &point_light) override {
+        g_log.info("visiting point_light {}", (void *)&point_light);
+        (void)point_light;
     }
-    void visit(cg::transform_t &transform) override {
-        g_log.info("visiting transform");
+    void visit(sg::transform_t &transform) override {
+        g_log.info("visiting transform {}", (void *)&transform);
+        (void)transform;
     }
+};
+
+class renderer_visitor_t : public sg::node_visitor_t {
+public:
+    renderer_visitor_t(renderer_t *renderer) : renderer(renderer) {
+        transform_stack.push_back(m4f::identity());
+    }
+
+    void visit(sg::group_t &group) override {
+        (void)group;
+    }
+    void visit(sg::geometry_t &geometry) override {
+        // @todo: extract from state.
+        draw_element_material_t material = {
+            .flags = (draw_element_flags_t)0,
+            .color = v3f{0.3, 0.3, 0.3},
+            .roughness = 0.5f,
+            .metallic = 0.5f,
+            .albedo0_idx = 0,
+            .albedo1_idx = 0,
+            .albedo2_idx = 0,
+            .normal_idx = 0,
+            .roughness_idx = 0,
+        };
+
+        renderer->add_draw_indexed({
+            .vertex_buffer = geometry.mesh->vertex_buffer,
+            .index_buffer = geometry.mesh->lods[0].index_buffer,
+            .index_count = geometry.mesh->lods[0].index_count,
+            .vertex_offset = 0,
+            .index_offset = 0,
+            .transform = transform_stack.back(),
+            .material = material
+        });
+    }
+    void visit(sg::point_light_t &point_light) override {
+        renderer->add_point_light({
+            .position = point_light.position,
+            .color = point_light.color,
+            .linear = point_light.linear,
+            .quadratic = point_light.quadratic,
+        });
+    }
+    void visit(sg::transform_t &transform) override {
+        transform_stack.push_back(transform_stack.back() * transform.get_local_matrix());
+    }
+private:
+    renderer_t *renderer;
+    std::vector<m4f> transform_stack;
 };
 
 int main(int argc, char **argv) {
@@ -190,22 +243,25 @@ int main(int argc, char **argv) {
     auto tex_normal = g_loader.load_texture({.path = "assets/tiles074_normal.jpg"});
     auto tex_roughness = g_loader.load_texture({.path = "assets/tiles074_roughness.jpg"});
 
-    // bygger upp en skitdålig scene-graf
-    cg::scene_t scene;
+    sg::scene_t scene = {};
     {
-        auto t1 = cg::transform_t{};
-        t1.position = v3f{3, 0, 0};
-
-        auto g1 = cg::geometry_t{};
-        t1.add(g1);
+        auto t1 = scene.create_transform();
+        t1->position = v3f{3, 0, 0};
         scene.add(t1);
 
-        // @todo: ownership. Nodes should probably only be 'creatable'
-        // inplace, and automatically allocated into the scene.
+        auto g1 = scene.create_geometry(g_model->meshes[0]);
+        t1->add(g1);
 
-        renderer_visitor_t visitor;
-        scene.accept(visitor);
+        scene.add(g1);
+
+        g_log.info("t1: {}", (void *)t1);
+        g_log.info("g1: {}", (void *)g1);
+
+        // dump scene graph.
+        log_dump_visitor_t dump_visitor;
+        scene.accept(dump_visitor);
     }
+    renderer_visitor_t visitor = renderer_visitor_t(&g_renderer);
 
     cpu_timer_t full_loop_timer;
 
@@ -216,6 +272,7 @@ int main(int argc, char **argv) {
     freefly_controller_t controller;
     controller.camera = &g_camera;
 
+    /*
     //u32 flags = (u32)draw_element_flags_t::use_albedo_tex | (u32)draw_element_flags_t::use_multi_tex;
     u32 flags = (u32)draw_element_flags_t::use_albedo_tex;
     draw_element_material_t material = {
@@ -231,6 +288,7 @@ int main(int argc, char **argv) {
         .normal_idx = g_renderer.define_texture(tex_normal),
         .roughness_idx = g_renderer.define_texture(tex_roughness),
     };
+    */
 
     float t = 0.0f;
     g_log.info("running...");
@@ -245,17 +303,16 @@ int main(int argc, char **argv) {
 
         gui();
 
-        u32 lod = 0;
-        if (lod_override) {
-            lod = lod_override;
-        }
+        scene.accept(visitor);
 
-        g_renderer.add_model({
+        /*
+        g_renderer.add_draw_indexed({
             .model = g_model.get(),
             .transform = m4f::translate(v3f{0, 0, 0}) * m4f::scale(v3f{scale, scale, scale}),
             .material = material,
             .lod = lod,
         });
+        */
 
         g_renderer.set_camera(g_camera);
 

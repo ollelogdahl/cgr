@@ -2,10 +2,11 @@
 
 #include <vector>
 
+#include "oc.h"
 #include "resource.h"
 #include "linalg.h"
 
-namespace cg {
+namespace sg {
 
 class node_visitor_t;
 
@@ -21,22 +22,7 @@ protected:
     state_t state;
 };
 
-class group_t : public node_t {
-public:
-    void add(node_t &node);
-    void accept(node_visitor_t &visitor);
-private:
-    std::vector<node_t *> children;
-};
-
-class scene_t {
-public:
-    void add(node_t &node);
-    void accept(node_visitor_t &visitor);
-private:
-    std::vector<node_t *> nodes;
-};
-
+class group_t;
 class point_light_t;
 class transform_t;
 class geometry_t;
@@ -50,6 +36,20 @@ public:
 };
 
 // specialized nodes
+class group_t : public node_t {
+public:
+    void add(node_t *node) {
+        children.push_back(node);
+    }
+    void accept_children(node_visitor_t &visitor) {
+        for (auto &child : children) {
+            child->accept(visitor);
+        }
+    }
+private:
+    std::vector<node_t *> children;
+};
+
 class point_light_t : public node_t {
 public:
     v3f position;
@@ -74,6 +74,7 @@ public:
 
     void accept(node_visitor_t &visitor) {
         visitor.visit(*this);
+        accept_children(visitor);
     }
 
     v3f position = {0, 0, 0};
@@ -85,11 +86,50 @@ public:
 
 class geometry_t : public node_t {
 public:
-    ref_t<model_t> model;
+    geometry_t(ref_t<mesh_t> mesh) : mesh(mesh) {}
 
     void accept(node_visitor_t &visitor) {
         visitor.visit(*this);
     }
+
+    ref_t<mesh_t> mesh;
+};
+
+class scene_t {
+public:
+    void add(node_t *node) {
+        nodes.push_back(node);
+    }
+    void accept(node_visitor_t &visitor) {
+        for (auto &node : nodes) {
+            node->accept(visitor);
+        }
+    }
+
+#define DECL_CREATOR(name, tname, storage) \
+    template <typename ...Args> \
+    tname *create_##name(Args... args) { \
+        auto ptr = storage.alloc_make(args...); \
+        return ptr; \
+    }
+
+    DECL_CREATOR(group, group_t, storage.groups)
+    DECL_CREATOR(geometry, geometry_t, storage.geometries)
+    DECL_CREATOR(point_light, point_light_t, storage.point_lights)
+    DECL_CREATOR(transform, transform_t, storage.transforms)
+
+#undef DECL_CREATOR
+
+private:
+    std::vector<node_t *> nodes;
+
+    struct node_storage_t {
+        pool_allocator_t<group_t> groups;
+        pool_allocator_t<geometry_t> geometries;
+        pool_allocator_t<point_light_t> point_lights;
+        pool_allocator_t<transform_t> transforms;
+
+    } storage;
 };
 
 }
