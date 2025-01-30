@@ -37,15 +37,7 @@
   set page(
     paper: paper-size,
     // The margins depend on the paper size.
-    margin: if paper-size == "a4" {
-      (x: 41.5pt, top: 80.51pt, bottom: 89.51pt)
-    } else {
-      (
-        x: (50pt / 216mm) * 100%,
-        top: (55pt / 279mm) * 100%,
-        bottom: (64pt / 279mm) * 100%,
-      )
-    }
+    margin: (x: 1.5cm, top: 2cm, bottom: 2cm)
   )
 
   // Configure equation numbering and spacing.
@@ -173,7 +165,7 @@
   ]
 
   show table.cell.where(y: 0): set text(weight: "bold")
-  show table: it => box(it, width: 80%)
+  show table: it => box(it, width: 90%)
   set table(
     align: center + horizon,
     stroke: (x, y) => (

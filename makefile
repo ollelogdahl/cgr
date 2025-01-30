@@ -35,7 +35,7 @@ cgr: $(ODIR_REL)/cgr
 	@cp $(ODIR_REL)/cgr cgr
 
 clean:
-	@rm -rf $(ODIR_REL)/chr ${ODIR_REL}/src
+	@rm -rf $(ODIR_REL)/cgr ${ODIR_REL}/src
 
 $(ODIR_REL)/cgr: $(OFILES_RELEASE)
 	@mkdir -p $(dir $@)

@@ -6,6 +6,7 @@
 #include <stdexcept>
 
 #include <sys/types.h>
+#include <tinyxml2.h>
 #include <unordered_map>
 #include <vulkan/vulkan.h>
 #include <GLFW/glfw3.h>
@@ -124,35 +125,37 @@ struct gpu_timer_t {
     VkQueryPool query_pool;
 };
 
+void gui();
+void load_scene(const char *path);
+
 loader_t g_loader;
 renderer_t g_renderer;
-
-void gui();
-
-float scale = 0.5;
-camera_t g_camera;
-u32 lod_override;
-
-ref_t<model_t> g_model;
+sg::scene_t g_scene;
 
 class log_dump_visitor_t : public sg::node_visitor_t {
 public:
     void visit(sg::group_t &group) override {
-        g_log.info("visiting group {}", (void *)&group);
-        (void)group;
+        g_log.info("{:{}s}group {}", "", depth * 2, (void *)&group);
+        depth++;
+        group.accept_children(*this);
+        depth--;
     }
     void visit(sg::geometry_t &geometry) override {
-        g_log.info("visiting geometry {}", (void *)&geometry);
+        g_log.info("{:{}s}geometry {}", "", depth * 2, (void *)&geometry);
         (void)geometry;
     }
     void visit(sg::point_light_t &point_light) override {
-        g_log.info("visiting point_light {}", (void *)&point_light);
+        g_log.info("{:{}s}point_light {}", "", depth * 2, (void *)&point_light);
         (void)point_light;
     }
     void visit(sg::transform_t &transform) override {
-        g_log.info("visiting transform {}", (void *)&transform);
-        (void)transform;
+        g_log.info("{:{}s}transform {}", "", depth * 2, (void *)&transform);
+        depth++;
+        transform.accept_children(*this);
+        depth--;
     }
+private:
+    u32 depth = 0;
 };
 
 class renderer_visitor_t : public sg::node_visitor_t {
@@ -197,7 +200,9 @@ public:
         });
     }
     void visit(sg::transform_t &transform) override {
-        transform_stack.push_back(transform_stack.back() * transform.get_local_matrix());
+        transform_stack.push_back(transform.get_local_matrix() * transform_stack.back());
+        transform.accept_children(*this);
+        transform_stack.pop_back();
     }
 private:
     renderer_t *renderer;
@@ -224,6 +229,8 @@ int main(int argc, char **argv) {
 
     g_renderer.init(gpu, g_loader);
 
+
+
     const char *model_path = "assets/dragon.obj";
     if (argc > 1) {
         model_path = argv[1];
@@ -243,25 +250,40 @@ int main(int argc, char **argv) {
     auto tex_normal = g_loader.load_texture({.path = "assets/tiles074_normal.jpg"});
     auto tex_roughness = g_loader.load_texture({.path = "assets/tiles074_roughness.jpg"});
 
-    sg::scene_t scene = {};
+    sg::scene_t scene = sg::scene_t();
     {
         auto t1 = scene.create_transform();
         t1->position = v3f{3, 0, 0};
+        t1->scale = v3f{0.02, 0.02, 0.02};
+
+        auto t2 = scene.create_transform();
+        t2->position = v3f{0, 0, -3};
+
         scene.add(t1);
+        scene.add(t2);
 
         auto g1 = scene.create_geometry(g_model->meshes[0]);
         t1->add(g1);
+        t2->add(t1);
 
-        scene.add(g1);
+        auto l1 = scene.create_point_light();
+        l1->position = v3f{0, 3, 0};
+        l1->color = v3f{1, 1, 1};
+        l1->linear = 0.09f;
+        l1->quadratic = 0.032f;
+
+        scene.add(l1);
 
         g_log.info("t1: {}", (void *)t1);
         g_log.info("g1: {}", (void *)g1);
+        g_log.info("l1: {}", (void *)l1);
 
         // dump scene graph.
         log_dump_visitor_t dump_visitor;
         scene.accept(dump_visitor);
     }
     renderer_visitor_t visitor = renderer_visitor_t(&g_renderer);
+
 
     cpu_timer_t full_loop_timer;
 
@@ -314,7 +336,7 @@ int main(int argc, char **argv) {
         });
         */
 
-        g_renderer.set_camera(g_camera);
+        // g_renderer.set_camera(g_camera);
 
         v3f lamp1_pos = v3f{4 * sin(t), 2, 4 * cos(t)};
         g_renderer.add_point_light({
@@ -404,4 +426,56 @@ void gui() {
     if (ImGui::Button("Show ImGui demo")) show_imgui_demo = !show_imgui_demo;
     if (ImGui::Button("Show ImPlot demo")) show_implot_demo = !show_implot_demo;
     ImGui::End();
+}
+
+sg::node_t *interpret_node(tinyxml2::XMLElement *elem) {
+    if (elem->Name() == std::string("group")) {
+        sg::group_t *group = g_scene.create_group();
+        for (tinyxml2::XMLElement *child = elem->FirstChildElement(); child; child = child->NextSiblingElement()) {
+            interpret_node(child);
+        }
+
+        return group;
+    } else if (elem->Name() == std::string("geometry")) {
+        sg::geometry_t *geometry = g_scene.create_geometry();
+
+        return geometry;
+    } else if (elem->Name() == std::string("point_light")) {
+        sg::point_light_t *point_light = g_scene.create_point_light();
+
+        return point_light;
+    } else if (elem->Name() == std::string("transform")) {
+        sg::transform_t *transform = g_scene.create_transform();
+        for (tinyxml2::XMLElement *child = elem->FirstChildElement(); child; child = child->NextSiblingElement()) {
+            interpret_node(child);
+        }
+
+        return transform;
+    } else {
+        g_log.error("unknown node type: {}", elem->Name());
+        return nullptr;
+    }
+}
+
+void load_scene(const char *path) {
+    // @todo: reset the current scene.
+
+    tinyxml2::XMLDocument doc;
+    doc.LoadFile(path);
+
+    if (doc.Error()) {
+        g_log.error("failed to load scene: {}", doc.ErrorStr());
+        return;
+    }
+
+    tinyxml2::XMLElement *root = doc.FirstChildElement("scene");
+    if (!root) {
+        g_log.error("scene file does not contain a scene element");
+        return;
+    }
+
+    for (tinyxml2::XMLElement *elem = root->FirstChildElement(); elem; elem = elem->NextSiblingElement()) {
+        sg::node_t *node = interpret_node(elem);
+        g_scene.add(node);
+    }
 }

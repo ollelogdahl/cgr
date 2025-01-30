@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<scene>
+    <point_light position="0 2 0" color="1 1 1" />
+    <point_light position="4 2 0" color="1 0 0" />
+    <transform scale="0.5 0.5 0.5">
+        <model file="assets/cube.obj" />
+    </transform>
+    <camera />
+</scene>

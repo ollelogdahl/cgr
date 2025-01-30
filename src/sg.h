@@ -65,16 +65,14 @@ public:
 class transform_t : public group_t {
 public:
     m4f get_local_matrix() {
-        return m4f::translate(position)
-            * m4f::rotate(rotation_x, v3f{1, 0, 0})
+        auto rot = m4f::rotate(rotation_x, v3f{1, 0, 0})
             * m4f::rotate(rotation_y, v3f{0, 1, 0})
-            * m4f::rotate(rotation_z, v3f{0, 0, 1})
-            * m4f::scale(scale);
+            * m4f::rotate(rotation_z, v3f{0, 0, 1});
+        return m4f::scale(scale) * rot * m4f::translate(position);
     }
 
     void accept(node_visitor_t &visitor) {
         visitor.visit(*this);
-        accept_children(visitor);
     }
 
     v3f position = {0, 0, 0};
@@ -97,6 +95,8 @@ public:
 
 class scene_t {
 public:
+    scene_t() {}
+
     void add(node_t *node) {
         nodes.push_back(node);
     }

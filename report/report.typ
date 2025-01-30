@@ -16,7 +16,11 @@
  
 = Introduction
 
+#lorem(50)
+
 = Requirements
+
+#lorem(10)
 
 #figure(
   table(columns: (2fr, 1fr),
@@ -29,6 +33,7 @@
 )
 
 = Bonus Requirements
+#lorem(20)
 
 #figure(
   table(columns: (2fr, 1fr),
@@ -37,6 +42,17 @@
   ),
   caption: "Bonus requirements for the project."
 )
+
+= Libraries
+#lorem(30)
+
+- *{fmt}*
+- *b_backtrace*
+- *Dear ImGui*
+- *meshoptimizer* - used for optimizing meshes and generating lod levels.
+- *stb_image*
+- *Vulkan Memory Allocator*
+- *tinyxml2*
 
 = Vulkan Renderer
 
@@ -55,15 +71,17 @@ The engine architecture is divided into multiple layers.
 ```cpp
 gpu_t gpu;
 renderer_t renderer;
+sg::scene_t scene;
 
 gpu.init();
 renderer.init(gpu);
 
+render_visitor_t render_visitor(renderer);
+
 while(!windowShouldClose()) {
   renderer.new_frame();
 
-  // application logic
-  ...
+  scene.accept(render_visitor);
 
   renderer.update_frame_data(props);
   gpu.frame([&](gpu_t::frame_t &frame) {

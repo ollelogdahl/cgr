@@ -3,6 +3,7 @@
 #include "imgui/imgui_impl_glfw.h"
 #include "imgui/imgui_impl_vulkan.h"
 #include "implot/implot.h"
+#include "log.h"
 
 struct env_ubo_t {
     m4f view;

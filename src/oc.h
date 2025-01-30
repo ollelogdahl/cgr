@@ -564,16 +564,18 @@ struct pool_allocator_block_t {
 
     pool_allocator_block_t(usize size, usize count)
         : data_start(nullptr), free_list(nullptr), data_end(nullptr) {
+
         data_start = new byte[size * count];
-        free_list = data_start;
         data_end = data_start + size * count;
 
+        // construct a free-list that overlaps with the data.
+        free_list = data_start;
+        byte *free_list_writer = free_list;
         for (usize i = 0; i < count - 1; i++) {
-            void **next_as_ptr = (void **)(data_start + size * i);
-            *next_as_ptr = &data_start + size * i + 1;
+            *(byte **)free_list_writer = free_list + size;
+            free_list_writer += size;
         }
-        void **next_as_ptr = (void **)(data_start + size * (count - 1));
-        *next_as_ptr = nullptr;
+        *(byte **)free_list_writer = nullptr;
     }
 
     void *alloc() {
@@ -582,6 +584,7 @@ struct pool_allocator_block_t {
         }
         void *result = free_list;
         free_list = *(byte **)free_list;
+
         return result;
     }
 
@@ -600,7 +603,9 @@ struct pool_allocator_block_t {
 template <typename T>
 class pool_allocator_t {
 public:
-    pool_allocator_t(usize block_size = 1024) : block_size(block_size) {
+    pool_allocator_t(usize block_size = 512) : block_size(block_size) {
+        static_assert(sizeof(T) >= sizeof(void *), "size of T must be at least the size of a pointer");
+
         current_block = new blocklist_t{
             .block = details::pool_allocator_block_t(sizeof(T), block_size),
             .next = nullptr
