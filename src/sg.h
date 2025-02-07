@@ -46,6 +46,10 @@ public:
             child->accept(visitor);
         }
     }
+
+    void accept(node_visitor_t &visitor) {
+        visitor.visit(*this);
+    }
 private:
     std::vector<node_t *> children;
 };
@@ -84,13 +88,16 @@ public:
 
 class geometry_t : public node_t {
 public:
-    geometry_t(ref_t<mesh_t> mesh) : mesh(mesh) {}
+    geometry_t(gpu_buffer_t vertex_buffer, gpu_buffer_t index_buffer, u32 index_count)
+        : vertex_buffer(vertex_buffer), index_buffer(index_buffer), index_count(index_count) {}
 
     void accept(node_visitor_t &visitor) {
         visitor.visit(*this);
     }
 
-    ref_t<mesh_t> mesh;
+    gpu_buffer_t vertex_buffer;
+    gpu_buffer_t index_buffer;
+    u32 index_count;
 };
 
 class scene_t {

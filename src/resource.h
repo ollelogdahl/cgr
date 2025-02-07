@@ -58,6 +58,11 @@ struct texture_t {
     gpu_image_t image;
 };
 
+// @todo: redesign this!!!! Does this own the buffers
+// ??? I Think we should not do it this way.
+//
+// For instance, multiple meshes should be able to share
+// the vertex buffer (when automatic LODs).
 struct mesh_t {
     gpu_buffer_t vertex_buffer;
     struct lod_t {
