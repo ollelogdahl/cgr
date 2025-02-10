@@ -126,7 +126,7 @@ public:
         visitor.visit(*this);
     }
 
-    void set_center(v3f &center) {
+    void set_center(const v3f &center) {
         this->center = center;
     }
 

@@ -45,7 +45,7 @@ memcheck: $(ODIR_MEM)/cgr
 	@cp $(ODIR_MEM)/cgr cgr
 
 clean:
-	@rm -rf $(ODIR_REL)/cgr ${ODIR_REL}/src
+	@rm -rf cgr $(ODIR_REL)/cgr $(ODIR_REL)/src $(ODIR_MEM)/cgr $(ODIR_MEM)/src
 
 $(ODIR_REL)/cgr: $(OFILES_RELEASE)
 	@mkdir -p $(dir $@)

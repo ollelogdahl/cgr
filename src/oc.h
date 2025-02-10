@@ -569,13 +569,17 @@ struct pool_allocator_block_t {
         data_end = data_start + size * count;
 
         // construct a free-list that overlaps with the data.
+        // [data    ][data    ][data    ][data    ]
+        // [ptr]     [ptr]     [ptr]     [ptr]
+        //        >         >         >         >
+        // ^
+        // free_list
+        //
         free_list = data_start;
-        byte *free_list_writer = free_list;
         for (usize i = 0; i < count - 1; i++) {
-            *(byte **)free_list_writer = free_list + size;
-            free_list_writer += size;
+            *(byte **)(data_start + i * size) = data_start + (i + 1) * size;
         }
-        *(byte **)free_list_writer = nullptr;
+        *(byte **)(data_start + (count - 1) * size) = nullptr;
     }
 
     void *alloc() {
@@ -627,6 +631,8 @@ public:
     template <typename ...Args>
     T *alloc_make(Args... args) {
         T *ptr = alloc();
+        if (!ptr) return nullptr;
+
         new (ptr) T(args...);
         return ptr;
     }

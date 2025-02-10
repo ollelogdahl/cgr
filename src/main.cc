@@ -238,12 +238,20 @@ public:
         (void)camera;
     }
     void visit(sg::lod_t &lod) override {
-        lod.set_center(camera->position);
+        if (lod_override) {
+            lod.set_center(v3f{0, lod_p, 0});
+        } else {
+            lod.set_center(camera->position);
+        }
         lod.accept_children(*this);
     }
 
+    bool lod_override = false;
+    f32 lod_p = 0.0f;
     camera_t *camera;
 };
+
+update_visitor_t g_update_visitor;
 
 int main(int argc, char **argv) {
     (void)argc;
@@ -274,7 +282,7 @@ int main(int argc, char **argv) {
 
     log_dump_visitor_t log_visitor = log_dump_visitor_t();
     renderer_visitor_t visitor = renderer_visitor_t(&renderer);
-    update_visitor_t update_visitor = update_visitor_t();
+    g_update_visitor = update_visitor_t();
 
     scene.accept(log_visitor);
 
@@ -283,19 +291,19 @@ int main(int argc, char **argv) {
 
     auto camera = camera_t(
         v3f{0, 0, 5}, v3f{0, 0, 0},
-        m4f::perspective(anglef::from_deg(80.0f), 1200.0f / 900.0f, 0.01f, 20.0f)
+        m4f::perspective(anglef::from_deg(80.0f), 1200.0f / 900.0f, 0.01f, 100.0f)
     );
     freefly_controller_t controller;
     controller.camera = &camera;
 
-    update_visitor.camera = &camera;
+    g_update_visitor.camera = &camera;
 
     float t = 0.0f;
     g_log.info("running...");
     while(!glfwWindowShouldClose(window)) {
         t += 0.017f;
 
-        scene.accept(update_visitor);
+        scene.accept(g_update_visitor);
 
         loader.process_hotreload();
         renderer.new_frame();
@@ -358,6 +366,9 @@ void gui() {
         ImPlot::ShowDemoWindow(&show_implot_demo);
 
     ImGui::Begin("test");
+
+    ImGui::Checkbox("lod override", &g_update_visitor.lod_override);
+    ImGui::SliderFloat("lod p", &g_update_visitor.lod_p, 0.0f, 100.0f);
 
     if (ImGui::Button("Show ImGui demo")) show_imgui_demo = !show_imgui_demo;
     if (ImGui::Button("Show ImPlot demo")) show_implot_demo = !show_implot_demo;

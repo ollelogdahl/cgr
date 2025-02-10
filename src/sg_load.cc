@@ -72,7 +72,7 @@ sg::node_t *interpret_node(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLEl
         for (auto &range : lod_ranges) {
             lod_settings.push_back({
                 .error_limit = range.second,
-                .sloppy = true,
+                .sloppy = false,
             });
         }
 
@@ -83,29 +83,19 @@ sg::node_t *interpret_node(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLEl
 
         if (use_autolod) {
             auto lod = scene.create_lod();
-
-
-            // add the default lod.
-            auto group0 = scene.create_group();
-            for (auto &mesh : model->meshes) {
-                fmt::println("gen lods: {}", mesh->lods.size());
-                auto geometry = scene.create_geometry(mesh->vertex_buffer,
-                    mesh->lods[0].index_buffer, mesh->lods[0].index_count);
-                group0->add(geometry);
-            }
-            lod->add(group0);
-
             std::vector<f32> min_ranges = {};
-            min_ranges.push_back(0.0f);
+            min_ranges.reserve(lod_ranges.size() + 1);
 
-            for (usize i = 0; i < lod_ranges.size(); i++) {
-                auto &range = lod_ranges[i];
-                min_ranges.push_back(range.first);
+            min_ranges.push_back(0.0f);
+            for (usize i = 0; i < lod_ranges.size() + 1; i++) {
+                if (i > 0) {
+                    min_ranges.push_back(lod_ranges[i - 1].first);
+                }
 
                 auto group = scene.create_group();
                 for (auto &mesh : model->meshes) {
                     auto geometry = scene.create_geometry(mesh->vertex_buffer,
-                        mesh->lods[i + 1].index_buffer, mesh->lods[i + 1].index_count);
+                        mesh->lods[i].index_buffer, mesh->lods[i].index_count);
                     group->add(geometry);
                 }
                 lod->add(group);

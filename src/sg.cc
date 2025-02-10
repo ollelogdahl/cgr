@@ -15,22 +15,24 @@ void lod_t::traverse(node_visitor_t &visitor) {
     f32 distance = (center - children[0]->bounding_box().center()).length();
 
     // this assumes that the children are sorted ascendingly by lod level.
-    u32 idx = 0;
+    // the ranges contains the minimum distance for each lod. The first value
+    // is always 0. To show lod[n], the distance must be between ranges[n-1] and ranges[n].
+    u32 idx;
     {
         u32 low = 0;
         u32 high = ranges_min.size();
         while (low < high) {
             u32 mid = low + (high - low) / 2;
-            if (ranges_min[mid] < distance) {
-                low = mid + 1;
-            } else {
+            if (distance < ranges_min[mid]) {
                 high = mid;
+            } else {
+                low = mid + 1;
             }
         }
+        idx = low - 1;
     }
 
-    fmt::println("lod: {}", idx);
-
+    // fmt::println("lod: {}", idx);
     assert(idx < children.size());
     children[idx]->accept(visitor);
 }
