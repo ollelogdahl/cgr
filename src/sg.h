@@ -6,6 +6,8 @@
 #include "resource.h"
 #include "linalg.h"
 
+struct loader_t;
+
 namespace sg {
 
 class node_visitor_t;
@@ -18,14 +20,21 @@ class state_t {
 class node_t {
 public:
     virtual void accept(node_visitor_t &visitor) = 0;
+
+    aabb_t bounding_box() {
+        return aabb;
+    }
 protected:
     state_t state;
+    aabb_t aabb;
 };
 
 class group_t;
 class point_light_t;
 class transform_t;
 class geometry_t;
+class camera_t;
+class lod_t;
 
 class node_visitor_t {
 public:
@@ -33,6 +42,8 @@ public:
     virtual void visit(geometry_t &geometry) = 0;
     virtual void visit(point_light_t &point_light) = 0;
     virtual void visit(transform_t &transform) = 0;
+    virtual void visit(camera_t &camera) = 0;
+    virtual void visit(lod_t &lod) = 0;
 };
 
 // specialized nodes
@@ -50,7 +61,7 @@ public:
     void accept(node_visitor_t &visitor) {
         visitor.visit(*this);
     }
-private:
+protected:
     std::vector<node_t *> children;
 };
 
@@ -100,6 +111,37 @@ public:
     u32 index_count;
 };
 
+class camera_t : public node_t {
+public:
+    void accept(node_visitor_t &visitor) {
+        visitor.visit(*this);
+    }
+};
+
+class lod_t : public group_t {
+public:
+    lod_t() : center{0, 0, 0}, ranges_min{} {}
+
+    void accept(node_visitor_t &visitor) {
+        visitor.visit(*this);
+    }
+
+    void set_center(v3f &center) {
+        this->center = center;
+    }
+
+    void set_ranges(const std::vector<f32> &ranges) {
+        ranges_min = ranges;
+    }
+
+    void traverse(node_visitor_t &visitor);
+
+private:
+    v3f center;
+    // @note: this needs the same length as the number of children.
+    std::vector<f32> ranges_min;
+};
+
 class scene_t {
 public:
     scene_t() {}
@@ -124,6 +166,8 @@ public:
     DECL_CREATOR(geometry, geometry_t, storage.geometries)
     DECL_CREATOR(point_light, point_light_t, storage.point_lights)
     DECL_CREATOR(transform, transform_t, storage.transforms)
+    DECL_CREATOR(camera, camera_t, storage.cameras)
+    DECL_CREATOR(lod, lod_t, storage.lods)
 
 #undef DECL_CREATOR
 
@@ -135,8 +179,12 @@ private:
         pool_allocator_t<geometry_t> geometries;
         pool_allocator_t<point_light_t> point_lights;
         pool_allocator_t<transform_t> transforms;
+        pool_allocator_t<camera_t> cameras;
+        pool_allocator_t<lod_t> lods;
 
     } storage;
 };
+
+bool load(loader_t &loader, const char *path, scene_t &scene);
 
 }

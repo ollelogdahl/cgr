@@ -166,7 +166,6 @@ ref_t<model_t> loader_t::load_model(const model_load_params_t &params) {
         model_aabb.include(m.bounds.max);
 
         mesh_t::lod_t lod_default;
-        lod_default.lod_distance_sq = 0.0f;
 
         slice<byte> interleaved;
         interleave_attributes(m.vertices, m.colors, m.normals, m.texcoords, interleaved);
@@ -194,7 +193,6 @@ ref_t<model_t> loader_t::load_model(const model_load_params_t &params) {
         for (auto &lod : params.lod_settings) {
             i++;
             mesh_t::lod_t lod_new;
-            lod_new.lod_distance_sq = lod.distance * lod.distance;
 
             auto lod_indices = std::vector<u32>();
             lod_indices.resize(indices.len);
@@ -214,7 +212,7 @@ ref_t<model_t> loader_t::load_model(const model_load_params_t &params) {
 
             lod_indices.resize(new_len);
 
-            logger.info("    lod {} ({:.2}) (el: {:.2e}): {} (e: {:.2e})", i, lod.distance, lod.error_limit, new_len, lod_error);
+            logger.info("    lod {} (el: {:.2e}): {} (e: {:.2e})", i, lod.error_limit, new_len, lod_error);
             if (new_len == 0) {
                 break;
             }

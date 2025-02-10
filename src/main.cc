@@ -6,7 +6,6 @@
 #include <stdexcept>
 
 #include <sys/types.h>
-#include <tinyxml2/tinyxml2.h>
 #include <unordered_map>
 #include <vulkan/vulkan.h>
 #include <GLFW/glfw3.h>
@@ -33,8 +32,6 @@
 #include "camera.h"
 #include "freefly_controller.h"
 #include "vks.h"
-
-#include "sg_load.h"
 
 #include "sg.h"
 
@@ -151,6 +148,16 @@ public:
         transform.accept_children(*this);
         depth--;
     }
+    void visit(sg::camera_t &camera) override {
+        g_log.info("{:{}s}camera {}", "", depth * 2, (void *)&camera);
+        (void)camera;
+    }
+    void visit(sg::lod_t &lod) override {
+        g_log.info("{:{}s}lod {}", "", depth * 2, (void *)&lod);
+        depth++;
+        lod.accept_children(*this);
+        depth--;
+    }
 private:
     u32 depth = 0;
 };
@@ -162,7 +169,7 @@ public:
     }
 
     void visit(sg::group_t &group) override {
-        (void)group;
+        group.accept_children(*this);
     }
     void visit(sg::geometry_t &geometry) override {
         // @todo: extract from state.
@@ -201,9 +208,41 @@ public:
         transform.accept_children(*this);
         transform_stack.pop_back();
     }
+    void visit(sg::camera_t &camera) override {
+        (void)camera;
+    }
+    void visit(sg::lod_t &lod) override {
+        // @todo: figure out camera position.
+        lod.traverse(*this);
+    }
 private:
     renderer_t *renderer;
     std::vector<m4f> transform_stack;
+};
+
+class update_visitor_t : public sg::node_visitor_t {
+public:
+    void visit(sg::group_t &group) override {
+        group.accept_children(*this);
+    }
+    void visit(sg::geometry_t &geometry) override {
+        (void)geometry;
+    }
+    void visit(sg::point_light_t &point_light) override {
+        (void)point_light;
+    }
+    void visit(sg::transform_t &transform) override {
+        transform.accept_children(*this);
+    }
+    void visit(sg::camera_t &camera) override {
+        (void)camera;
+    }
+    void visit(sg::lod_t &lod) override {
+        lod.set_center(camera->position);
+        lod.accept_children(*this);
+    }
+
+    camera_t *camera;
 };
 
 int main(int argc, char **argv) {
@@ -231,12 +270,14 @@ int main(int argc, char **argv) {
     renderer.init(gpu, loader);
 
     sg::scene_t scene;
-    load_scene(loader, "scenes/test.xml", scene);
+    sg::load(loader, "scenes/test.xml", scene);
 
     log_dump_visitor_t log_visitor = log_dump_visitor_t();
+    renderer_visitor_t visitor = renderer_visitor_t(&renderer);
+    update_visitor_t update_visitor = update_visitor_t();
+
     scene.accept(log_visitor);
 
-    renderer_visitor_t visitor = renderer_visitor_t(&renderer);
 
     cpu_timer_t full_loop_timer;
 
@@ -247,10 +288,15 @@ int main(int argc, char **argv) {
     freefly_controller_t controller;
     controller.camera = &camera;
 
+    update_visitor.camera = &camera;
+
     float t = 0.0f;
     g_log.info("running...");
     while(!glfwWindowShouldClose(window)) {
         t += 0.017f;
+
+        scene.accept(update_visitor);
+
         loader.process_hotreload();
         renderer.new_frame();
 

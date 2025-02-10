@@ -27,7 +27,6 @@ struct model_load_params_t {
     const char *path;
 
     struct lod_setting_t {
-        f32 distance;
         f32 error_limit;
         bool sloppy = false;
     };
@@ -66,8 +65,6 @@ struct texture_t {
 struct mesh_t {
     gpu_buffer_t vertex_buffer;
     struct lod_t {
-        f32 lod_distance_sq;
-
         gpu_buffer_t index_buffer;
         u32 index_count;
     };
