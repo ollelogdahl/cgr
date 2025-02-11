@@ -512,6 +512,24 @@ private:
     friend ref_t<U> make_ref_owned(Args... args);
 };
 
+template <typename T, typename ...Args>
+ref_t<T> make_ref(Args... args) {
+    ref_t<T> ref;
+    ref.ptr = new T(args...);
+    ref.ref_count = new u32(1);
+    return ref;
+}
+
+// this creates a reference which will be handed over to others,
+// but will be deleted when the last reference is gone
+template <typename T, typename ...Args>
+ref_t<T> make_ref_owned(Args... args) {
+    ref_t<T> ref;
+    ref.ptr = new T(args...);
+    ref.ref_count = new u32(0);
+    return ref;
+}
+
 template <typename T>
 struct fmt::formatter<ref_t<T>> {
     bool as_ptr = false;
@@ -536,24 +554,6 @@ struct fmt::formatter<ref_t<T>> {
         return format_to(ctx.out(), "");
     }
 };
-
-template <typename T, typename ...Args>
-ref_t<T> make_ref(Args... args) {
-    ref_t<T> ref;
-    ref.ptr = new T(args...);
-    ref.ref_count = new u32(1);
-    return ref;
-}
-
-// this creates a reference which will be handed over to others,
-// but will be deleted when the last reference is gone
-template <typename T, typename ...Args>
-ref_t<T> make_ref_owned(Args... args) {
-    ref_t<T> ref;
-    ref.ptr = new T(args...);
-    ref.ref_count = new u32(0);
-    return ref;
-}
 
 namespace details {
 

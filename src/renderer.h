@@ -33,8 +33,8 @@ struct draw_element_material_t {
 };
 
 struct draw_indexed_element_t {
-    gpu_buffer_t vertex_buffer;
-    gpu_buffer_t index_buffer;
+    ref_t<gpu_buffer_t> vertex_buffer;
+    ref_t<gpu_buffer_t> index_buffer;
     u32 index_count;
     u32 vertex_offset;
     u32 index_offset;

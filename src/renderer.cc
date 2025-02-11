@@ -397,10 +397,10 @@ void renderer_t::draw(gpu_t::frame_t &frame) {
 
         // @todo: for now, we rebind the buffer for each call. In reality,
         // we should sort the elements by buffer and then bind the buffer only once.
-        VkBuffer buffers[] = {element.vertex_buffer.handle};
+        VkBuffer buffers[] = {element.vertex_buffer->handle};
         VkDeviceSize offsets[] = {0};
         vkCmdBindVertexBuffers(frame.cmds, 0, 1, buffers, offsets);
-        vkCmdBindIndexBuffer(frame.cmds, element.index_buffer.handle, 0, VK_INDEX_TYPE_UINT32);
+        vkCmdBindIndexBuffer(frame.cmds, element.index_buffer->handle, 0, VK_INDEX_TYPE_UINT32);
         vkCmdDrawIndexed(frame.cmds, element.index_count, 1, element.index_offset, element.vertex_offset, 0);
     }
 

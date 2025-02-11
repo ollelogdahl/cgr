@@ -63,9 +63,9 @@ struct texture_t {
 // For instance, multiple meshes should be able to share
 // the vertex buffer (when automatic LODs).
 struct mesh_t {
-    gpu_buffer_t vertex_buffer;
+    ref_t<gpu_buffer_t> vertex_buffer;
     struct lod_t {
-        gpu_buffer_t index_buffer;
+        ref_t<gpu_buffer_t> index_buffer;
         u32 index_count;
     };
     std::vector<lod_t> lods;
@@ -74,7 +74,7 @@ struct mesh_t {
 };
 
 struct model_t {
-    std::vector<ref_t<mesh_t>> meshes;
+    std::vector<mesh_t> meshes;
     aabb_t aabb;
 };
 
@@ -97,11 +97,17 @@ struct fswatcher_t {
     std::unordered_map<int, elem_t> watches;
 };
 
+namespace sg {
+class scene_t;
+}
+
 struct loader_t {
     ref_t<shader_program_t> load_shader_program(const shader_program_load_params_t &params);
 
     ref_t<texture_t> load_texture(const texture_load_params_t &params);
     ref_t<model_t> load_model(const model_load_params_t &params);
+
+    ref_t<sg::scene_t> load_scene(const char *path);
 
     void init(gpu_t &gpu);
     void process_hotreload();
@@ -109,6 +115,7 @@ struct loader_t {
     std::unordered_map<shader_program_load_params_t, ref_t<shader_program_t>> loaded_shaders;
     std::unordered_map<texture_load_params_t, ref_t<texture_t>> loaded_textures;
     std::unordered_map<model_load_params_t, ref_t<model_t>> loaded_models;
+    std::unordered_map<std::string, ref_t<sg::scene_t>> loaded_scenes;
 
     fswatcher_t watcher;
     gpu_t *gpu;

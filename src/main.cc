@@ -196,8 +196,12 @@ public:
         });
     }
     void visit(sg::point_light_t &point_light) override {
+
+        v4f p1 = v4f{point_light.position.x, point_light.position.y, point_light.position.z, 1};
+        v3f position = (p1 * transform_stack.back()).xyz();
+
         renderer->add_point_light({
-            .position = point_light.position,
+            .position = position,
             .color = point_light.color,
             .linear = point_light.linear,
             .quadratic = point_light.quadratic,
@@ -277,14 +281,13 @@ int main(int argc, char **argv) {
 
     renderer.init(gpu, loader);
 
-    sg::scene_t scene;
-    sg::load(loader, "scenes/test.xml", scene);
+    auto scene = loader.load_scene("scenes/test.xml");
 
     log_dump_visitor_t log_visitor = log_dump_visitor_t();
     renderer_visitor_t visitor = renderer_visitor_t(&renderer);
     g_update_visitor = update_visitor_t();
 
-    scene.accept(log_visitor);
+    scene->accept(log_visitor);
 
 
     cpu_timer_t full_loop_timer;
@@ -303,7 +306,7 @@ int main(int argc, char **argv) {
     while(!glfwWindowShouldClose(window)) {
         t += 0.017f;
 
-        scene.accept(g_update_visitor);
+        scene->accept(g_update_visitor);
 
         loader.process_hotreload();
         renderer.new_frame();
@@ -314,7 +317,7 @@ int main(int argc, char **argv) {
 
         gui();
 
-        scene.accept(visitor);
+        scene->accept(visitor);
 
         // @todo: move into scene graph
         renderer.set_camera(camera);
@@ -323,20 +326,6 @@ int main(int argc, char **argv) {
         renderer.add_point_light({
             .position = lamp1_pos,
             .color = v3f{1, 1, 1},
-            .linear = 0.09f,
-            .quadratic = 0.032f,
-        });
-
-
-        renderer.add_point_light({
-            .position = v3f{3, 2, 0},
-            .color = v3f{1, 0.5, 0.3},
-            .linear = 0.09f,
-            .quadratic = 0.032f,
-        });
-        renderer.add_point_light({
-            .position = v3f{-3, -1, 0},
-            .color = v3f{0.3, 0.5, 1},
             .linear = 0.09f,
             .quadratic = 0.032f,
         });

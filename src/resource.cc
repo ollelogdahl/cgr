@@ -7,6 +7,9 @@
 #include <fcntl.h>
 #include "modimp.h"
 #include "vks.h"
+
+#include "sg.h"
+
 #include <vulkan/vulkan_core.h>
 
 #include <stb/stb_image.h>
@@ -172,18 +175,19 @@ ref_t<model_t> loader_t::load_model(const model_load_params_t &params) {
         slice<u32> indices = m.indices;
         usize vertex_count = m.vertices.len;
 
-        /*
         meshopt_optimizeVertexCache(indices.data, indices.data, indices.len, interleaved.len);
         meshopt_optimizeOverdraw(indices.data, indices.data, indices.len, (f32 *)interleaved.data,
             vertex_count, interleaved_vertex_size, 1.05f);
-        */
+
+        lod_default.index_buffer = make_ref<gpu_buffer_t>();
+        mesh.vertex_buffer = make_ref<gpu_buffer_t>();
 
         gpu->create_buffer_persistent(indices, VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
-            lod_default.index_buffer);
+            *lod_default.index_buffer);
         lod_default.index_count = indices.len;
 
         gpu->create_buffer_persistent(interleaved, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-            mesh.vertex_buffer);
+            *mesh.vertex_buffer);
 
         logger.info("generating lod levels for model: {}", params.path);
         logger.info("    vertices: {}", vertex_count);
@@ -217,18 +221,38 @@ ref_t<model_t> loader_t::load_model(const model_load_params_t &params) {
                 break;
             }
 
+            lod_new.index_buffer = make_ref<gpu_buffer_t>();
             gpu->create_buffer_persistent(slice<u32>(lod_indices.data(), lod_indices.size()), VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
-                lod_new.index_buffer);
+                *lod_new.index_buffer);
             lod_new.index_count = lod_indices.size();
 
             mesh.lods.push_back(lod_new);
         }
 
-        model.meshes.push_back(make_ref<mesh_t>(mesh));
+        model.meshes.push_back(mesh);
     }
     model.aabb = model_aabb;
 
     return loaded_models[params];
+}
+
+ref_t<sg::scene_t> loader_t::load_scene(const char *path) {
+    auto exists_it = loaded_scenes.find(path);
+    if (exists_it != loaded_scenes.end()) {
+        return exists_it->second;
+    }
+
+    loaded_scenes[path] = make_ref<sg::scene_t>();
+    sg::scene_t &scene = *loaded_scenes[path];
+    sg::load(*this, path, scene);
+
+    watcher.add_watch(path, [](std::string path, void *userdata) {
+        auto *scene = static_cast<sg::scene_t *>(userdata);
+        scene->modified_on_disk = true;
+        scene->disk_path = path;
+    }, &scene);
+
+    return loaded_scenes[path];
 }
 
 void loader_t::init(gpu_t &gpu) {
@@ -260,6 +284,15 @@ void loader_t::process_hotreload() {
     for (auto it : loaded_shaders) {
         auto &program = it.second;
         program->modified = false;
+    }
+
+    for (auto it : loaded_scenes) {
+        auto &scene = it.second;
+        if (scene->modified_on_disk) {
+            scene->clear();
+            sg::load(*this, scene->disk_path.c_str(), *scene);
+            scene->modified_on_disk = false;
+        }
     }
 }
 

@@ -67,12 +67,12 @@ result_t<void, std::string> scene_load_m3d(scene_t &scene, slice<byte> data) {
         return std::string("failed to load m3d file");
     }
 
-    // @todo: most likely, the memory model of m3d is wayy better than ours.
+    // @todo: most likely, the memory model of m3d is better than ours.
     // The way we need to reshuffle the data is really not neccessary (we are not doing
     // any real work).
     //
     // on the other hand, it does not seem like m3d uses a shared index array for
-    // vertices. So this might be the way.
+    // vertices, just like wavefront obj. So this might be the way.
     //
     // figure out how we should do this better.
 

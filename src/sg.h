@@ -12,9 +12,17 @@ namespace sg {
 
 class node_visitor_t;
 
-// im not fully convinced about this, we'll see.
+class material_t {
+public:
+    v4f ambient;
+    v4f diffuse;
+    v4f specular;
+    f32 roughness;
+};
+
 class state_t {
-    bool cull_face;
+public:
+    material_t material;
 };
 
 class node_t {
@@ -24,8 +32,12 @@ public:
     aabb_t bounding_box() {
         return aabb;
     }
+
+    void set_state(const ref_t<state_t> &state) {
+        this->state = state;
+    }
 protected:
-    state_t state;
+    ref_t<state_t> state;
     aabb_t aabb;
 };
 
@@ -99,15 +111,15 @@ public:
 
 class geometry_t : public node_t {
 public:
-    geometry_t(gpu_buffer_t vertex_buffer, gpu_buffer_t index_buffer, u32 index_count)
+    geometry_t(ref_t<gpu_buffer_t> vertex_buffer, ref_t<gpu_buffer_t> index_buffer, u32 index_count)
         : vertex_buffer(vertex_buffer), index_buffer(index_buffer), index_count(index_count) {}
 
     void accept(node_visitor_t &visitor) {
         visitor.visit(*this);
     }
 
-    gpu_buffer_t vertex_buffer;
-    gpu_buffer_t index_buffer;
+    ref_t<gpu_buffer_t> vertex_buffer;
+    ref_t<gpu_buffer_t> index_buffer;
     u32 index_count;
 };
 
@@ -155,6 +167,10 @@ public:
         }
     }
 
+    void clear() {
+        nodes.clear();
+    }
+
 #define DECL_CREATOR(name, tname, storage) \
     template <typename ...Args> \
     tname *create_##name(Args... args) { \
@@ -181,8 +197,12 @@ private:
         pool_allocator_t<transform_t> transforms;
         pool_allocator_t<camera_t> cameras;
         pool_allocator_t<lod_t> lods;
-
     } storage;
+
+    bool modified_on_disk = false;
+    std::string disk_path;
+
+    friend struct ::loader_t;
 };
 
 bool load(loader_t &loader, const char *path, scene_t &scene);

@@ -18,9 +18,14 @@ const char * vk_result_to_cstr(VkResult result);
 
 #define MAX_FRAMES_IN_FLIGHT 3
 
+struct gpu_t;
+
 struct gpu_buffer_t {
-    VkBuffer handle;
+    gpu_t *owner;
+    VkBuffer handle = VK_NULL_HANDLE;
     VmaAllocation allocation;
+
+    ~gpu_buffer_t();
 };
 struct gpu_image_t {
     VkImage image;
