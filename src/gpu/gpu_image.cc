@@ -22,7 +22,7 @@ void gpu_t::create_image(usize width, usize height, VkFormat format, VkImageUsag
 
     VK_CHECK(vmaCreateImage(allocator, &imageInfo, &alloc_info, &image.image, &image.allocation, nullptr));
 
-    gpu_log.info("create: image {}", (void *)image.image);
+    image.owner = this;
 }
 
 void gpu_t::create_image(slice<u8> data, usize width, usize height, VkFormat format, VkImageUsageFlags usage, bool mipmap, gpu_image_t &image) {
@@ -58,12 +58,10 @@ void gpu_t::create_image(slice<u8> data, usize width, usize height, VkFormat for
     }
     end_single_use_command_buffer(cmd);
 
-    gpu_log.info("create: image {}", (void *)image.image);
+    image.owner = this;
 }
 
 gpu_image_t::~gpu_image_t() {
     if (image == VK_NULL_HANDLE) return;
-
-    gpu_log.info("destroy: image {}", (void *)image);
     vmaDestroyImage(owner->allocator, image, allocation);
 }

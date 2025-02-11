@@ -175,9 +175,9 @@ public:
         // @todo: extract from state.
         draw_element_material_t material = {
             .flags = (draw_element_flags_t)0,
-            .color = v3f{0.3, 0.3, 0.3},
-            .roughness = 0.5f,
-            .metallic = 0.5f,
+            .color = geometry.state().material.diffuse.xyz(),
+            .roughness = geometry.state().material.roughness,
+            .metallic = 0.0f,
             .albedo0_idx = 0,
             .albedo1_idx = 0,
             .albedo2_idx = 0,
@@ -283,12 +283,8 @@ int main(int argc, char **argv) {
 
     auto scene = loader.load_scene("scenes/test.xml");
 
-    log_dump_visitor_t log_visitor = log_dump_visitor_t();
     renderer_visitor_t visitor = renderer_visitor_t(&renderer);
     g_update_visitor = update_visitor_t();
-
-    scene->accept(log_visitor);
-
 
     cpu_timer_t full_loop_timer;
 

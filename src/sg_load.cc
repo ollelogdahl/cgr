@@ -14,6 +14,8 @@ v3f parse_attr_v3f(const std::string_view &v);
 v4f parse_attr_color4(const std::string_view &v);
 v3f parse_attr_color3(const std::string_view &v);
 
+sg::state_t parse_state(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLElement *elem, bool &success);
+
 sg::node_t *parse_group(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLElement *elem);
 sg::node_t *parse_model(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLElement *elem);
 sg::node_t *parse_point_light(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLElement *elem);
@@ -64,6 +66,14 @@ bool load(loader_t &loader, const char *path, sg::scene_t &scene) {
 
 sg::node_t *parse_group(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLElement *elem) {
     sg::group_t *group = scene.create_group();
+
+    bool set_state;
+    sg::state_t state = parse_state(loader, scene, elem, set_state);
+    if (set_state) {
+        auto sref = scene.create_state(state);
+        group->set_state(sref);
+    }
+
     for (tinyxml2::XMLElement *child = elem->FirstChildElement(); child; child = child->NextSiblingElement()) {
         auto subnode = interpret_node(loader, scene, child);
 
@@ -78,6 +88,13 @@ sg::node_t *parse_model(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLEleme
     // model creates multiple geometries and transforms.
     auto path = elem->Attribute("file");
     auto lod_spec = elem->Attribute("auto-lod");
+
+    bool set_state;
+    sg::state_t state = parse_state(loader, scene, elem, set_state);
+    sg::state_t *state_ptr = nullptr;
+    if (set_state) {
+        state_ptr = scene.create_state(state);
+    }
 
     bool use_autolod = lod_spec != nullptr;
 
@@ -100,6 +117,8 @@ sg::node_t *parse_model(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLEleme
 
     if (use_autolod) {
         auto lod = scene.create_lod();
+        lod->set_state(state_ptr);
+
         std::vector<f32> min_ranges = {};
         min_ranges.reserve(lod_ranges.size() + 1);
 
@@ -110,11 +129,16 @@ sg::node_t *parse_model(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLEleme
             }
 
             auto group = scene.create_group();
+            group->set_state(state_ptr);
+
             for (auto &mesh : model_desc.meshes) {
                 auto geometry = scene.create_geometry(mesh.vertex_buffer,
                     mesh.lods[i].index_buffer, mesh.lods[i].index_count);
+
+                geometry->set_state(state_ptr);
                 group->add(geometry);
             }
+
             lod->add(group);
         }
         lod->set_ranges(min_ranges);
@@ -122,9 +146,13 @@ sg::node_t *parse_model(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLEleme
         return lod;
     } else {
         auto group = scene.create_group();
+        group->set_state(state_ptr);
+
         for (auto &mesh : model_desc.meshes) {
             auto geometry = scene.create_geometry(mesh.vertex_buffer,
                 mesh.lods[0].index_buffer, mesh.lods[0].index_count);
+
+            geometry->set_state(state_ptr);
             group->add(geometry);
         }
 
@@ -134,6 +162,13 @@ sg::node_t *parse_model(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLEleme
 
 sg::node_t *parse_point_light(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLElement *elem) {
     sg::point_light_t *point_light = scene.create_point_light();
+
+    bool set_state;
+    sg::state_t state = parse_state(loader, scene, elem, set_state);
+    if (set_state) {
+        auto sref = scene.create_state(state);
+        point_light->set_state(sref);
+    }
 
     auto color_attr = elem->Attribute("color");
     auto position_attr = elem->Attribute("position");
@@ -149,6 +184,13 @@ sg::node_t *parse_point_light(loader_t &loader, sg::scene_t &scene, tinyxml2::XM
 
 sg::node_t *parse_transform(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLElement *elem) {
     sg::transform_t *transform = scene.create_transform();
+
+    bool set_state;
+    sg::state_t state = parse_state(loader, scene, elem, set_state);
+    if (set_state) {
+        auto sref = scene.create_state(state);
+        transform->set_state(sref);
+    }
 
     auto position = elem->Attribute("position");
     auto scale = elem->Attribute("scale");
@@ -171,6 +213,13 @@ sg::node_t *parse_transform(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLE
 
 sg::node_t *parse_lod(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLElement *elem) {
     auto lod = scene.create_lod();
+
+    bool set_state;
+    sg::state_t state = parse_state(loader, scene, elem, set_state);
+    if (set_state) {
+        auto sref = scene.create_state(state);
+        lod->set_state(sref);
+    }
 
     auto ranges_attr = elem->Attribute("ranges");
 
@@ -268,6 +317,36 @@ v3f parse_attr_color3(const std::string_view &v) {
     sscanf(v.data(), "%f %f %f", &result.x, &result.y, &result.z);
 
     return result;
+}
+
+sg::state_t parse_state(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLElement *elem, bool &success) {
+    // read the element, and pick out state attributes.
+    success = false;
+    state_t state;
+
+    auto mat_diffuse_attr = elem->Attribute("mat-diffuse");
+    auto mat_specular_attr = elem->Attribute("mat-specular");
+    auto mat_ambient_attr = elem->Attribute("mat-ambient");
+    auto mat_roughness_attr = elem->Attribute("mat-roughness");
+
+    if (mat_diffuse_attr) {
+        success = true;
+        state.material.diffuse = parse_attr_color4(std::string_view(mat_diffuse_attr));
+    }
+    if (mat_specular_attr) {
+        success = true;
+        state.material.specular = parse_attr_color4(std::string_view(mat_specular_attr));
+    }
+    if (mat_ambient_attr) {
+        success = true;
+        state.material.ambient = parse_attr_color4(std::string_view(mat_ambient_attr));
+    }
+    if (mat_roughness_attr) {
+        success = true;
+        state.material.roughness = std::strtof(mat_roughness_attr, nullptr);
+    }
+
+    return state;
 }
 
 }

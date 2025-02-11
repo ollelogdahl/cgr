@@ -3,6 +3,7 @@
 // oc: my own common headers
 
 #include "fmt/base.h"
+#include <new>
 #include <stdint.h>
 #include <stddef.h>
 #include <string.h>
@@ -569,11 +570,15 @@ struct pool_allocator_block_t {
     byte *data_start;
     byte *free_list;
     byte *data_end;
+    usize alignment;
 
-    pool_allocator_block_t(usize size, usize count)
-        : data_start(nullptr), free_list(nullptr), data_end(nullptr) {
+    pool_allocator_block_t(usize size, usize type_alignment, usize count)
+        : data_start(nullptr), free_list(nullptr), data_end(nullptr),
+          alignment(std::max(alignof(void *), type_alignment)) {
 
-        data_start = new byte[size * count];
+        auto sizewpad = (size + alignment - 1) & ~(alignment - 1);
+
+        data_start = new (std::align_val_t(alignment)) byte[sizewpad * count];
         data_end = data_start + size * count;
 
         // construct a free-list that overlaps with the data.
@@ -585,13 +590,14 @@ struct pool_allocator_block_t {
         //
         free_list = data_start;
         for (usize i = 0; i < count - 1; i++) {
-            *(byte **)(data_start + i * size) = data_start + (i + 1) * size;
+            auto next_loc = data_start + (i + 1) * sizewpad;
+            *(byte **)(data_start + i * sizewpad) = next_loc;
         }
-        *(byte **)(data_start + (count - 1) * size) = nullptr;
+        *(byte **)(data_start + (count - 1) * sizewpad) = nullptr;
     }
 
     ~pool_allocator_block_t() {
-        delete[] data_start;
+        ::operator delete[] (data_start, std::align_val_t(alignment));
     }
 
     void *alloc() {
@@ -623,7 +629,7 @@ public:
         static_assert(sizeof(T) >= sizeof(void *), "size of T must be at least the size of a pointer");
 
         current_block = new blocklist_t{
-            .block = details::pool_allocator_block_t(sizeof(T), block_size),
+            .block = details::pool_allocator_block_t(sizeof(T), alignof(T), block_size),
             .next = nullptr
         };
     }
@@ -632,7 +638,7 @@ public:
         T *ptr = (T *)current_block->block.alloc();
         if (!ptr) {
             blocklist_t *new_block = new blocklist_t{
-                .block = details::pool_allocator_block_t(sizeof(T), block_size),
+                .block = details::pool_allocator_block_t(sizeof(T), alignof(T), block_size),
                 .next = current_block
             };
             current_block = new_block;
@@ -701,7 +707,7 @@ public:
         }
 
         current_block = new blocklist_t{
-            .block = details::pool_allocator_block_t(sizeof(T), block_size),
+            .block = details::pool_allocator_block_t(sizeof(T), alignof(T), block_size),
             .next = nullptr
         };
     }

@@ -46,15 +46,31 @@ public:
     virtual void accept(node_visitor_t &visitor) = 0;
 
     aabb_t bounding_box() {
-        return aabb;
+        return m_aabb;
     }
 
-    void set_state(const ref_t<state_t> &state) {
-        this->state = state;
+    state_t &state() {
+        if (this->m_state) {
+            return *this->m_state;
+        } else {
+            static state_t default_state = {
+                .material = {
+                    .ambient = {0.1f, 0.1f, 0.1f, 1.0f},
+                    .diffuse = {0.5f, 0.5f, 0.5f, 1.0f},
+                    .specular = {0.5f, 0.5f, 0.5f, 1.0f},
+                    .roughness = 0.5f,
+                },
+            };
+            return default_state;
+        }
     }
+    void set_state(state_t *state) {
+        this->m_state = state;
+    }
+
 protected:
-    ref_t<state_t> state;
-    aabb_t aabb;
+    state_t *m_state = nullptr;
+    aabb_t m_aabb;
 };
 
 // specialized nodes
@@ -194,6 +210,8 @@ public:
     DECL_CREATOR(camera, camera_t, storage.cameras)
     DECL_CREATOR(lod, lod_t, storage.lods)
 
+    DECL_CREATOR(state, state_t, storage.states)
+
 #undef DECL_CREATOR
 
 private:
@@ -206,6 +224,8 @@ private:
         pool_allocator_t<transform_t> transforms;
         pool_allocator_t<camera_t> cameras;
         pool_allocator_t<lod_t> lods;
+
+        pool_allocator_t<state_t> states;
     } storage;
 
     bool modified_on_disk = false;

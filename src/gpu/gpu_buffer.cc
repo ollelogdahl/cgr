@@ -54,7 +54,6 @@ void gpu_t::create_buffer_persistent(slice<u8> data, VkBufferUsageFlags usage, g
 
     vmaDestroyBuffer(allocator, staging_buffer, staging_allocation);
 
-    gpu_log.info("create: buffer {}", (void *)buffer.handle);
     buffer.owner = this;
 }
 
@@ -71,7 +70,6 @@ void gpu_t::create_buffer(usize size, VkBufferUsageFlags usage, gpu_buffer_t &bu
 
     vmaCreateBuffer(allocator, &buffer_info, &alloc_info, &buffer.handle, &buffer.allocation, nullptr);
 
-    gpu_log.info("create: buffer {}", (void *)buffer.handle);
     buffer.owner = this;
 }
 
@@ -85,7 +83,5 @@ void gpu_t::write_buffer(gpu_buffer_t &buffer, slice<u8> data) {
 
 gpu_buffer_t::~gpu_buffer_t() {
     if (handle == VK_NULL_HANDLE) return;
-
-    gpu_log.info("destroy: buffer {}", (void *)handle);
     vmaDestroyBuffer(owner->allocator, handle, allocation);
 }
