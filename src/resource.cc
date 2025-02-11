@@ -24,6 +24,40 @@ static bool file_a_is_newer_than_b(const char *a, const char *b);
 
 static logger_t logger = logger_t("loader");
 
+
+// load param hash & equality
+bool operator==(const texture_load_params_t &lhs, const texture_load_params_t &rhs) {
+    return lhs.path == rhs.path;
+}
+
+std::size_t std::hash<texture_load_params_t>::operator()(const texture_load_params_t &params) const {
+    return std::hash<std::string>{}(params.path);
+}
+
+bool operator==(const model_load_params_t &lhs, const model_load_params_t &rhs) {
+    bool equal = true;
+    equal = lhs.path == rhs.path;
+    if (!equal) return false;
+    equal = lhs.lod_settings.size() == rhs.lod_settings.size();
+    if (!equal) return false;
+
+    for (usize i = 0; i < lhs.lod_settings.size(); i++) {
+        equal = lhs.lod_settings[i].error_limit == rhs.lod_settings[i].error_limit;
+        if (!equal) return false;
+    }
+
+    return true;
+}
+
+std::size_t std::hash<model_load_params_t>::operator()(const model_load_params_t &params) const {
+    std::size_t h = std::hash<std::string>{}(params.path);
+    h ^= std::hash<u32>{}(params.lod_settings.size());
+    for (usize i = 0; i < params.lod_settings.size(); i++) {
+        h ^= std::hash<f32>{}(params.lod_settings[i].error_limit);
+    }
+    return h;
+}
+
 ref_t<shader_program_t> loader_t::load_shader_program(const shader_program_load_params_t &params) {
     auto exists_it = loaded_shaders.find(params);
     if (exists_it != loaded_shaders.end()) {
@@ -54,11 +88,12 @@ ref_t<texture_t> loader_t::load_texture(const texture_load_params_t &params) {
         return exists_it->second;
     }
 
+    logger.info("loading texture: {}", params.path);
     loaded_textures[params] = make_ref<texture_t>();
     texture_t &texture = *loaded_textures[params];
     {
         i32 width, height, channels;
-        auto data = stbi_load(params.path, &width, &height, &channels, 0);
+        auto data = stbi_load(params.path.c_str(), &width, &height, &channels, 0);
         if (!data) {
             auto cause = stbi_failure_reason();
             g_log.error("failed to load texture: {}: {}", params.path, cause);
@@ -89,12 +124,13 @@ ref_t<texture_t> loader_t::load_texture(const texture_load_params_t &params) {
             pixel_data = {data, (usize)(width * height)};
         } else {
             format = VK_FORMAT_UNDEFINED;
-            g_log.error("unsupported number of channels in texture: {}", channels);
+            logger.error("unsupported number of channels in texture: {}", channels);
         }
 
         VkImageUsageFlags usage = VK_IMAGE_USAGE_SAMPLED_BIT;
         gpu->create_image(pixel_data, (usize)width, (usize)height, format, usage, false, texture.image);
 
+        // @todo: move this!
         VkImageViewCreateInfo view_info = {};
         view_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
         view_info.image = texture.image.image;
@@ -112,23 +148,47 @@ ref_t<texture_t> loader_t::load_texture(const texture_load_params_t &params) {
     return loaded_textures[params];
 }
 
-ref_t<model_t> loader_t::load_model(const model_load_params_t &params) {
+model_description_t loader_t::load_model(const model_load_params_t &params) {
+    // loading models is kinda special. The result of this operation is not
+    // a reference to a model, but a description of where the model data is
+    // located.
+    //
+    // Therefore, we need to check if the model is already loaded by checking
+    // if all resources still exist.
     auto exists_it = loaded_models.find(params);
     if (exists_it != loaded_models.end()) {
-        return exists_it->second;
+
+        bool all_resources_exist = true;
+        for (auto &mesh : exists_it->second.meshes) {
+            if (!mesh.vertex_buffer.is_borrowed()) {
+                all_resources_exist = false;
+                break;
+            }
+
+            for (auto &lod : mesh.lods) {
+                if (!lod.index_buffer.is_borrowed()) {
+                    all_resources_exist = false;
+                    break;
+                }
+            }
+        }
+
+        if (all_resources_exist)
+            return exists_it->second;
+
+        // we need to remove this entry and load the model again.
     }
 
-    loaded_models[params] = make_ref<model_t>();
-    model_t &model = *loaded_models[params];
+    logger.info("loading model: {}", params.path);
+    loaded_models[params] = model_description_t();
+    model_description_t &model = loaded_models[params];
 
     modimp::scene_t scene;
-    auto res = modimp::scene_load(scene, params.path);
+    auto res = modimp::scene_load(scene, params.path.c_str());
     if (res.is_err()) {
-        g_log.error("failed to load model: {}", res.unwrap_err());
-        return nullptr;
+        logger.error("failed to load model: {}", res.unwrap_err());
+        return model;
     }
-
-    logger.info("loaded model: {} with {} meshes", params.path, scene.meshes.len);
 
     const usize interleaved_vertex_size = 9 * sizeof(f32);
     auto interleave_attributes = [](slice<v3f> vertices, slice<u32> colors, slice<v3f> normals, slice<v2f> uvs, slice<u8> &out) {
@@ -163,12 +223,12 @@ ref_t<model_t> loader_t::load_model(const model_load_params_t &params) {
 
     aabb_t model_aabb = aabb_t();
     for (auto &m : scene.meshes) {
-        mesh_t mesh;
+        mesh_description_t mesh;
         mesh.bounds = m.bounds;
         model_aabb.include(m.bounds.min);
         model_aabb.include(m.bounds.max);
 
-        mesh_t::lod_t lod_default;
+        mesh_description_t::lod_t lod_default;
 
         slice<byte> interleaved;
         interleave_attributes(m.vertices, m.colors, m.normals, m.texcoords, interleaved);
@@ -189,34 +249,28 @@ ref_t<model_t> loader_t::load_model(const model_load_params_t &params) {
         gpu->create_buffer_persistent(interleaved, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
             *mesh.vertex_buffer);
 
-        logger.info("generating lod levels for model: {}", params.path);
-        logger.info("    vertices: {}", vertex_count);
+        // logger.info("generating lod levels for model: {}", params.path);
+        // logger.info("    vertices: {}", vertex_count);
         mesh.lods.push_back(lod_default);
 
         usize i = 0;
         for (auto &lod : params.lod_settings) {
             i++;
-            mesh_t::lod_t lod_new;
+            mesh_description_t::lod_t lod_new;
 
             auto lod_indices = std::vector<u32>();
             lod_indices.resize(indices.len);
 
             f32 lod_error = 0.0;
 
-            usize new_len;
-            if (lod.sloppy) {
-                new_len = meshopt_simplifySloppy(&lod_indices[0], indices.data, indices.len,
-                    (f32 *)interleaved.data, vertex_count, interleaved_vertex_size, 0,
-                    lod.error_limit, &lod_error);
-            } else {
-                new_len = meshopt_simplify(&lod_indices[0], indices.data, indices.len,
-                    (f32 *)interleaved.data, vertex_count, interleaved_vertex_size, 0,
-                    lod.error_limit, 0, &lod_error);
-            }
+            usize new_len = meshopt_simplify(&lod_indices[0], indices.data, indices.len,
+                (f32 *)interleaved.data, vertex_count, interleaved_vertex_size, 0,
+                lod.error_limit, 0, &lod_error);
 
             lod_indices.resize(new_len);
 
-            logger.info("    lod {} (el: {:.2e}): {} (e: {:.2e})", i, lod.error_limit, new_len, lod_error);
+            (void)i;
+            // logger.info("    lod {} (el: {:.2e}): {} (e: {:.2e})", i, lod.error_limit, new_len, lod_error);
             if (new_len == 0) {
                 break;
             }
@@ -242,7 +296,8 @@ ref_t<sg::scene_t> loader_t::load_scene(const char *path) {
         return exists_it->second;
     }
 
-    loaded_scenes[path] = make_ref<sg::scene_t>();
+    logger.info("loading scene: {}", path);
+    loaded_scenes[path] = make_ref_owned<sg::scene_t>();
     sg::scene_t &scene = *loaded_scenes[path];
     sg::load(*this, path, scene);
 
@@ -289,8 +344,17 @@ void loader_t::process_hotreload() {
     for (auto it : loaded_scenes) {
         auto &scene = it.second;
         if (scene->modified_on_disk) {
+            g_log.info("reloading scene: {}", scene->disk_path);
+
+            // loading scenes is special. They usually load many other
+            // resources. Clearing it and then loading will cause
+            // all unchanged resources to be reloaded. Not cool!
+
+            sg::scene_t new_scene;
+            sg::load(*this, scene->disk_path.c_str(), new_scene);
+
             scene->clear();
-            sg::load(*this, scene->disk_path.c_str(), *scene);
+            *scene = new_scene;
             scene->modified_on_disk = false;
         }
     }

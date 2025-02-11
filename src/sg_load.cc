@@ -90,13 +90,12 @@ sg::node_t *parse_model(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLEleme
     for (auto &range : lod_ranges) {
         lod_settings.push_back({
             .error_limit = range.second,
-            .sloppy = false,
         });
     }
 
-    auto model = loader.load_model({
+    auto model_desc = loader.load_model({
         .path = path,
-        .lod_settings = {lod_settings.data(), lod_settings.size()},
+        .lod_settings = std::move(lod_settings),
     });
 
     if (use_autolod) {
@@ -111,7 +110,7 @@ sg::node_t *parse_model(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLEleme
             }
 
             auto group = scene.create_group();
-            for (auto &mesh : model->meshes) {
+            for (auto &mesh : model_desc.meshes) {
                 auto geometry = scene.create_geometry(mesh.vertex_buffer,
                     mesh.lods[i].index_buffer, mesh.lods[i].index_count);
                 group->add(geometry);
@@ -123,7 +122,7 @@ sg::node_t *parse_model(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLEleme
         return lod;
     } else {
         auto group = scene.create_group();
-        for (auto &mesh : model->meshes) {
+        for (auto &mesh : model_desc.meshes) {
             auto geometry = scene.create_geometry(mesh.vertex_buffer,
                 mesh.lods[0].index_buffer, mesh.lods[0].index_count);
             group->add(geometry);

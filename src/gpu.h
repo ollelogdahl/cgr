@@ -28,9 +28,12 @@ struct gpu_buffer_t {
     ~gpu_buffer_t();
 };
 struct gpu_image_t {
-    VkImage image;
+    gpu_t *owner;
+    VkImage image = VK_NULL_HANDLE;
     VmaAllocation allocation;
     VkImageView view;
+
+    ~gpu_image_t();
 };
 
 // i am not convinced these types should live here. Although it is fine for now i guess.

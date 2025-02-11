@@ -430,6 +430,7 @@ public:
             if (ptr) {
                 (*ref_count)--;
                 if (*ref_count == 0) {
+                    fmt::println("ref_t:delete: {}", (void *)ptr);
                     delete ptr;
                     delete ref_count;
                 }
@@ -447,6 +448,7 @@ public:
             if (ptr) {
                 (*ref_count)--;
                 if (*ref_count == 0) {
+                    fmt::println("ref_t:delete: {}", (void *)ptr);
                     delete ptr;
                     delete ref_count;
                 }
@@ -487,6 +489,7 @@ public:
         if (ptr) {
             (*ref_count)--;
             if (*ref_count == 0) {
+                fmt::println("ref_t:delete: {}", (void *)ptr);
                 delete ptr;
                 delete ref_count;
             }
@@ -499,6 +502,11 @@ public:
 
     constexpr bool operator==(const std::nullptr_t) const {
         return ptr == nullptr;
+    }
+
+    // this one really doesn't make sense for those not created as ref_owned.
+    bool is_borrowed() const {
+        return *ref_count > 0;
     }
 
 private:
@@ -582,6 +590,10 @@ struct pool_allocator_block_t {
         *(byte **)(data_start + (count - 1) * size) = nullptr;
     }
 
+    ~pool_allocator_block_t() {
+        delete[] data_start;
+    }
+
     void *alloc() {
         if (!free_list) {
             return nullptr;
@@ -641,6 +653,7 @@ public:
         blocklist_t *block = current_block;
         while (block) {
             if (block->block.contains(ptr)) {
+                ptr->~T();
                 block->block.free(ptr);
                 return;
             }
@@ -648,6 +661,49 @@ public:
         }
 
         panic("tried to free a pointer that was not allocated by this pool allocator");
+    }
+
+    void clear() {
+        blocklist_t *block = current_block;
+        while (block) {
+            blocklist_t *next = block->next;
+
+            // before deleting the block we need to deconstruct all valid objects
+            // inside of it. This feels non-cheap and pretty ugly.
+            //
+            // go over the block and find all T * which are not in the
+            // free list. Then call their destructor.
+            //
+            // @todo: optimize this!
+
+            byte *ptr = block->block.data_start;
+            while (ptr < block->block.data_end) {
+                bool in_free_list = false;
+                {
+                    byte *free_ptr = block->block.free_list;
+                    while (free_ptr) {
+                        if (free_ptr == ptr) {
+                            in_free_list = true;
+                            break;
+                        }
+                        free_ptr = *(byte **)free_ptr;
+                    }
+                }
+                if (!in_free_list) {
+                    T *t = (T *)ptr;
+                    t->~T();
+                }
+                ptr += sizeof(T);
+            }
+
+            delete block;
+            block = next;
+        }
+
+        current_block = new blocklist_t{
+            .block = details::pool_allocator_block_t(sizeof(T), block_size),
+            .next = nullptr
+        };
     }
 private:
     usize block_size;

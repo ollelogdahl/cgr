@@ -2,6 +2,19 @@
 
 namespace sg {
 
+void scene_t::clear() {
+    // delete all nodes.
+    nodes.clear();
+
+    // deallocate nodes.
+    storage.groups.clear();
+    storage.geometries.clear();
+    storage.point_lights.clear();
+    storage.transforms.clear();
+    storage.cameras.clear();
+    storage.lods.clear();
+}
+
 void lod_t::traverse(node_visitor_t &visitor) {
     // figure out which child we should pick. This is pretty easy.
     // Firstly, we determine the distance from the camera to the center of the bounding box.

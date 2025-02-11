@@ -8,42 +8,27 @@
 
 #include "gpu.h"
 
+#define DECL_IMPL_LOAD_PARAM(type)                                        \
+    bool operator==(const type &lhs, const type &rhs);                    \
+    template <> struct std::hash<type> {                                  \
+        std::size_t operator()(const type &params) const;                 \
+    };
+
 struct texture_load_params_t {
-    const char *path;
-
-    bool operator==(const texture_load_params_t &other) const {
-        return strcmp(path, other.path) == 0;
-    }
+    std::string path;
 };
-
-template <>
-struct std::hash<texture_load_params_t> {
-    std::size_t operator()(const texture_load_params_t &params) const {
-        return std::hash<const char*>{}(params.path);
-    }
-};
+DECL_IMPL_LOAD_PARAM(texture_load_params_t)
 
 struct model_load_params_t {
-    const char *path;
+    std::string path;
 
     struct lod_setting_t {
         f32 error_limit;
-        bool sloppy = false;
     };
 
-    slice<const lod_setting_t> lod_settings = {};
-
-    bool operator==(const model_load_params_t &other) const {
-        return strcmp(path, other.path) == 0;
-    }
+    std::vector<lod_setting_t> lod_settings = {};
 };
-
-template <>
-struct std::hash<model_load_params_t> {
-    std::size_t operator()(const model_load_params_t &params) const {
-        return std::hash<const char*>{}(params.path);
-    }
-};
+DECL_IMPL_LOAD_PARAM(model_load_params_t)
 
 struct texture_t {
     struct {
@@ -57,12 +42,7 @@ struct texture_t {
     gpu_image_t image;
 };
 
-// @todo: redesign this!!!! Does this own the buffers
-// ??? I Think we should not do it this way.
-//
-// For instance, multiple meshes should be able to share
-// the vertex buffer (when automatic LODs).
-struct mesh_t {
+struct mesh_description_t {
     ref_t<gpu_buffer_t> vertex_buffer;
     struct lod_t {
         ref_t<gpu_buffer_t> index_buffer;
@@ -73,8 +53,8 @@ struct mesh_t {
     aabb_t bounds;
 };
 
-struct model_t {
-    std::vector<mesh_t> meshes;
+struct model_description_t {
+    std::vector<mesh_description_t> meshes;
     aabb_t aabb;
 };
 
@@ -105,7 +85,8 @@ struct loader_t {
     ref_t<shader_program_t> load_shader_program(const shader_program_load_params_t &params);
 
     ref_t<texture_t> load_texture(const texture_load_params_t &params);
-    ref_t<model_t> load_model(const model_load_params_t &params);
+
+    model_description_t load_model(const model_load_params_t &params);
 
     ref_t<sg::scene_t> load_scene(const char *path);
 
@@ -114,7 +95,7 @@ struct loader_t {
 
     std::unordered_map<shader_program_load_params_t, ref_t<shader_program_t>> loaded_shaders;
     std::unordered_map<texture_load_params_t, ref_t<texture_t>> loaded_textures;
-    std::unordered_map<model_load_params_t, ref_t<model_t>> loaded_models;
+    std::unordered_map<model_load_params_t, model_description_t> loaded_models;
     std::unordered_map<std::string, ref_t<sg::scene_t>> loaded_scenes;
 
     fswatcher_t watcher;

@@ -10,37 +10,6 @@ struct loader_t;
 
 namespace sg {
 
-class node_visitor_t;
-
-class material_t {
-public:
-    v4f ambient;
-    v4f diffuse;
-    v4f specular;
-    f32 roughness;
-};
-
-class state_t {
-public:
-    material_t material;
-};
-
-class node_t {
-public:
-    virtual void accept(node_visitor_t &visitor) = 0;
-
-    aabb_t bounding_box() {
-        return aabb;
-    }
-
-    void set_state(const ref_t<state_t> &state) {
-        this->state = state;
-    }
-protected:
-    ref_t<state_t> state;
-    aabb_t aabb;
-};
-
 class group_t;
 class point_light_t;
 class transform_t;
@@ -58,9 +27,41 @@ public:
     virtual void visit(lod_t &lod) = 0;
 };
 
+class material_t {
+public:
+    v4f ambient;
+    v4f diffuse;
+    v4f specular;
+    f32 roughness;
+};
+
+class state_t {
+public:
+    material_t material;
+};
+
+class node_t {
+public:
+    virtual ~node_t() = default;
+    virtual void accept(node_visitor_t &visitor) = 0;
+
+    aabb_t bounding_box() {
+        return aabb;
+    }
+
+    void set_state(const ref_t<state_t> &state) {
+        this->state = state;
+    }
+protected:
+    ref_t<state_t> state;
+    aabb_t aabb;
+};
+
 // specialized nodes
 class group_t : public node_t {
 public:
+    virtual ~group_t() = default;
+
     void add(node_t *node) {
         children.push_back(node);
     }
@@ -79,6 +80,8 @@ protected:
 
 class point_light_t : public node_t {
 public:
+    virtual ~point_light_t() = default;
+
     v3f position;
     v3f color;
     f32 linear;
@@ -91,6 +94,8 @@ public:
 
 class transform_t : public group_t {
 public:
+    virtual ~transform_t() = default;
+
     m4f get_local_matrix() {
         auto rot = m4f::rotate(rotation_x, v3f{1, 0, 0})
             * m4f::rotate(rotation_y, v3f{0, 1, 0})
@@ -111,6 +116,8 @@ public:
 
 class geometry_t : public node_t {
 public:
+    virtual ~geometry_t() = default;
+
     geometry_t(ref_t<gpu_buffer_t> vertex_buffer, ref_t<gpu_buffer_t> index_buffer, u32 index_count)
         : vertex_buffer(vertex_buffer), index_buffer(index_buffer), index_count(index_count) {}
 
@@ -125,6 +132,8 @@ public:
 
 class camera_t : public node_t {
 public:
+    virtual ~camera_t() = default;
+
     void accept(node_visitor_t &visitor) {
         visitor.visit(*this);
     }
@@ -132,6 +141,8 @@ public:
 
 class lod_t : public group_t {
 public:
+    virtual ~lod_t() = default;
+
     lod_t() : center{0, 0, 0}, ranges_min{} {}
 
     void accept(node_visitor_t &visitor) {
@@ -167,9 +178,7 @@ public:
         }
     }
 
-    void clear() {
-        nodes.clear();
-    }
+    void clear();
 
 #define DECL_CREATOR(name, tname, storage) \
     template <typename ...Args> \
