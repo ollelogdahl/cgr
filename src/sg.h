@@ -68,6 +68,10 @@ public:
         this->m_state = state;
     }
 
+    void set_bounding_box(const aabb_t &aabb) {
+        m_aabb = aabb;
+    }
+
 protected:
     state_t *m_state = nullptr;
     aabb_t m_aabb;
@@ -79,10 +83,10 @@ public:
     virtual ~group_t() = default;
 
     void add(node_t *node) {
-        children.push_back(node);
+        m_children.push_back(node);
     }
     void accept_children(node_visitor_t &visitor) {
-        for (auto &child : children) {
+        for (auto &child : m_children) {
             child->accept(visitor);
         }
     }
@@ -90,8 +94,13 @@ public:
     void accept(node_visitor_t &visitor) {
         visitor.visit(*this);
     }
+
+    const std::vector<node_t *> &children() const {
+        return m_children;
+    }
+
 protected:
-    std::vector<node_t *> children;
+    std::vector<node_t *> m_children;
 };
 
 class point_light_t : public node_t {

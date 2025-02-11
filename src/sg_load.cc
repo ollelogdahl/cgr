@@ -21,18 +21,21 @@ sg::node_t *parse_model(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLEleme
 sg::node_t *parse_point_light(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLElement *elem);
 sg::node_t *parse_transform(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLElement *elem);
 sg::node_t *parse_lod(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLElement *elem);
+sg::node_t *parse_grid(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLElement *elem);
 
 sg::node_t *interpret_node(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLElement *elem) {
     if (elem->Name() == std::string("group")) {
         return parse_group(loader, scene, elem);
     } else if (elem->Name() == std::string("model")) {
         return parse_model(loader, scene, elem);
-    } else if (elem->Name() == std::string("point_light")) {
+    } else if (elem->Name() == std::string("point-light")) {
         return parse_point_light(loader, scene, elem);
     } else if (elem->Name() == std::string("transform")) {
         return parse_transform(loader, scene, elem);
     } else if (elem->Name() == std::string("lod")) {
         return parse_lod(loader, scene, elem);
+    } else if (elem->Name() == std::string("grid")) {
+        return parse_grid(loader, scene, elem);
     } else {
         g_log.error("unknown node type: {}", elem->Name());
         return nullptr;
@@ -58,7 +61,8 @@ bool load(loader_t &loader, const char *path, sg::scene_t &scene) {
 
     for (tinyxml2::XMLElement *elem = root->FirstChildElement(); elem; elem = elem->NextSiblingElement()) {
         sg::node_t *node = interpret_node(loader, scene, elem);
-        scene.add(node);
+        if (node != nullptr)
+            scene.add(node);
     }
 
     return true;
@@ -118,6 +122,7 @@ sg::node_t *parse_model(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLEleme
     if (use_autolod) {
         auto lod = scene.create_lod();
         lod->set_state(state_ptr);
+        lod->set_bounding_box(model_desc.aabb);
 
         std::vector<f32> min_ranges = {};
         min_ranges.reserve(lod_ranges.size() + 1);
@@ -136,8 +141,11 @@ sg::node_t *parse_model(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLEleme
                     mesh.lods[i].index_buffer, mesh.lods[i].index_count);
 
                 geometry->set_state(state_ptr);
+                geometry->set_bounding_box(model_desc.aabb);
+
                 group->add(geometry);
             }
+            group->set_bounding_box(model_desc.aabb);
 
             lod->add(group);
         }
@@ -147,12 +155,14 @@ sg::node_t *parse_model(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLEleme
     } else {
         auto group = scene.create_group();
         group->set_state(state_ptr);
+        group->set_bounding_box(model_desc.aabb);
 
         for (auto &mesh : model_desc.meshes) {
             auto geometry = scene.create_geometry(mesh.vertex_buffer,
                 mesh.lods[0].index_buffer, mesh.lods[0].index_count);
 
             geometry->set_state(state_ptr);
+            geometry->set_bounding_box(model_desc.aabb);
             group->add(geometry);
         }
 
@@ -173,11 +183,19 @@ sg::node_t *parse_point_light(loader_t &loader, sg::scene_t &scene, tinyxml2::XM
     auto color_attr = elem->Attribute("color");
     auto position_attr = elem->Attribute("position");
 
-    auto position = parse_attr_v3f(std::string_view(position_attr));
-    auto color = parse_attr_color3(std::string_view(color_attr));
+    if (color_attr) {
+        auto color = parse_attr_color3(std::string_view(color_attr));
+        point_light->color = color;
+    } else {
+        point_light->color = v3f{1, 1, 1};
+    }
 
-    point_light->position = position;
-    point_light->color = color;
+    if (position_attr) {
+        auto position = parse_attr_v3f(std::string_view(position_attr));
+        point_light->position = position;
+    } else {
+        point_light->position = v3f{0, 0, 0};
+    }
 
     return point_light;
 }
@@ -241,6 +259,65 @@ sg::node_t *parse_lod(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLElement
     lod->set_ranges(ranges);
 
     return lod;
+}
+
+sg::node_t *parse_grid(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLElement *elem) {
+    // grid repeats its children in a grid pattern.
+    auto grid = scene.create_group();
+
+    bool set_state;
+    sg::state_t state = parse_state(loader, scene, elem, set_state);
+    sg::state_t *state_ptr = nullptr;
+    if (set_state) {
+        state_ptr = scene.create_state(state);
+    }
+
+    grid->set_state(state_ptr);
+
+    auto count_attr = elem->Attribute("count");
+    auto spacing_attr = elem->Attribute("spacing");
+
+    if (!count_attr || !spacing_attr) {
+        g_log.error("grid requires count and spacing attributes");
+        return nullptr;
+    }
+
+    auto count = parse_attr_v3f(std::string_view(count_attr));
+    auto spacing = parse_attr_v3f(std::string_view(spacing_attr));
+
+    std::vector<sg::node_t *> children;
+    for (tinyxml2::XMLElement *child = elem->FirstChildElement(); child; child = child->NextSiblingElement()) {
+        auto subnode = interpret_node(loader, scene, child);
+        if (subnode != nullptr)
+            children.push_back(subnode);
+    }
+
+    for (f32 x = 0; x < count.x; x++) {
+        auto halfx = (count.x - 1) * spacing.x / 2;
+        for (f32 y = 0; y < count.y; y++) {
+            auto halfy = (count.y - 1) * spacing.y / 2;
+            for (f32 z = 0; z < count.z; z++) {
+                auto halfz = (count.z - 1) * spacing.z / 2;
+
+                auto transform = scene.create_transform();
+
+                transform->set_state(state_ptr);
+                transform->position = v3f{
+                    x * spacing.x - halfx,
+                    y * spacing.y - halfy,
+                    z * spacing.z - halfz
+                };
+
+                for (auto &child : children) {
+                    transform->add(child);
+                }
+
+                grid->add(transform);
+            }
+        }
+    }
+
+    return grid;
 }
 
 std::vector<f32> parse_attr_list_f32(const std::string_view &v) {

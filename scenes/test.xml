@@ -1,17 +1,29 @@
 <?xml version="1.0" encoding="utf-8" ?>
 <scene>
-    <point_light position="0 2 0" color="2 2 2" />
-    <point_light position="4 2 0" color="2 0 1" />
-    <point_light position="0 -4 0" color="1 4 1" />
+    <point-light position="0 2 0" color="2 2 2" />
+    <point-light position="4 2 0" color="2 0 1" />
+    <point-light position="0 -4 0" color="1 4 1" />
     <transform position="0 0 0">
         <transform position="0 0.18 0" scale="0.01 0.01 0.01">
-            <model file="assets/dragon.obj" auto-lod="12,1e-3:20,4e-3:40,1e-2" />
+            <!-- <model file="assets/dragon.obj" auto-lod="13,1e-3:20,4e-3:40,1e-2" />
+            -->
+            <model file="assets/dragon.obj"
+                mat-diffuse="0.7 0.5 0.5"
+                mat-roughness="0.1"
+                auto-lod="8,5e-4:20,3e-3:30,1e-2:40,2e-2"
+            />
         </transform>
         <transform position="0 -0.4 0.1" scale="0.7 0.2 0.7">
-            <model file="assets/cube.obj" />
+            <model file="assets/cube.obj"
+                mat-diffuse="0.2 0.2 0.2"
+                mat-roughness="0.4"
+            />
         </transform>
     </transform>
     <transform position="0 -0.5 0" scale="20 1 20">
-        <model file="assets/plane.obj" />
+        <model file="assets/plane.obj"
+            mat-diffuse="0.1 0.1 0.1"
+            mat-roughness="1.0"
+        />
     </transform>
 </scene>

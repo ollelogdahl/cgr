@@ -128,32 +128,41 @@ void gui();
 
 class log_dump_visitor_t : public sg::node_visitor_t {
 public:
+
+    void print_bounds(sg::node_t &node) {
+        g_log.info("{:{}s}aabb: {}", "", depth * 2 + 4, node.bounding_box());
+    }
+
     void visit(sg::group_t &group) override {
         g_log.info("{:{}s}group {}", "", depth * 2, (void *)&group);
+        print_bounds(group);
+
         depth++;
         group.accept_children(*this);
         depth--;
     }
     void visit(sg::geometry_t &geometry) override {
         g_log.info("{:{}s}geometry {}", "", depth * 2, (void *)&geometry);
-        (void)geometry;
+        print_bounds(geometry);
     }
     void visit(sg::point_light_t &point_light) override {
         g_log.info("{:{}s}point_light {}", "", depth * 2, (void *)&point_light);
-        (void)point_light;
     }
     void visit(sg::transform_t &transform) override {
         g_log.info("{:{}s}transform {}", "", depth * 2, (void *)&transform);
+        print_bounds(transform);
+
         depth++;
         transform.accept_children(*this);
         depth--;
     }
     void visit(sg::camera_t &camera) override {
         g_log.info("{:{}s}camera {}", "", depth * 2, (void *)&camera);
-        (void)camera;
     }
     void visit(sg::lod_t &lod) override {
         g_log.info("{:{}s}lod {}", "", depth * 2, (void *)&lod);
+        print_bounds(lod);
+
         depth++;
         lod.accept_children(*this);
         depth--;
@@ -164,7 +173,12 @@ private:
 
 class renderer_visitor_t : public sg::node_visitor_t {
 public:
-    renderer_visitor_t(renderer_t *renderer) : renderer(renderer) {
+    bool lod_override = false;
+    f32 lod_p = 0.0f;
+    camera_t *camera = nullptr;
+    renderer_t *renderer = nullptr;
+
+    renderer_visitor_t() {
         transform_stack.push_back(m4f::identity());
     }
 
@@ -209,34 +223,11 @@ public:
     }
     void visit(sg::transform_t &transform) override {
         transform_stack.push_back(transform.get_local_matrix() * transform_stack.back());
+
+        current_center = (v4f{current_center.x, current_center.y, current_center.z, 1.0} * transform.get_local_matrix()).xyz();
+
         transform.accept_children(*this);
         transform_stack.pop_back();
-    }
-    void visit(sg::camera_t &camera) override {
-        (void)camera;
-    }
-    void visit(sg::lod_t &lod) override {
-        // @todo: figure out camera position.
-        lod.traverse(*this);
-    }
-private:
-    renderer_t *renderer;
-    std::vector<m4f> transform_stack;
-};
-
-class update_visitor_t : public sg::node_visitor_t {
-public:
-    void visit(sg::group_t &group) override {
-        group.accept_children(*this);
-    }
-    void visit(sg::geometry_t &geometry) override {
-        (void)geometry;
-    }
-    void visit(sg::point_light_t &point_light) override {
-        (void)point_light;
-    }
-    void visit(sg::transform_t &transform) override {
-        transform.accept_children(*this);
     }
     void visit(sg::camera_t &camera) override {
         (void)camera;
@@ -245,21 +236,62 @@ public:
         if (lod_override) {
             lod.set_center(v3f{0, lod_p, 0});
         } else {
-            lod.set_center(camera->position);
+            lod.set_center(camera->position - current_center);
         }
-        lod.accept_children(*this);
-    }
 
-    bool lod_override = false;
-    f32 lod_p = 0.0f;
-    camera_t *camera;
+        lod.traverse(*this);
+
+    }
+private:
+    v3f current_center = {0, 0, 0};
+    std::vector<m4f> transform_stack;
 };
 
-update_visitor_t g_update_visitor;
+// @todo: we do not need to redo this every frame. We should cache the results.
+class compute_bounds_visitor_t : public sg::node_visitor_t {
+public:
+    void visit(sg::group_t &group) override {
+        group.accept_children(*this);
+
+        aabb_t aabb;
+        for (auto &child : group.children()) {
+            aabb.include(child->bounding_box());
+        }
+        group.set_bounding_box(aabb);
+    }
+
+    void visit(sg::geometry_t &geometry) override {
+        (void)geometry;
+        // we assume that geometries already have their bounding box set.
+    }
+
+    void visit(sg::point_light_t &point_light) override {
+        (void)point_light;
+    }
+
+    void visit(sg::transform_t &transform) override {
+        transform.accept_children(*this);
+
+        aabb_t aabb;
+        for (auto &child : transform.children()) {
+            aabb.include(child->bounding_box().transform_affine(transform.get_local_matrix()));
+        }
+        transform.set_bounding_box(aabb);
+    }
+
+    void visit(sg::camera_t &camera) override {
+        (void)camera;
+    }
+
+    void visit(sg::lod_t &lod) override {
+        lod.accept_children(*this);
+        lod.set_bounding_box(lod.children()[0]->bounding_box());
+    }
+};
+
+renderer_visitor_t g_renderer_visitor;
 
 int main(int argc, char **argv) {
-    (void)argc;
-    (void)argv;
 
     oc_init();
     glfwInit();
@@ -281,10 +313,20 @@ int main(int argc, char **argv) {
 
     renderer.init(gpu, loader);
 
-    auto scene = loader.load_scene("scenes/test.xml");
+    if (argc < 2) {
+        g_log.error("no scene file provided");
+        return 1;
+    }
 
-    renderer_visitor_t visitor = renderer_visitor_t(&renderer);
-    g_update_visitor = update_visitor_t();
+    auto scene = loader.load_scene(argv[1]);
+
+    log_dump_visitor_t log_dump_visitor = log_dump_visitor_t();
+    g_renderer_visitor = renderer_visitor_t();
+
+    compute_bounds_visitor_t bounds_visitor;
+
+    scene->accept(bounds_visitor);
+    scene->accept(log_dump_visitor);
 
     cpu_timer_t full_loop_timer;
 
@@ -295,14 +337,13 @@ int main(int argc, char **argv) {
     freefly_controller_t controller;
     controller.camera = &camera;
 
-    g_update_visitor.camera = &camera;
+    g_renderer_visitor.renderer = &renderer;
+    g_renderer_visitor.camera = &camera;
 
     float t = 0.0f;
     g_log.info("running...");
     while(!glfwWindowShouldClose(window)) {
         t += 0.017f;
-
-        scene->accept(g_update_visitor);
 
         loader.process_hotreload();
         renderer.new_frame();
@@ -313,7 +354,7 @@ int main(int argc, char **argv) {
 
         gui();
 
-        scene->accept(visitor);
+        scene->accept(g_renderer_visitor);
 
         // @todo: move into scene graph
         renderer.set_camera(camera);
@@ -352,8 +393,8 @@ void gui() {
 
     ImGui::Begin("test");
 
-    ImGui::Checkbox("lod override", &g_update_visitor.lod_override);
-    ImGui::SliderFloat("lod p", &g_update_visitor.lod_p, 0.0f, 100.0f);
+    ImGui::Checkbox("lod override", &g_renderer_visitor.lod_override);
+    ImGui::SliderFloat("lod p", &g_renderer_visitor.lod_p, 0.0f, 100.0f);
 
     if (ImGui::Button("Show ImGui demo")) show_imgui_demo = !show_imgui_demo;
     if (ImGui::Button("Show ImPlot demo")) show_implot_demo = !show_implot_demo;

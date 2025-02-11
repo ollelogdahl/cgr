@@ -325,6 +325,35 @@ struct aabb_t {
         max.z = fmax(max.z, p.z);
     }
 
+    void include(aabb_t other) {
+        include(other.min);
+        include(other.max);
+    }
+
+    aabb_t transform_affine(const m4f &matrix) const {
+        aabb_t result;
+
+        // Transform all 8 corners
+        v3f corners[8] = {
+            {min.x, min.y, min.z}, // 000
+            {max.x, min.y, min.z}, // 100
+            {min.x, max.y, min.z}, // 010
+            {max.x, max.y, min.z}, // 110
+            {min.x, min.y, max.z}, // 001
+            {max.x, min.y, max.z}, // 101
+            {min.x, max.y, max.z}, // 011
+            {max.x, max.y, max.z}  // 111
+        };
+
+        // Transform each corner and include it in the result
+        for (int i = 0; i < 8; i++) {
+            v3f transformed = (v4f(corners[i].x, corners[i].y, corners[i].z, 1.0f) * matrix).xyz();
+            result.include(transformed);
+        }
+
+        return result;
+    }
+
     v3f center() const {
         return (min + max) * 0.5f;
     }

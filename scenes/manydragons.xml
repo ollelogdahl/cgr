@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<scene>
+    <point-light color="1 1 1" />
+    <grid count="2 1 1" spacing="4 4 4">
+        <transform scale="0.02 0.02 0.02">
+            <model file="assets/dragon.obj"
+                mat-diffuse="0.7 0.5 0.5"
+                mat-roughness="0.1"
+                auto-lod="8,5e-4:20,3e-3:30,1e-2:40,2e-2"
+            />
+        </transform>
+    </grid>
+</scene>

@@ -36,9 +36,9 @@ ifeq ($(USE_MOLD_LINKER),true)
 LDFLAGS_COMMON += --ld-path=/usr/bin/mold
 endif
 
-.PHONY: clean memcheck
+.PHONY: clean release memcheck
 
-cgr: $(ODIR_REL)/cgr
+release: $(ODIR_REL)/cgr
 	@cp $(ODIR_REL)/cgr cgr
 
 memcheck: $(ODIR_MEM)/cgr
