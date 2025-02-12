@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<scene>
+    <point-light color="1 1 1" />
+    <grid count="10 10 10" spacing="4 4 4">
+        <transform scale="0.25 0.25 0.25" rotation="90 0 0">
+            <model file="assets/bug.obj"
+                mat-diffuse="0.7 0.5 0.5"
+                mat-roughness="0.3"
+                auto-lod="6,2e-4:14,6e-4:20,8e-3"
+
+                mat-tex-albedo0="assets/bug.png"
+            />
+        </transform>
+    </grid>
+</scene>

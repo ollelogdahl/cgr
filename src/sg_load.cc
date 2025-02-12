@@ -212,12 +212,19 @@ sg::node_t *parse_transform(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLE
 
     auto position = elem->Attribute("position");
     auto scale = elem->Attribute("scale");
+    auto rotation = elem->Attribute("rotation");
 
     if (position != nullptr) {
         transform->position = parse_attr_v3f(std::string_view(position));
     }
     if (scale != nullptr) {
         transform->scale = parse_attr_v3f(std::string_view(scale));
+    }
+    if (rotation != nullptr) {
+        v3f eulers = parse_attr_v3f(std::string_view(rotation));
+        transform->rotation_x = anglef::from_deg(eulers.x);
+        transform->rotation_y = anglef::from_deg(eulers.y);
+        transform->rotation_z = anglef::from_deg(eulers.z);
     }
 
     for (tinyxml2::XMLElement *child = elem->FirstChildElement(); child; child = child->NextSiblingElement()) {

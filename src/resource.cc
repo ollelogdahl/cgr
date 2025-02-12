@@ -19,7 +19,7 @@
 #define SHADER_STAGE_VERTEX 0
 #define SHADER_STAGE_FRAGMENT 1
 
-static VkPipelineShaderStageCreateInfo compile_shader(const loader_t &loader, gpu_t &gpu, const char *path, int type);
+static VkPipelineShaderStageCreateInfo compile_shader(const loader_t &loader, const char *glslc_path, gpu_t &gpu, const char *path, int type);
 static bool file_a_is_newer_than_b(const char *a, const char *b);
 
 static logger_t logger = logger_t("loader");
@@ -183,9 +183,6 @@ model_description_t loader_t::load_model(const model_load_params_t &params) {
 
     aabb_t model_aabb = aabb_t();
     for (auto &m : scene.meshes) {
-
-        fmt::println("mesh: indices: {}, vertices: {}", m.indices.len, m.vertices.len);
-
         mesh_description_t mesh;
         mesh.bounds = m.bounds;
         model_aabb.include(m.bounds.min);
@@ -292,8 +289,8 @@ void loader_t::process_hotreload() {
         if (program->modified) {
             program->stages.clear();
 
-            program->stages.push_back(compile_shader(*this, *gpu, program->params.vertex_hlsl_path, SHADER_STAGE_VERTEX));
-            program->stages.push_back(compile_shader(*this, *gpu, program->params.fragment_hlsl_path, SHADER_STAGE_FRAGMENT));
+            program->stages.push_back(compile_shader(*this, glslc_path, *gpu, program->params.vertex_hlsl_path, SHADER_STAGE_VERTEX));
+            program->stages.push_back(compile_shader(*this, glslc_path, *gpu, program->params.fragment_hlsl_path, SHADER_STAGE_FRAGMENT));
         }
     }
 
@@ -323,7 +320,7 @@ void loader_t::process_hotreload() {
     }
 }
 
-VkPipelineShaderStageCreateInfo compile_shader(const loader_t &loader, gpu_t &gpu, const char *path, int type) {
+VkPipelineShaderStageCreateInfo compile_shader(const loader_t &loader, const char *glslc_path, gpu_t &gpu, const char *path, int type) {
     // in dev mode, we compile the shader into the tmp dir. The filename in tmp is
     // based on the hash of the original file name.
 
@@ -354,7 +351,7 @@ VkPipelineShaderStageCreateInfo compile_shader(const loader_t &loader, gpu_t &gp
         const char *debug_info = emit_debug_info ? "-g" : "";
 
         // @todo: the path to glslc should maybe be compile-time configurable? or taken from env?
-        auto cmd = fmt::format("{} {} -fshader-stage={} -o {} {}", loader.glslc_path,
+        auto cmd = fmt::format("{} {} -fshader-stage={} -o {} {}", glslc_path,
             debug_info, glslc_stage, tmp_path, path);
 
         // @todo: use exec instead of system.
@@ -417,7 +414,7 @@ void fswatcher_t::init() {
 void fswatcher_t::add_watch(const char *path, void (*on_modified)(std::string, void *userdata), void *userdata) {
     int ret = inotify_add_watch(inotify_fd, path, IN_ALL_EVENTS);
     if (ret == -1) {
-        panic("inotify_add_watch error: {}", strerror(errno));
+        panic("inotify_add_watch error: {}: {}", path, strerror(errno));
     }
     watches[ret] = {
         on_modified,

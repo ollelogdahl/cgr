@@ -13,7 +13,7 @@
 #import "@preview/codly:1.2.0": *
 #import "@preview/codly-languages:0.1.1": *
 #show: codly-init.with()
- 
+
 = Introduction
 
 #lorem(50)
@@ -99,6 +99,13 @@ Firstly, the requirements are listed (@sec:reqs) and then the bonus requirements
 == Hot Reload <sec:reload>
 
 == Instantiation <sec:instantiation>
+
+== Xml format
+
+- *Tranform* - A node which can contain other nodes and affine transform them (translate, rotate, scale).
+- *Model* - A node which contains a mesh and material. Produces multiple geometry nodes with transforms.
+    - `auto-lod` - Automatically generate LOD meshes for the model. The format is `distance,error:distance,error:...`.
+- *Grid* - A demo of node instantiation. Instantiates all children multiple times in a 3D grid.
 
 = Vulkan Renderer
 

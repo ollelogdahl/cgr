@@ -183,7 +183,6 @@ vec3 shuler_perturb_normal(sampler2D bumpmap, vec3 N, vec3 V, vec2 texcoord) {
     vec3 pn = texture(bumpmap, texcoord).xyz;
 
     pn = pn * 2. - 1.;
-    //pn = pn * 255. / 127. - 128. / 127.;
     pn.y = -pn.y;
 
     mat3 TBN = shuler_cotangent_frame(N, -V, texcoord);

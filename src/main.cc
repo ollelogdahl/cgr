@@ -287,6 +287,7 @@ public:
 };
 
 renderer_visitor_t g_renderer_visitor;
+loader_t g_loader;
 
 int main(int argc, char **argv) {
 
@@ -303,19 +304,18 @@ int main(int argc, char **argv) {
     gpu.init(window);
     g_log.info("gpu initialized");
 
-    loader_t loader;
     renderer_t renderer;
 
-    loader.init(gpu);
+    g_loader.init(gpu);
 
-    renderer.init(gpu, loader);
+    renderer.init(gpu, g_loader);
 
     if (argc < 2) {
         g_log.error("no scene file provided");
         return 1;
     }
 
-    auto scene = loader.load_scene(argv[1]);
+    auto scene = g_loader.load_scene(argv[1]);
 
     log_dump_visitor_t log_dump_visitor = log_dump_visitor_t();
     g_renderer_visitor = renderer_visitor_t();
@@ -342,7 +342,7 @@ int main(int argc, char **argv) {
     while(!glfwWindowShouldClose(window)) {
         t += 0.017f;
 
-        loader.process_hotreload();
+        g_loader.process_hotreload();
         renderer.new_frame();
 
         full_loop_timer.start();
@@ -392,6 +392,19 @@ void gui() {
 
     ImGui::Checkbox("lod override", &g_renderer_visitor.lod_override);
     ImGui::SliderFloat("lod p", &g_renderer_visitor.lod_p, 0.0f, 100.0f);
+
+    auto mods = g_loader.get_loaded_models();
+    if (ImGui::BeginListBox("models")) {
+        for (auto &model : mods) {
+            for (auto &mesh : model.meshes) {
+                for (auto &lod : mesh.lods) {
+                    ImGui::Text("lod: %d", lod.index_count);
+                }
+            }
+        }
+        ImGui::EndListBox();
+    }
+
 
     if (ImGui::Button("Show ImGui demo")) show_imgui_demo = !show_imgui_demo;
     if (ImGui::Button("Show ImPlot demo")) show_implot_demo = !show_implot_demo;
