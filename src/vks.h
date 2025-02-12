@@ -4,8 +4,6 @@
 #include <fmt/format.h>
 #include <vulkan/vulkan.h>
 
-
-
 template <>
 struct fmt::formatter<VkFormat> {
     constexpr auto parse(format_parse_context& ctx) {

@@ -4,6 +4,7 @@
 #include "vks.h"
 
 #include <set>
+#include <vulkan/vulkan_core.h>
 
 void dump_available_validation_layers();
 void dump_available_physical_devices(VkInstance instance);
@@ -33,6 +34,7 @@ void gpu_t::init(GLFWwindow *window) {
     std::vector<const char *> required_device_extensions = {
         VK_KHR_SWAPCHAIN_EXTENSION_NAME,
         VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME,
+        VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME,
     };
 
     bool validation_layers_available = true;

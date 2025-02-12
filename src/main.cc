@@ -187,16 +187,15 @@ public:
     }
     void visit(sg::geometry_t &geometry) override {
         // @todo: extract from state.
-        draw_element_material_t material = {
-            .flags = (draw_element_flags_t)0,
-            .color = geometry.state().material.diffuse.xyz(),
+        draw_material_t material = {
+            .diffuse = geometry.state().material.diffuse,
             .roughness = geometry.state().material.roughness,
             .metallic = 0.0f,
-            .albedo0_idx = 0,
-            .albedo1_idx = 0,
-            .albedo2_idx = 0,
-            .normal_idx = 0,
-            .roughness_idx = 0,
+            .tex_albedo0 = geometry.state().material.tex_albedo0,
+            .tex_albedo1 = geometry.state().material.tex_albedo1,
+            .tex_albedo2 = geometry.state().material.tex_albedo2,
+            .tex_normal = geometry.state().material.tex_normal,
+            .tex_roughness = geometry.state().material.tex_roughness,
         };
 
         renderer->add_draw_indexed({
@@ -223,9 +222,6 @@ public:
     }
     void visit(sg::transform_t &transform) override {
         transform_stack.push_back(transform.get_local_matrix() * transform_stack.back());
-
-        current_center = (v4f{current_center.x, current_center.y, current_center.z, 1.0} * transform.get_local_matrix()).xyz();
-
         transform.accept_children(*this);
         transform_stack.pop_back();
     }
@@ -236,14 +232,15 @@ public:
         if (lod_override) {
             lod.set_center(v3f{0, lod_p, 0});
         } else {
-            lod.set_center(camera->position - current_center);
+            // we have the camera in world space, but we need it in object space.
+            v3f position_ws = (v4f{0, 0, 0, 1} * transform_stack.back()).xyz();
+            lod.set_center(camera->position - position_ws);
         }
 
         lod.traverse(*this);
 
     }
 private:
-    v3f current_center = {0, 0, 0};
     std::vector<m4f> transform_stack;
 };
 

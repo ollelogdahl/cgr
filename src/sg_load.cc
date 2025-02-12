@@ -406,6 +406,13 @@ sg::state_t parse_state(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLEleme
     auto mat_ambient_attr = elem->Attribute("mat-ambient");
     auto mat_roughness_attr = elem->Attribute("mat-roughness");
 
+    auto mat_tex_albedo0_attr = elem->Attribute("mat-tex-albedo0");
+    auto mat_tex_albedo1_attr = elem->Attribute("mat-tex-albedo1");
+    auto mat_tex_albedo2_attr = elem->Attribute("mat-tex-albedo2");
+
+    auto mat_tex_normal_attr = elem->Attribute("mat-tex-normal");
+    auto mat_tex_roughness_attr = elem->Attribute("mat-tex-roughness");
+
     if (mat_diffuse_attr) {
         success = true;
         state.material.diffuse = parse_attr_color4(std::string_view(mat_diffuse_attr));
@@ -421,6 +428,26 @@ sg::state_t parse_state(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLEleme
     if (mat_roughness_attr) {
         success = true;
         state.material.roughness = std::strtof(mat_roughness_attr, nullptr);
+    }
+    if (mat_tex_albedo0_attr) {
+        success = true;
+        state.material.tex_albedo0 = loader.load_texture({.path = mat_tex_albedo0_attr});
+    }
+    if (mat_tex_albedo1_attr) {
+        success = true;
+        state.material.tex_albedo1 = loader.load_texture({.path = mat_tex_albedo1_attr});
+    }
+    if (mat_tex_albedo2_attr) {
+        success = true;
+        state.material.tex_albedo2 = loader.load_texture({.path = mat_tex_albedo2_attr});
+    }
+    if (mat_tex_normal_attr) {
+        success = true;
+        state.material.tex_normal = loader.load_texture({.path = mat_tex_normal_attr, .srgb = false});
+    }
+    if (mat_tex_roughness_attr) {
+        success = true;
+        state.material.tex_roughness = loader.load_texture({.path = mat_tex_roughness_attr, .srgb = false});
     }
 
     return state;

@@ -540,6 +540,18 @@ ref_t<T> make_ref_owned(Args... args) {
 }
 
 template <typename T>
+struct std::hash<ref_t<T>> {
+    std::size_t operator()(const ref_t<T>& ref) const {
+        return std::hash<void *>{}((void *)ref.get());
+    }
+};
+
+template <typename T>
+bool operator==(const ref_t<T>& a, const ref_t<T>& b) {
+    return a.get() == b.get();
+}
+
+template <typename T>
 struct fmt::formatter<ref_t<T>> {
     bool as_ptr = false;
 

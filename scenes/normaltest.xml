@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<scene>
+    <point-light position="0 2 1" color="2 2 2" />
+    <model file="assets/normal-test.obj"
+        mat-roughness="0.3"
+        mat-tex-albedo0="assets/normal-test-0.png"
+        mat-tex-normal="assets/normal-test-2.png"
+    />
+</scene>

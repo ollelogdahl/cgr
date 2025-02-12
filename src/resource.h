@@ -16,6 +16,8 @@
 
 struct texture_load_params_t {
     std::string path;
+    u32 num_channels = 4;
+    bool srgb = true;
 };
 DECL_IMPL_LOAD_PARAM(texture_load_params_t)
 
@@ -86,6 +88,8 @@ struct loader_t {
 
     ref_t<texture_t> load_texture(const texture_load_params_t &params);
 
+    // @todo: loading models is actually really funky. They could contain materials and textures,
+    // which we do not support yet.
     model_description_t load_model(const model_load_params_t &params);
 
     ref_t<sg::scene_t> load_scene(const char *path);

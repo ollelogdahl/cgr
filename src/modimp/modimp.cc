@@ -89,6 +89,56 @@ result_t<void, std::string> scene_load_m3d(scene_t &scene, slice<byte> data) {
 
     u32 last_materialid = 0;
 
+    std::vector<texture_t> textures = {};
+    for (u32 i = 0; i < m->numtexture; ++i) {
+        auto &tex = m->texture[i];
+        texture_t texture;
+        texture.width = tex.w;
+        texture.height = tex.h;
+        texture.channels = tex.f;
+        texture.data = tex.d;
+
+        textures.push_back(texture);
+    }
+
+    auto textures_ptr = new texture_t[textures.size()];
+    memcpy(textures_ptr, textures.data(), textures.size() * sizeof(texture_t));
+    scene.textures = slice<texture_t>{textures_ptr, textures.size()};
+
+    std::vector<material_t> materials = {};
+    for (u32 i = 0; i < m->nummaterial; ++i) {
+        auto &mat = m->material[i];
+        material_t material;
+
+        for (auto j = 0; j < mat.numprop; ++j) {
+            auto &pr = mat.prop[j];
+            switch(pr.type) {
+            case m3dp_Kd: material.diffuse = pr.value.color; break;
+            case m3dp_Ka: material.ambient = pr.value.color; break;
+            case m3dp_Ks: material.specular = pr.value.color; break;
+
+            case m3dp_Pr: material.roughness = pr.value.fnum; break;
+            case m3dp_Pm: material.metallic = pr.value.fnum; break;
+
+            case m3dp_map_Kd: {
+                material.tex_diffuse = &scene.textures[pr.value.textureid];
+            } break;
+            case m3dp_map_Ns: {
+                material.tex_roughness = &scene.textures[pr.value.textureid];
+            } break;
+            case m3dp_map_N: {
+                material.tex_normal = &scene.textures[pr.value.textureid];
+            } break;
+            }
+        }
+
+        materials.push_back(material);
+    }
+
+    auto materials_ptr = new material_t[materials.size()];
+    memcpy(materials_ptr, materials.data(), materials.size() * sizeof(material_t));
+    scene.materials = slice<material_t>{materials_ptr, materials.size()};
+
     auto finish_mesh = [&]() {
         auto indices_ptr = new u32[curr_indices.size()];
         auto vertices_ptr = new v3f[curr_vertices.size()];
@@ -234,7 +284,7 @@ result_t<void, std::string> scene_load_obj(scene_t &scene, slice<byte> data) {
         std::vector<mesh_t> meshes;
 
         void produce_mesh() {
-            if (curr_obj_vertices.size() == 0) {
+            if (curr_triangles.size() == 0) {
                 return;
             }
 
@@ -253,7 +303,7 @@ result_t<void, std::string> scene_load_obj(scene_t &scene, slice<byte> data) {
             memcpy(normals_ptr, curr_normals.data(), curr_normals.size() * sizeof(v3f));
 
             if (has_texcoords) memcpy(texcoords_ptr, curr_texcoords.data(), curr_texcoords.size() * sizeof(v2f));
-            if (has_color) memcpy(colors_ptr, curr_colors.data(), curr_colors.size() * sizeof(v3f));
+            if (has_color) memcpy(colors_ptr, curr_colors.data(), curr_colors.size() * sizeof(u32));
 
             auto vertices = slice<v3f>{vertices_ptr, curr_vertices.size()};
             auto triangles = slice<u32>{triangles_ptr, curr_triangles.size()};

@@ -21,9 +21,11 @@
         </transform>
     </transform>
     <transform position="0 -0.5 0" scale="20 1 20">
-        <model file="assets/plane.obj"
+        <model file="assets/plane-paint.obj"
             mat-diffuse="0.1 0.1 0.1"
-            mat-roughness="1.0"
+            mat-tex-albedo0="assets/tiles074_color.jpg"
+            mat-tex-roughness="assets/tiles074_roughness.jpg"
+            mat-tex-normal="assets/tiles074_normal.jpg"
         />
     </transform>
 </scene>

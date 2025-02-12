@@ -20,6 +20,8 @@ void gpu_t::create_image(usize width, usize height, VkFormat format, VkImageUsag
     VmaAllocationCreateInfo alloc_info{};
     alloc_info.usage = VMA_MEMORY_USAGE_GPU_ONLY;
 
+    fmt::println("creating img w: {} h: {}", width, height);
+
     VK_CHECK(vmaCreateImage(allocator, &imageInfo, &alloc_info, &image.image, &image.allocation, nullptr));
 
     image.owner = this;

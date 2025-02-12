@@ -1,6 +1,6 @@
 #import "ieee.typ": *
 #show: ieee.with(
-  title: [Shader Based Scene-Graph],
+  title: [Assignment 1 --- Shader Based Scene-Graph],
   course: [Advanced Computer Graphics, 5DV180],
   authors: (
     (
@@ -18,32 +18,72 @@
 
 #lorem(50)
 
-= Requirements
+== Building and running
 
-#lorem(10)
+The program can be built using make. The following commands are available:
+
+- `make release` - Builds the program in release mode.
+- `make memcheck` - Builds the program with ubsan and asan enabled.
+- `make clean` - Cleans the build directory.
+
+After building the program, it can be run with `./cgr`. The program requires
+`glslc` @glslc to be installed and on `$PATH`, as it is used to compile glsl shaders.
+If `glslc` is not found, the path can be specified using the `GLSLC_PATH` environment
+variable at runtime.
+
+== System Requirements
+
+Bellow are the system requirements for running the application.
+
+- Vulkan 1.2 compatible GPU, supporting both the `VK_KHR_dynamic_rendering` and
+  `VK_KHR_synchronization2` extensions. The descriptor indexing feature is also
+  required.
+
+= Project description
+
+Firstly, the requirements are listed (@sec:reqs) and then the bonus requirements (@sec:breqs).
+
+== Requirements <sec:reqs>
 
 #figure(
-  table(columns: (2fr, 1fr),
+  placement: bottom,
+  scope: "parent",
+  table(columns: (3fr, 2fr),
     table.header([Requirement], [Done]),
     [Possible to build geometry by "hand" API], [Yes],
     [Implemented State class], [Yes],
-    [3D File reading support], [Yes (obj and m3d)]
+    [3D File reading support], [Yes (obj and m3d)],
+    [Key to exit application], [Yes (escape)],
+    [Key to reload entire scene], [Yes, See @sec:reload],
+    [Key to reset the view], [Yes (space)],
+    [Lights], [Yes],
+    [Textures], [Yes],
+    [Material attributes], [Yes],
+    [Instantiation], [Yes, see @sec:instantiation],
+    [Movement of camera], [Yes],
+    [LOD node], [Yes],
+    [Animated nodes], [Yes],
   ),
   caption: "Requirements for the project."
 )
 
-= Bonus Requirements
+== Bonus Requirements <sec:breqs>
 #lorem(20)
 
 #figure(
+  placement: auto,
+  scope: "parent",
   table(columns: (2fr, 1fr),
     table.header([Requirement], [Done]),
-    [Possible to build geometry by "hand" using your API], [Yes]
+    [Interactive animation control of light source], [No],
+    [Multi-texturing], [Yes],
+    [Transparency], [No],
+    [Toon Shading], [No, see @sec:pbr],
   ),
   caption: "Bonus requirements for the project."
 )
 
-= Libraries
+== Libraries
 #lorem(30)
 
 - *{fmt}*
@@ -53,6 +93,12 @@
 - *stb_image*
 - *Vulkan Memory Allocator*
 - *tinyxml2*
+
+= System Design
+
+== Hot Reload <sec:reload>
+
+== Instantiation <sec:instantiation>
 
 = Vulkan Renderer
 
@@ -119,3 +165,5 @@ public:
 == Scene Graph
 
 == Resource Management
+
+#bibliography("bib.yml")

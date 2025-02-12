@@ -17,13 +17,20 @@ struct PointLight {
     float quadratic;
 };
 
+struct DirectionalLight {
+    vec3 direction;
+    vec3 color;
+};
+
 layout(binding = 0) uniform Env {
     mat4 cam_view;
     mat4 cam_proj;
     vec3 cam_pos;
     uint num_point_lights;
+    uint num_dir_lights;
 
     PointLight point_lights[16];
+    DirectionalLight directional_lights[16];
 } env;
 
 layout(push_constant) uniform PushConsts {
@@ -155,6 +162,10 @@ mat3 shuler_cotangent_frame(vec3 N, vec3 p, vec2 uv) {
     vec2 duv1 = dFdx(uv);
     vec2 duv2 = dFdy(uv);
 
+    // flip as vulkan is y-down
+    dp2 = -dp2;
+    duv2 = -duv2;
+
     // solve the linear system
     vec3 dp2perp = cross(dp2, N);
     vec3 dp1perp = cross(N, dp1);
@@ -172,8 +183,7 @@ vec3 shuler_perturb_normal(sampler2D bumpmap, vec3 N, vec3 V, vec2 texcoord) {
     vec3 pn = texture(bumpmap, texcoord).xyz;
 
     pn = pn * 2. - 1.;
-    // map = map * 255. / 127. - 128. / 127.;
-    // pn.z = sqrt(1. - dot(pn.xy, pn.xy));
+    //pn = pn * 255. / 127. - 128. / 127.;
     pn.y = -pn.y;
 
     mat3 TBN = shuler_cotangent_frame(N, -V, texcoord);
@@ -183,11 +193,13 @@ vec3 shuler_perturb_normal(sampler2D bumpmap, vec3 N, vec3 V, vec2 texcoord) {
 void main() {
     vec3 albedo;
     if ((element.flags & 1) != 0) {
+        // multi-texture blending
         if ((element.flags & 8) != 0) {
             vec3 a1 = texture(textures[element.albedo0_idx], frag_uv).rgb * frag_vertex_color.x;
             vec3 a2 = texture(textures[element.albedo1_idx], frag_uv).rgb * frag_vertex_color.y;
             vec3 a3 = texture(textures[element.albedo2_idx], frag_uv).rgb * frag_vertex_color.z;
-            albedo = a1 + a2 + a3;
+            float sum = frag_vertex_color.x + frag_vertex_color.y + frag_vertex_color.z;
+            albedo = (a1 + a2 + a3) / sum;
         } else {
             albedo = texture(textures[element.albedo0_idx], frag_uv).rgb;
         }
@@ -222,6 +234,14 @@ void main() {
         vec3 L = normalize(pl.position - frag_pos_ws);
 
         vec3 color = pbr(L, V, N, props, calculate_pl_radiance(pl, P), 1.0);
+        out_color += vec4(color, 1.0);
+    }
+
+    for (uint i = 0; i < env.num_dir_lights; i++) {
+        DirectionalLight dl = env.directional_lights[i];
+        vec3 L = normalize(-dl.direction);
+
+        vec3 color = pbr(L, V, N, props, dl.color, 1.0);
         out_color += vec4(color, 1.0);
     }
 

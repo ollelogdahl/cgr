@@ -7,10 +7,12 @@ namespace modimp {
 
 struct mesh_t;
 struct material_t;
+struct texture_t;
 
 struct scene_t {
     slice<mesh_t> meshes = {};
     slice<material_t> materials = {};
+    slice<texture_t> textures = {};
 };
 
 result_t<void, std::string> scene_load(scene_t &scene, const char *path);
@@ -19,7 +21,6 @@ void scene_free(scene_t &scene);
 
 // @todo: figure out ownership. In the obj-loader, each slice refers to a freshly allocated
 // array. In the m3d case, it would be better to allocate globally, and refer into it.
-// this is done with the allocations list inside the scene_t.
 struct mesh_t {
     u32 material_index;
 
@@ -38,8 +39,25 @@ struct mesh_t {
     slice<char> name;
 };
 
+struct texture_t {
+    u32 width;
+    u32 height;
+    u32 channels;
+    byte *data;
+};
+
 struct material_t {
     slice<char> name;
+
+    u32 diffuse;
+    u32 ambient;
+    u32 specular;
+    f32 roughness;
+    f32 metallic;
+
+    texture_t *tex_diffuse;
+    texture_t *tex_normal;
+    texture_t *tex_roughness;
 };
 
 }

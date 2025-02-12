@@ -5,11 +5,21 @@
 #include "implot/implot.h"
 #include "log.h"
 
+enum struct draw_indexed_flags_t {
+    none = 0,
+    use_albedo_tex = 1 << 0,
+    use_normal_tex = 1 << 1,
+    use_roughness_tex = 1 << 2,
+    use_multi_tex = 1 << 3,
+};
+
 struct env_ubo_t {
     m4f view;
     m4f proj;
     v3f view_pos;
     u32 num_point_lights;
+    u32 num_dir_lights;
+    f32 _pad[3];
 
     struct {
         v3f position;
@@ -17,6 +27,13 @@ struct env_ubo_t {
         v3f color;
         f32 quadratic;
     } point_lights[16];
+
+    struct {
+        v3f direction;
+        f32 _pad1;
+        v3f color;
+        f32 _pad2;
+    } dir_lights[16];
 };
 
 struct material_push_block_t {
@@ -36,6 +53,8 @@ struct material_push_block_t {
 };
 
 void imgui_init(gpu_t &gpu);
+
+material_push_block_t make_material_push_block(const draw_material_t &material);
 
 void renderer_t::init(gpu_t &gpu, loader_t &loader) {
     this->gpu = &gpu;
@@ -108,8 +127,8 @@ void renderer_t::init(gpu_t &gpu, loader_t &loader) {
         };
 
         auto shader = loader.load_shader_program({
-           .vertex_hlsl_path = "eassets/shaders/test.vert",
-           .fragment_hlsl_path = "eassets/shaders/test.frag",
+           .vertex_hlsl_path = "shaders/test.vert",
+           .fragment_hlsl_path = "shaders/test.frag",
         });
 
         // @todo: It would be fun to try to de-interlace the properties.
@@ -247,25 +266,61 @@ void renderer_t::init(gpu_t &gpu, loader_t &loader) {
     }
 }
 
-texhnd_t renderer_t::define_texture(ref_t<texture_t> texture) {
-    defined_textures.push_back(texture);
-    u32 id = defined_textures.size() - 1;
+texhnd_t renderer_t::get_or_create_texture_handle(ref_t<texture_t> texture) {
 
-    descriptor_writer_t writer;
-    writer.write_combined_image_sampler(0, id, texture->image.view, shared_sampler);
+    auto it = textures.textures.find(texture);
+    if (it != textures.textures.end()) {
+        return it->second;
+    }
 
-    // @todo: batch these calls some way.
-    writer.update_set(*gpu, texture_descriptor_set);
+    texhnd_t id;
+    if (textures.free_slots.size() > 0) {
+        id = textures.free_slots.back();
+        textures.free_slots.pop_back();
+    } else {
+        id = textures.slots.size();
+        textures.slots.push_back(texture);
+    }
+
+    textures.textures[texture] = id;
+
+    textures.writer.write_combined_image_sampler(0, id, texture->image.view, shared_sampler);
+    textures.has_updated = true;
 
     return id;
 }
 
-void renderer_t::add_draw_indexed(const draw_indexed_element_t &element) {
-    draw_elements.push_back(element);
+void renderer_t::add_draw_indexed(draw_indexed_command_t cmd) {
+
+    if (cmd.material.tex_albedo0 != nullptr) {
+        cmd.material.albedo0_idx = get_or_create_texture_handle(cmd.material.tex_albedo0);
+    }
+    if (cmd.material.tex_albedo1 != nullptr) {
+        cmd.material.albedo1_idx = get_or_create_texture_handle(cmd.material.tex_albedo1);
+    }
+    if (cmd.material.tex_albedo2 != nullptr) {
+        cmd.material.albedo2_idx = get_or_create_texture_handle(cmd.material.tex_albedo2);
+    }
+
+    if (cmd.material.tex_normal != nullptr) {
+        cmd.material.normal_idx = get_or_create_texture_handle(cmd.material.tex_normal);
+    }
+
+    if (cmd.material.tex_roughness != nullptr) {
+        cmd.material.roughness_idx = get_or_create_texture_handle(cmd.material.tex_roughness);
+    }
+
+    draw_elements.push_back(cmd);
 }
-void renderer_t::add_point_light(const pl_element_t &element) {
+
+void renderer_t::add_point_light(const pl_command_t &element) {
     point_lights.push_back(element);
 }
+
+void renderer_t::add_directional_light(const dl_command_t &cmd) {
+    directional_lights.push_back(cmd);
+}
+
 void renderer_t::set_camera(camera_t &camera) {
     this->camera = &camera;
 }
@@ -286,12 +341,14 @@ void renderer_t::update_frame_data() {
     ImGui::Render();
 
     // write to ubo buffers.
-
+    // @todo: it is expensive to update the whole buffer all the time.
+    // we can probably be smarter about this.
     env_ubo_t ubo = {};
     ubo.view = camera->view_matrix;
     ubo.proj = camera->projection_matrix;
     ubo.view_pos = camera->position;
     ubo.num_point_lights = point_lights.size();
+    ubo.num_dir_lights = directional_lights.size();
 
     for (usize i = 0; i < point_lights.size(); ++i) {
         ubo.point_lights[i].position = point_lights[i].position;
@@ -300,7 +357,18 @@ void renderer_t::update_frame_data() {
         ubo.point_lights[i].quadratic = point_lights[i].quadratic;
     }
 
+    for (usize i = 0; i < directional_lights.size(); ++i) {
+        ubo.dir_lights[i].direction = directional_lights[i].direction;
+        ubo.dir_lights[i].color = directional_lights[i].color;
+    }
+
     gpu->write_buffer(env_ubo_buffer, slice<u8>((u8 *)&ubo, sizeof(ubo)));
+
+    // write textures if changed
+    if (textures.has_updated) {
+        textures.writer.update_set(*gpu, texture_descriptor_set);
+        textures.has_updated = false;
+    }
 }
 void renderer_t::draw(gpu_t::frame_t &frame) {
     VkRenderingAttachmentInfo color_attachments[] = {
@@ -378,19 +446,10 @@ void renderer_t::draw(gpu_t::frame_t &frame) {
 
         // @todo: I think push-blocks are really cheap, but we can probably here also
         // only update the push block if the material has changed.
-        material_push_block_t push_block = {
-            .flags = (u32)element.material.flags,
-            .color_r = element.material.color.x,
-            .color_g = element.material.color.y,
-            .color_b = element.material.color.z,
-            .roughness = element.material.roughness,
-            .metallic = element.material.metallic,
-            .albedo0_idx = element.material.albedo0_idx,
-            .albedo1_idx = element.material.albedo1_idx,
-            .albedo2_idx = element.material.albedo2_idx,
-            .normal_idx = element.material.normal_idx,
-            .roughness_idx = element.material.roughness_idx,
-        };
+        //
+        // this can easily be done by sorting by material. We will probably sort by shader
+        // also so that's nice.
+        material_push_block_t push_block = make_material_push_block(element.material);
 
         vkCmdPushConstants(frame.cmds, pipeline->layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(m4f), &transform);
         vkCmdPushConstants(frame.cmds, pipeline->layout, VK_SHADER_STAGE_FRAGMENT_BIT, sizeof(m4f), sizeof(material_push_block_t), &push_block);
@@ -470,4 +529,38 @@ void imgui_init(gpu_t &gpu) {
 	init_info.PipelineRenderingCreateInfo.depthAttachmentFormat = VK_FORMAT_D32_SFLOAT;
 
     ImGui_ImplVulkan_Init(&init_info);
+}
+
+material_push_block_t make_material_push_block(const draw_material_t &material) {
+    u32 flags = 0;
+
+    if (material.albedo0_idx != -1U) {
+        flags |= (u32)draw_indexed_flags_t::use_albedo_tex;
+    }
+    if (material.albedo1_idx != -1U) {
+        flags |= (u32)draw_indexed_flags_t::use_multi_tex;
+    }
+    if (material.albedo2_idx != -1U) {
+        flags |= (u32)draw_indexed_flags_t::use_multi_tex;
+    }
+    if (material.normal_idx != -1U) {
+        flags |= (u32)draw_indexed_flags_t::use_normal_tex;
+    }
+    if (material.roughness_idx != -1U) {
+        flags |= (u32)draw_indexed_flags_t::use_roughness_tex;
+    }
+
+    return {
+        .flags = flags,
+        .color_r = material.diffuse.x,
+        .color_g = material.diffuse.y,
+        .color_b = material.diffuse.z,
+        .roughness = material.roughness,
+        .metallic = material.metallic,
+        .albedo0_idx = material.albedo0_idx,
+        .albedo1_idx = material.albedo1_idx,
+        .albedo2_idx = material.albedo2_idx,
+        .normal_idx = material.normal_idx,
+        .roughness_idx = material.roughness_idx,
+    };
 }

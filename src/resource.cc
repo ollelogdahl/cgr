@@ -27,11 +27,11 @@ static logger_t logger = logger_t("loader");
 
 // load param hash & equality
 bool operator==(const texture_load_params_t &lhs, const texture_load_params_t &rhs) {
-    return lhs.path == rhs.path;
+    return lhs.path == rhs.path && lhs.srgb == rhs.srgb && lhs.num_channels == rhs.num_channels;
 }
 
 std::size_t std::hash<texture_load_params_t>::operator()(const texture_load_params_t &params) const {
-    return std::hash<std::string>{}(params.path);
+    return std::hash<std::string>{}(params.path) ^ std::hash<bool>{}(params.srgb) ^ std::hash<u32>{}(params.num_channels);
 }
 
 bool operator==(const model_load_params_t &lhs, const model_load_params_t &rhs) {
@@ -82,6 +82,8 @@ ref_t<shader_program_t> loader_t::load_shader_program(const shader_program_load_
     return loaded_shaders[params];
 }
 
+void load_texture_from_data(gpu_t &gpu, texture_t &texture, u32 width, u32 height, u32 channels, byte *data);
+
 ref_t<texture_t> loader_t::load_texture(const texture_load_params_t &params) {
     auto exists_it = loaded_textures.find(params);
     if (exists_it != loaded_textures.end()) {
@@ -93,56 +95,14 @@ ref_t<texture_t> loader_t::load_texture(const texture_load_params_t &params) {
     texture_t &texture = *loaded_textures[params];
     {
         i32 width, height, channels;
-        auto data = stbi_load(params.path.c_str(), &width, &height, &channels, 0);
+        auto data = stbi_load(params.path.c_str(), &width, &height, &channels, params.num_channels);
         if (!data) {
             auto cause = stbi_failure_reason();
             g_log.error("failed to load texture: {}: {}", params.path, cause);
             // @todo: return a 'default' texture.
         }
 
-        VkFormat format;
-        slice<byte> pixel_data;
-        if (channels == 3 || channels == 4) {
-            texture.info.channels = channels;
-            format = VK_FORMAT_R8G8B8A8_UNORM;
-
-            // the problem is that we need a r8b8g8a8 array to the gpu, but we only get
-            // a 3-component from stb_image.
-            // @todo: only when channels == 3
-            byte *new_data = new byte[width * height * 4];
-            for (auto i = 0; i < width * height; ++i) {
-                new_data[i * 4 + 0] = data[i * 3 + 0];
-                new_data[i * 4 + 1] = data[i * 3 + 1];
-                new_data[i * 4 + 2] = data[i * 3 + 2];
-                new_data[i * 4 + 3] = 255;
-            }
-            pixel_data = {new_data, (usize)(width * height * 4)};
-
-        } else if (channels == 1) {
-            texture.info.channels = 1;
-            format = VK_FORMAT_R8_UNORM;
-            pixel_data = {data, (usize)(width * height)};
-        } else {
-            format = VK_FORMAT_UNDEFINED;
-            logger.error("unsupported number of channels in texture: {}", channels);
-        }
-
-        VkImageUsageFlags usage = VK_IMAGE_USAGE_SAMPLED_BIT;
-        gpu->create_image(pixel_data, (usize)width, (usize)height, format, usage, false, texture.image);
-
-        // @todo: move this!
-        VkImageViewCreateInfo view_info = {};
-        view_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-        view_info.image = texture.image.image;
-        view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
-        view_info.format = format;
-        view_info.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-        view_info.subresourceRange.baseMipLevel = 0;
-        view_info.subresourceRange.levelCount = 1;
-        view_info.subresourceRange.baseArrayLayer = 0;
-        view_info.subresourceRange.layerCount = 1;
-
-        VK_CHECK(vkCreateImageView(gpu->device, &view_info, nullptr, &texture.image.view));
+        load_texture_from_data(*gpu, texture, width, height, params.num_channels, data);
     }
 
     return loaded_textures[params];
@@ -223,6 +183,9 @@ model_description_t loader_t::load_model(const model_load_params_t &params) {
 
     aabb_t model_aabb = aabb_t();
     for (auto &m : scene.meshes) {
+
+        fmt::println("mesh: indices: {}, vertices: {}", m.indices.len, m.vertices.len);
+
         mesh_description_t mesh;
         mesh.bounds = m.bounds;
         model_aabb.include(m.bounds.min);
@@ -386,8 +349,13 @@ VkPipelineShaderStageCreateInfo compile_shader(const loader_t &loader, gpu_t &gp
 
     if (file_a_is_newer_than_b(path, tmp_path.c_str())) {
         logger.info("compiling shader {}", path);
+
+        bool emit_debug_info = true;
+        const char *debug_info = emit_debug_info ? "-g" : "";
+
         // @todo: the path to glslc should maybe be compile-time configurable? or taken from env?
-        auto cmd = fmt::format("{} -fshader-stage={} -o {} {}", loader.glslc_path, glslc_stage, tmp_path, path);
+        auto cmd = fmt::format("{} {} -fshader-stage={} -o {} {}", loader.glslc_path,
+            debug_info, glslc_stage, tmp_path, path);
 
         // @todo: use exec instead of system.
         // we want to be able to do these things in parallel i think.
@@ -479,4 +447,44 @@ void fswatcher_t::process_watches() {
             }
         }
     }
+}
+
+void load_texture_from_data(gpu_t &gpu, texture_t &texture, u32 width, u32 height, u32 channels, byte *data) {
+    VkFormat format;
+    slice<byte> pixel_data;
+
+    if (channels == 4) {
+        texture.info.channels = channels;
+        format = VK_FORMAT_R8G8B8A8_UNORM;
+        pixel_data = {data, (usize)(width * height * 4)};
+    } else if (channels == 3) {
+        texture.info.channels = channels;
+        format = VK_FORMAT_R8G8B8_UNORM;
+
+        pixel_data = {data, (usize)(width * height * 3)};
+    } else if (channels == 1) {
+        texture.info.channels = 1;
+        format = VK_FORMAT_R8_UNORM;
+        pixel_data = {data, (usize)(width * height)};
+    } else {
+        format = VK_FORMAT_UNDEFINED;
+        logger.error("unsupported number of channels in texture: {}", channels);
+    }
+
+    VkImageUsageFlags usage = VK_IMAGE_USAGE_SAMPLED_BIT;
+    gpu.create_image(pixel_data, (usize)width, (usize)height, format, usage, false, texture.image);
+
+    // @todo: move this!
+    VkImageViewCreateInfo view_info = {};
+    view_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    view_info.image = texture.image.image;
+    view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    view_info.format = format;
+    view_info.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    view_info.subresourceRange.baseMipLevel = 0;
+    view_info.subresourceRange.levelCount = 1;
+    view_info.subresourceRange.baseArrayLayer = 0;
+    view_info.subresourceRange.layerCount = 1;
+
+    VK_CHECK(vkCreateImageView(gpu.device, &view_info, nullptr, &texture.image.view));
 }

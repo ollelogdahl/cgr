@@ -1,5 +1,7 @@
 #include "gpu_impl.h"
 
+#include "vks.h"
+
 void gpu_t::create_buffer_persistent(slice<u8> data, VkBufferUsageFlags usage, gpu_buffer_t &buffer) {
 
     VkBuffer staging_buffer;
@@ -17,12 +19,20 @@ void gpu_t::create_buffer_persistent(slice<u8> data, VkBufferUsageFlags usage, g
         alloc_info.usage = VMA_MEMORY_USAGE_AUTO;
         alloc_info.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT;
 
-        vmaCreateBuffer(allocator, &buffer_info, &alloc_info, &staging_buffer, &staging_allocation, &staging_allocation_info);
+        auto res = vmaCreateBuffer(allocator, &buffer_info, &alloc_info, &staging_buffer, &staging_allocation, &staging_allocation_info);
+        if (res != VK_SUCCESS) {
+            gpu_log.error("failed to create staging buffer: {}", res);
+            return;
+        }
     }
 
     {
         // do copy
-        vmaCopyMemoryToAllocation(allocator, data.data, staging_allocation, 0, data.len);
+        auto res = vmaCopyMemoryToAllocation(allocator, data.data, staging_allocation, 0, data.len);
+        if (res != VK_SUCCESS) {
+            gpu_log.error("failed to copy data to staging buffer: {}", res);
+            return;
+        }
     }
 
     {
@@ -35,7 +45,11 @@ void gpu_t::create_buffer_persistent(slice<u8> data, VkBufferUsageFlags usage, g
         VmaAllocationCreateInfo alloc_info{};
         alloc_info.usage = VMA_MEMORY_USAGE_GPU_ONLY;
 
-        vmaCreateBuffer(allocator, &buffer_info, &alloc_info, &buffer.handle, &buffer.allocation, nullptr);
+        auto res = vmaCreateBuffer(allocator, &buffer_info, &alloc_info, &buffer.handle, &buffer.allocation, nullptr);
+        if (res != VK_SUCCESS) {
+            gpu_log.error("failed to create buffer: {}", res);
+            return;
+        }
     }
 
     {
