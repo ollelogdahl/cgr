@@ -129,6 +129,8 @@ struct gpu_timer_t {
 
 void gui();
 
+#include "optick/optick.h"
+
 class log_dump_visitor_t : public sg::node_visitor_t {
 public:
 
@@ -225,6 +227,8 @@ int main(int argc, char **argv) {
     float t = 0.0f;
     g_log.info("running...");
     while(!glfwWindowShouldClose(window)) {
+        OPTICK_FRAME("MainThread");
+        OPTICK_EVENT();
         t += 0.017f;
 
         g_loader.process_hotreload();
