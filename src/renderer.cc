@@ -4,6 +4,10 @@
 #include "imgui/imgui_impl_vulkan.h"
 #include "implot/implot.h"
 #include "log.h"
+#include <variant>
+
+template<class... Ts>
+struct overloaded : Ts... { using Ts::operator()...; };
 
 enum struct draw_indexed_flags_t {
     none = 0,
@@ -53,8 +57,6 @@ struct material_push_block_t {
 };
 
 void imgui_init(gpu_t &gpu);
-
-material_push_block_t make_material_push_block(const draw_material_t &material);
 
 void renderer_t::init(gpu_t &gpu, loader_t &loader) {
     this->gpu = &gpu;
@@ -267,6 +269,9 @@ void renderer_t::init(gpu_t &gpu, loader_t &loader) {
 }
 
 texhnd_t renderer_t::get_or_create_texture_handle(ref_t<texture_t> texture) {
+    if (texture == nullptr) {
+        return -1U;
+    }
 
     auto it = textures.textures.find(texture);
     if (it != textures.textures.end()) {
@@ -290,35 +295,16 @@ texhnd_t renderer_t::get_or_create_texture_handle(ref_t<texture_t> texture) {
     return id;
 }
 
-void renderer_t::add_draw_indexed(draw_indexed_command_t cmd) {
-
-    if (cmd.material.tex_albedo0 != nullptr) {
-        cmd.material.albedo0_idx = get_or_create_texture_handle(cmd.material.tex_albedo0);
-    }
-    if (cmd.material.tex_albedo1 != nullptr) {
-        cmd.material.albedo1_idx = get_or_create_texture_handle(cmd.material.tex_albedo1);
-    }
-    if (cmd.material.tex_albedo2 != nullptr) {
-        cmd.material.albedo2_idx = get_or_create_texture_handle(cmd.material.tex_albedo2);
-    }
-
-    if (cmd.material.tex_normal != nullptr) {
-        cmd.material.normal_idx = get_or_create_texture_handle(cmd.material.tex_normal);
-    }
-
-    if (cmd.material.tex_roughness != nullptr) {
-        cmd.material.roughness_idx = get_or_create_texture_handle(cmd.material.tex_roughness);
-    }
-
-    draw_elements.push_back(cmd);
+void renderer_t::add_draw_indexed(const draw_indexed_command_t &cmd) {
+    commands.draw_indexed.push_back(cmd);
 }
 
 void renderer_t::add_point_light(const pl_command_t &element) {
-    point_lights.push_back(element);
+    commands.point_lights.push_back(element);
 }
 
 void renderer_t::add_directional_light(const dl_command_t &cmd) {
-    directional_lights.push_back(cmd);
+    commands.directional_lights.push_back(cmd);
 }
 
 void renderer_t::set_camera(camera_t &camera) {
@@ -331,10 +317,11 @@ void renderer_t::new_frame() {
     ImGui::NewFrame();
 
     // reset the draw elements
-    draw_elements.clear();
-    point_lights.clear();
+    commands.clear();
     camera = nullptr;
 }
+
+material_push_block_t make_material_push_block(switch_material_op_t &op);
 
 void renderer_t::update_frame_data() {
     // save off imgui
@@ -347,22 +334,23 @@ void renderer_t::update_frame_data() {
     ubo.view = camera->view_matrix;
     ubo.proj = camera->projection_matrix;
     ubo.view_pos = camera->position;
-    ubo.num_point_lights = point_lights.size();
-    ubo.num_dir_lights = directional_lights.size();
+    ubo.num_point_lights = commands.point_lights.size();
+    ubo.num_dir_lights = commands.directional_lights.size();
 
-    for (usize i = 0; i < point_lights.size(); ++i) {
-        ubo.point_lights[i].position = point_lights[i].position;
-        ubo.point_lights[i].color = point_lights[i].color;
-        ubo.point_lights[i].linear = point_lights[i].linear;
-        ubo.point_lights[i].quadratic = point_lights[i].quadratic;
+    for (usize i = 0; i < commands.point_lights.size(); ++i) {
+        ubo.point_lights[i].position = commands.point_lights[i].position;
+        ubo.point_lights[i].color = commands.point_lights[i].color;
+        ubo.point_lights[i].linear = commands.point_lights[i].linear;
+        ubo.point_lights[i].quadratic = commands.point_lights[i].quadratic;
     }
 
-    for (usize i = 0; i < directional_lights.size(); ++i) {
-        ubo.dir_lights[i].direction = directional_lights[i].direction;
-        ubo.dir_lights[i].color = directional_lights[i].color;
+    for (usize i = 0; i < commands.directional_lights.size(); ++i) {
+        ubo.dir_lights[i].direction = commands.directional_lights[i].direction;
+        ubo.dir_lights[i].color = commands.directional_lights[i].color;
     }
+    auto ubo_slice = slice<u8>((u8 *)&ubo, sizeof(ubo));
 
-    gpu->write_buffer(env_ubo_buffer, slice<u8>((u8 *)&ubo, sizeof(ubo)));
+    gpu->write_buffer_with_barrier(env_ubo_buffer, ubo_slice, ubo_write_barrier);
 
     // write textures if changed
     if (textures.has_updated) {
@@ -371,6 +359,16 @@ void renderer_t::update_frame_data() {
     }
 }
 void renderer_t::draw(gpu_t::frame_t &frame) {
+
+    // wait for the ubo to be written.
+    ubo_write_barrier.set_dst(
+        VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT |
+        VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+        VK_ACCESS_2_SHADER_READ_BIT);
+    vkCmdPipelineBarrier2(frame.cmds,
+        &ubo_write_barrier.dependency_info);
+
+
     VkRenderingAttachmentInfo color_attachments[] = {
         {
             .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
@@ -432,6 +430,7 @@ void renderer_t::draw(gpu_t::frame_t &frame) {
     vkCmdBindDescriptorSets(frame.cmds, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline->layout,
         0, array_size(sets), sets, 0, nullptr);
 
+
     // @todo: implement instancing.
     // this is actually really simple. If we can sort the elements by the mesh,
     // we can just bind the vertex buffer once, and then draw all the instances
@@ -441,26 +440,27 @@ void renderer_t::draw(gpu_t::frame_t &frame) {
     // draw the same mesh with different materials. But that is probably unusual.
     //
     // I think this is a viable route.
-    for (auto &element : draw_elements) {
-        m4f transform = element.transform;
 
-        // @todo: I think push-blocks are really cheap, but we can probably here also
-        // only update the push block if the material has changed.
-        //
-        // this can easily be done by sorting by material. We will probably sort by shader
-        // also so that's nice.
-        material_push_block_t push_block = make_material_push_block(element.material);
+    // @todo: implement different
+    auto planned_ops = planner.plan_rendering(*this);
+    for (auto &op : planned_ops) {
+        std::visit(overloaded{
+            [&](switch_buffers_op_t &op) {
+                VkBuffer buffers[] = {op.vertex_buffer->handle};
+                VkDeviceSize offsets[] = {0};
+                vkCmdBindVertexBuffers(frame.cmds, 0, 1, buffers, offsets);
+                vkCmdBindIndexBuffer(frame.cmds, op.index_buffer->handle, 0, VK_INDEX_TYPE_UINT32);
+            },
+            [&](draw_indexed_op_t &op) {
+                vkCmdPushConstants(frame.cmds, pipeline->layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(m4f), &op.transform);
+                vkCmdDrawIndexed(frame.cmds, op.index_count, 1, op.index_offset, op.vertex_offset, 0);
+            },
+            [&](switch_material_op_t &op) {
+                auto push_block = make_material_push_block(op);
 
-        vkCmdPushConstants(frame.cmds, pipeline->layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(m4f), &transform);
-        vkCmdPushConstants(frame.cmds, pipeline->layout, VK_SHADER_STAGE_FRAGMENT_BIT, sizeof(m4f), sizeof(material_push_block_t), &push_block);
-
-        // @todo: for now, we rebind the buffer for each call. In reality,
-        // we should sort the elements by buffer and then bind the buffer only once.
-        VkBuffer buffers[] = {element.vertex_buffer->handle};
-        VkDeviceSize offsets[] = {0};
-        vkCmdBindVertexBuffers(frame.cmds, 0, 1, buffers, offsets);
-        vkCmdBindIndexBuffer(frame.cmds, element.index_buffer->handle, 0, VK_INDEX_TYPE_UINT32);
-        vkCmdDrawIndexed(frame.cmds, element.index_count, 1, element.index_offset, element.vertex_offset, 0);
+                vkCmdPushConstants(frame.cmds, pipeline->layout, VK_SHADER_STAGE_FRAGMENT_BIT, sizeof(m4f), sizeof(material_push_block_t), &push_block);
+            },
+        }, op);
     }
 
     // @todo: move imgui into separate pass
@@ -531,36 +531,36 @@ void imgui_init(gpu_t &gpu) {
     ImGui_ImplVulkan_Init(&init_info);
 }
 
-material_push_block_t make_material_push_block(const draw_material_t &material) {
+material_push_block_t make_material_push_block(switch_material_op_t &op) {
     u32 flags = 0;
 
-    if (material.albedo0_idx != -1U) {
+    if (op.albedo0_idx != -1U) {
         flags |= (u32)draw_indexed_flags_t::use_albedo_tex;
     }
-    if (material.albedo1_idx != -1U) {
+    if (op.albedo1_idx != -1U) {
         flags |= (u32)draw_indexed_flags_t::use_multi_tex;
     }
-    if (material.albedo2_idx != -1U) {
+    if (op.albedo2_idx != -1U) {
         flags |= (u32)draw_indexed_flags_t::use_multi_tex;
     }
-    if (material.normal_idx != -1U) {
+    if (op.normal_idx != -1U) {
         flags |= (u32)draw_indexed_flags_t::use_normal_tex;
     }
-    if (material.roughness_idx != -1U) {
+    if (op.roughness_idx != -1U) {
         flags |= (u32)draw_indexed_flags_t::use_roughness_tex;
     }
 
     return {
         .flags = flags,
-        .color_r = material.diffuse.x,
-        .color_g = material.diffuse.y,
-        .color_b = material.diffuse.z,
-        .roughness = material.roughness,
-        .metallic = material.metallic,
-        .albedo0_idx = material.albedo0_idx,
-        .albedo1_idx = material.albedo1_idx,
-        .albedo2_idx = material.albedo2_idx,
-        .normal_idx = material.normal_idx,
-        .roughness_idx = material.roughness_idx,
+        .color_r = op.material->diffuse.x,
+        .color_g = op.material->diffuse.y,
+        .color_b = op.material->diffuse.z,
+        .roughness = op.material->roughness,
+        .metallic = op.material->metallic,
+        .albedo0_idx = op.albedo0_idx,
+        .albedo1_idx = op.albedo1_idx,
+        .albedo2_idx = op.albedo2_idx,
+        .normal_idx = op.normal_idx,
+        .roughness_idx = op.roughness_idx,
     };
 }

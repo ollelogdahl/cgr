@@ -74,7 +74,8 @@ sg::node_t *parse_group(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLEleme
     bool set_state;
     sg::state_t state = parse_state(loader, scene, elem, set_state);
     if (set_state) {
-        auto sref = scene.create_state(state);
+        auto sref = scene.create_state();
+        *sref = state;
         group->set_state(sref);
     }
 
@@ -97,7 +98,8 @@ sg::node_t *parse_model(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLEleme
     sg::state_t state = parse_state(loader, scene, elem, set_state);
     sg::state_t *state_ptr = nullptr;
     if (set_state) {
-        state_ptr = scene.create_state(state);
+        state_ptr = scene.create_state();
+        *state_ptr = state;
     }
 
     bool use_autolod = lod_spec != nullptr;
@@ -176,7 +178,8 @@ sg::node_t *parse_point_light(loader_t &loader, sg::scene_t &scene, tinyxml2::XM
     bool set_state;
     sg::state_t state = parse_state(loader, scene, elem, set_state);
     if (set_state) {
-        auto sref = scene.create_state(state);
+        auto sref = scene.create_state();
+        *sref = state;
         point_light->set_state(sref);
     }
 
@@ -206,7 +209,8 @@ sg::node_t *parse_transform(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLE
     bool set_state;
     sg::state_t state = parse_state(loader, scene, elem, set_state);
     if (set_state) {
-        auto sref = scene.create_state(state);
+        auto sref = scene.create_state();
+        *sref = state;
         transform->set_state(sref);
     }
 
@@ -242,7 +246,8 @@ sg::node_t *parse_lod(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLElement
     bool set_state;
     sg::state_t state = parse_state(loader, scene, elem, set_state);
     if (set_state) {
-        auto sref = scene.create_state(state);
+        auto sref = scene.create_state();
+        *sref = state;
         lod->set_state(sref);
     }
 
@@ -276,7 +281,8 @@ sg::node_t *parse_grid(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLElemen
     sg::state_t state = parse_state(loader, scene, elem, set_state);
     sg::state_t *state_ptr = nullptr;
     if (set_state) {
-        state_ptr = scene.create_state(state);
+        state_ptr = scene.create_state();
+        *state_ptr = state;
     }
 
     grid->set_state(state_ptr);
@@ -408,6 +414,8 @@ sg::state_t parse_state(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLEleme
     success = false;
     state_t state;
 
+    bool any_material_attr_set = false;
+
     auto mat_diffuse_attr = elem->Attribute("mat-diffuse");
     auto mat_specular_attr = elem->Attribute("mat-specular");
     auto mat_ambient_attr = elem->Attribute("mat-ambient");
@@ -420,41 +428,55 @@ sg::state_t parse_state(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLEleme
     auto mat_tex_normal_attr = elem->Attribute("mat-tex-normal");
     auto mat_tex_roughness_attr = elem->Attribute("mat-tex-roughness");
 
+    any_material_attr_set |= mat_diffuse_attr != nullptr;
+    any_material_attr_set |= mat_specular_attr != nullptr;
+    any_material_attr_set |= mat_ambient_attr != nullptr;
+    any_material_attr_set |= mat_roughness_attr != nullptr;
+    any_material_attr_set |= mat_tex_albedo0_attr != nullptr;
+    any_material_attr_set |= mat_tex_albedo1_attr != nullptr;
+    any_material_attr_set |= mat_tex_albedo2_attr != nullptr;
+    any_material_attr_set |= mat_tex_normal_attr != nullptr;
+    any_material_attr_set |= mat_tex_roughness_attr != nullptr;
+
+    if (any_material_attr_set) {
+        state.material = scene.create_material();
+    }
+
     if (mat_diffuse_attr) {
         success = true;
-        state.material.diffuse = parse_attr_color4(std::string_view(mat_diffuse_attr));
+        state.material->diffuse = parse_attr_color4(std::string_view(mat_diffuse_attr));
     }
     if (mat_specular_attr) {
         success = true;
-        state.material.specular = parse_attr_color4(std::string_view(mat_specular_attr));
+        state.material->specular = parse_attr_color4(std::string_view(mat_specular_attr));
     }
     if (mat_ambient_attr) {
         success = true;
-        state.material.ambient = parse_attr_color4(std::string_view(mat_ambient_attr));
+        state.material->ambient = parse_attr_color4(std::string_view(mat_ambient_attr));
     }
     if (mat_roughness_attr) {
         success = true;
-        state.material.roughness = std::strtof(mat_roughness_attr, nullptr);
+        state.material->roughness = std::strtof(mat_roughness_attr, nullptr);
     }
     if (mat_tex_albedo0_attr) {
         success = true;
-        state.material.tex_albedo0 = loader.load_texture({.path = mat_tex_albedo0_attr});
+        state.material->tex_albedo0 = loader.load_texture({.path = mat_tex_albedo0_attr});
     }
     if (mat_tex_albedo1_attr) {
         success = true;
-        state.material.tex_albedo1 = loader.load_texture({.path = mat_tex_albedo1_attr});
+        state.material->tex_albedo1 = loader.load_texture({.path = mat_tex_albedo1_attr});
     }
     if (mat_tex_albedo2_attr) {
         success = true;
-        state.material.tex_albedo2 = loader.load_texture({.path = mat_tex_albedo2_attr});
+        state.material->tex_albedo2 = loader.load_texture({.path = mat_tex_albedo2_attr});
     }
     if (mat_tex_normal_attr) {
         success = true;
-        state.material.tex_normal = loader.load_texture({.path = mat_tex_normal_attr, .srgb = false});
+        state.material->tex_normal = loader.load_texture({.path = mat_tex_normal_attr, .srgb = false});
     }
     if (mat_tex_roughness_attr) {
         success = true;
-        state.material.tex_roughness = loader.load_texture({.path = mat_tex_roughness_attr, .srgb = false});
+        state.material->tex_roughness = loader.load_texture({.path = mat_tex_roughness_attr, .srgb = false});
     }
 
     return state;

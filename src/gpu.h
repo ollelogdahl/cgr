@@ -10,6 +10,7 @@
 
 #include <vector>
 #include <functional>
+#include <vulkan/vulkan_core.h>
 
 #define VK_CHECK(...) do { VkResult result = __VA_ARGS__; if (result != VK_SUCCESS) { \
     auto err_str = vk_result_to_cstr(result); \
@@ -24,6 +25,8 @@ struct gpu_buffer_t {
     gpu_t *owner;
     VkBuffer handle = VK_NULL_HANDLE;
     VmaAllocation allocation;
+
+    void *mapped = nullptr;
 
     ~gpu_buffer_t();
 };
@@ -166,6 +169,16 @@ struct std::hash<pipeline_layout_config_t> {
     }
 };
 
+struct buffer_write_barrier_t {
+    VkDependencyInfo dependency_info = {};
+    std::vector<VkBufferMemoryBarrier2> barriers = {};
+
+    void set_dst(VkPipelineStageFlags2KHR stage, VkAccessFlags2KHR access) {
+        barriers.back().dstStageMask = stage;
+        barriers.back().dstAccessMask = access;
+    }
+};
+
 struct gpu_t {
     VkInstance instance;
     VkPhysicalDevice pdev = VK_NULL_HANDLE;
@@ -232,6 +245,8 @@ struct gpu_t {
     // creates a buffer which is memory mapped to the cpu. Really cool!
     void create_buffer(usize size, VkBufferUsageFlags usage, gpu_buffer_t &buffer);
     void write_buffer(gpu_buffer_t &buffer, slice<u8> data);
+
+    void write_buffer_with_barrier(gpu_buffer_t &buffer, slice<u8> data, buffer_write_barrier_t &barrier);
 
     void create_image(usize width, usize height, VkFormat format, VkImageUsageFlags usage, gpu_image_t &image);
     void create_image(slice<u8> data, usize width, usize height, VkFormat format, VkImageUsageFlags usage, bool mipmap, gpu_image_t &image);

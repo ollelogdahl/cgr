@@ -24,7 +24,11 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL vk_debug_callback(
 void gpu_t::init(GLFWwindow *window) {
     this->window = window;
 
+#ifdef RELEASE
+    bool requests_validation_layers = false;
+#else
     bool requests_validation_layers = true;
+#endif
 
     const char *validation_layers[] = {
         "VK_LAYER_KHRONOS_validation"
@@ -37,12 +41,15 @@ void gpu_t::init(GLFWwindow *window) {
         VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME,
     };
 
-    bool validation_layers_available = true;
-    if (requests_validation_layers && !check_validation_layer_support(validation_layers)) {
-        gpu_log.error("validation layers requested, but not available");
-        dump_available_validation_layers();
-        gpu_log.info("proceeding without validation layers");
-        validation_layers_available = false;
+    bool validation_layers_available = false;
+    if (requests_validation_layers) {
+        if (check_validation_layer_support(validation_layers)) {
+            validation_layers_available = true;
+        } else  {
+            gpu_log.error("validation layers requested, but not available");
+            dump_available_validation_layers();
+            gpu_log.info("proceeding without validation layers");
+        }
     }
 
     if (validation_layers_available) {

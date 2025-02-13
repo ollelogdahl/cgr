@@ -13,6 +13,9 @@ void scene_t::clear() {
     storage.transforms.clear();
     storage.cameras.clear();
     storage.lods.clear();
+
+    storage.states.clear();
+    storage.materials.clear();
 }
 
 void lod_t::traverse(node_visitor_t &visitor) {
