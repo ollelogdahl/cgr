@@ -8,6 +8,8 @@
 
 #include "material.h"
 
+#include <tracy/Tracy.hpp>
+
 struct loader_t;
 
 namespace sg {
@@ -188,6 +190,7 @@ public:
         nodes.push_back(node);
     }
     void accept(node_visitor_t &visitor) {
+        ZoneScoped;
         for (auto &node : nodes) {
             node->accept(visitor);
         }

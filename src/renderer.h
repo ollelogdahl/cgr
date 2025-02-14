@@ -22,7 +22,6 @@ public:
     void set_camera(camera_t &camera);
 
     void new_frame();
-    void update_frame_data(); // @todo: pass rendering properties here.
     void draw(gpu_t::frame_t &frame);
 
 private:
@@ -50,8 +49,6 @@ private:
     camera_t *camera;
 
     VkSampler shared_sampler;
-
-    buffer_write_barrier_t ubo_write_barrier;
 
     VkDescriptorPool descriptor_pool;
     VkDescriptorSetLayout main_descriptor_set_layout;

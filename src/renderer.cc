@@ -1,8 +1,5 @@
 #include "renderer.h"
 #include "gpu.h"
-#include "imgui/imgui_impl_glfw.h"
-#include "imgui/imgui_impl_vulkan.h"
-#include "implot/implot.h"
 #include "log.h"
 #include <variant>
 
@@ -59,12 +56,8 @@ struct material_push_block_t {
     u32 padding[1] = {0};
 };
 
-void imgui_init(gpu_t &gpu);
-
 void renderer_t::init(gpu_t &gpu, loader_t &loader) {
     this->gpu = &gpu;
-
-    imgui_init(gpu);
 
     // setup pipeline
     {
@@ -315,10 +308,6 @@ void renderer_t::set_camera(camera_t &camera) {
 }
 
 void renderer_t::new_frame() {
-    ImGui_ImplVulkan_NewFrame();
-    ImGui_ImplGlfw_NewFrame();
-    ImGui::NewFrame();
-
     // reset the draw elements
     commands.clear();
     camera = nullptr;
@@ -326,51 +315,56 @@ void renderer_t::new_frame() {
 
 material_push_block_t make_material_push_block(switch_material_op_t &op);
 
-void renderer_t::update_frame_data() {
-    // save off imgui
-    ImGui::Render();
+void renderer_t::draw(gpu_t::frame_t &frame) {
+    TracyVkZone(frame.tracy_ctx, frame.cmds, "renderer-draw");
+    auto planned_ops = planner.plan_rendering(*this);
 
-    // write to ubo buffers.
-    // @todo: it is expensive to update the whole buffer all the time.
-    // we can probably be smarter about this.
-    env_ubo_t ubo = {};
-    ubo.view = camera->view_matrix;
-    ubo.proj = camera->projection_matrix;
-    ubo.view_pos = camera->position;
-    ubo.num_point_lights = commands.point_lights.size();
-    ubo.num_dir_lights = commands.directional_lights.size();
+    // wait for the ubo to be written.
+    {
+        TracyVkZone(frame.tracy_ctx, frame.cmds, "update-ubo");
 
-    for (usize i = 0; i < commands.point_lights.size(); ++i) {
-        ubo.point_lights[i].position = commands.point_lights[i].position;
-        ubo.point_lights[i].color = commands.point_lights[i].color;
-        ubo.point_lights[i].linear = commands.point_lights[i].linear;
-        ubo.point_lights[i].quadratic = commands.point_lights[i].quadratic;
+        // write to ubo buffers.
+        // @todo: it is expensive to update the whole buffer all the time.
+        // we can probably be smarter about this.
+        env_ubo_t ubo = {};
+        ubo.view = camera->view_matrix;
+        ubo.proj = camera->projection_matrix;
+        ubo.view_pos = camera->position;
+        ubo.num_point_lights = commands.point_lights.size();
+        ubo.num_dir_lights = commands.directional_lights.size();
+
+        for (usize i = 0; i < commands.point_lights.size(); ++i) {
+            ubo.point_lights[i].position = commands.point_lights[i].position;
+            ubo.point_lights[i].color = commands.point_lights[i].color;
+            ubo.point_lights[i].linear = commands.point_lights[i].linear;
+            ubo.point_lights[i].quadratic = commands.point_lights[i].quadratic;
+        }
+
+        for (usize i = 0; i < commands.directional_lights.size(); ++i) {
+            ubo.dir_lights[i].direction = commands.directional_lights[i].direction;
+            ubo.dir_lights[i].color = commands.directional_lights[i].color;
+        }
+        auto ubo_slice = slice<u8>((u8 *)&ubo, sizeof(ubo));
+
+        // @todo: we could be smart and only update parts of the buffer.
+        // This would mean more writes and more bookkeeping, so not sure if better.
+        buffer_write_barrier_t ubo_write_barrier;
+        gpu->write_buffer_with_barrier(env_ubo_buffer, ubo_slice, frame.cmds, ubo_write_barrier);
+        ubo_write_barrier.set_dst(
+            VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT |
+            VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+            VK_ACCESS_2_SHADER_READ_BIT);
+        vkCmdPipelineBarrier2(frame.cmds,
+            &ubo_write_barrier.dependency_info);
     }
-
-    for (usize i = 0; i < commands.directional_lights.size(); ++i) {
-        ubo.dir_lights[i].direction = commands.directional_lights[i].direction;
-        ubo.dir_lights[i].color = commands.directional_lights[i].color;
-    }
-    auto ubo_slice = slice<u8>((u8 *)&ubo, sizeof(ubo));
-
-    gpu->write_buffer_with_barrier(env_ubo_buffer, ubo_slice, ubo_write_barrier);
 
     // write textures if changed
     if (textures.has_updated) {
+        TracyVkZone(frame.tracy_ctx, frame.cmds, "update-textures");
+
         textures.writer.update_set(*gpu, texture_descriptor_set);
         textures.has_updated = false;
     }
-}
-void renderer_t::draw(gpu_t::frame_t &frame) {
-    TracyVkZone(frame.tracy_ctx, frame.cmds, "draw");
-
-    // wait for the ubo to be written.
-    ubo_write_barrier.set_dst(
-        VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT |
-        VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
-        VK_ACCESS_2_SHADER_READ_BIT);
-    vkCmdPipelineBarrier2(frame.cmds,
-        &ubo_write_barrier.dependency_info);
 
 
     VkRenderingAttachmentInfo color_attachments[] = {
@@ -446,93 +440,28 @@ void renderer_t::draw(gpu_t::frame_t &frame) {
     // I think this is a viable route.
 
     // @todo: implement different
-    auto planned_ops = planner.plan_rendering(*this);
-    for (auto &op : planned_ops) {
-        std::visit(overloaded{
-            [&](switch_buffers_op_t &op) {
-                VkBuffer buffers[] = {op.vertex_buffer->handle};
-                VkDeviceSize offsets[] = {0};
-                vkCmdBindVertexBuffers(frame.cmds, 0, 1, buffers, offsets);
-                vkCmdBindIndexBuffer(frame.cmds, op.index_buffer->handle, 0, VK_INDEX_TYPE_UINT32);
-            },
-            [&](draw_indexed_op_t &op) {
-                vkCmdPushConstants(frame.cmds, pipeline->layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(m4f), &op.transform);
-                vkCmdDrawIndexed(frame.cmds, op.index_count, 1, op.index_offset, op.vertex_offset, 0);
-            },
-            [&](switch_material_op_t &op) {
-                auto push_block = make_material_push_block(op);
-
-                vkCmdPushConstants(frame.cmds, pipeline->layout, VK_SHADER_STAGE_FRAGMENT_BIT, sizeof(m4f), sizeof(material_push_block_t), &push_block);
-            },
-        }, op);
-    }
-
-    // @todo: move imgui into separate pass
     {
-        ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), frame.cmds);
-    }
+        TracyVkZone(frame.tracy_ctx, frame.cmds, "draw-ops");
+        for (auto &op : planned_ops) {
+            std::visit(overloaded{
+                [&](switch_buffers_op_t &op) {
+                    VkBuffer buffers[] = {op.vertex_buffer->handle};
+                    VkDeviceSize offsets[] = {0};
+                    vkCmdBindVertexBuffers(frame.cmds, 0, 1, buffers, offsets);
+                    vkCmdBindIndexBuffer(frame.cmds, op.index_buffer->handle, 0, VK_INDEX_TYPE_UINT32);
+                },
+                [&](draw_indexed_op_t &op) {
+                    vkCmdPushConstants(frame.cmds, pipeline->layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(m4f), &op.transform);
+                    vkCmdDrawIndexed(frame.cmds, op.index_count, 1, op.index_offset, op.vertex_offset, 0);
+                },
+                [&](switch_material_op_t &op) {
+                    auto push_block = make_material_push_block(op);
 
-    vkCmdEndRendering(frame.cmds);
-}
-
-// @todo: probably doesn't belong here. Its fine for now.
-void imgui_init(gpu_t &gpu) {
-    ImGui::CreateContext();
-    ImPlot::CreateContext();
-
-    ImGuiIO& io = ImGui::GetIO();
-    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;     // Enable Keyboard Controls
-    io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;      // Enable Gamepad Controls
-    io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
-
-    // Setup Dear ImGui style
-    ImGui::StyleColorsDark();
-
-    // setup implot style
-    ImPlot::PushStyleColor(ImPlotCol_FrameBg, {0.15,0.15,0.15,0.0});
-
-    VkDescriptorPool descriptor_pool;
-    {
-        VkDescriptorPoolSize imgui_pool_sizes[] = {
-            { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1 }
-        };
-        VkDescriptorPoolCreateInfo pool_info = {};
-        pool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-        pool_info.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
-        pool_info.maxSets = 1;
-        pool_info.poolSizeCount = array_size(imgui_pool_sizes);
-        pool_info.pPoolSizes = imgui_pool_sizes;
-        if (vkCreateDescriptorPool(gpu.device, &pool_info, nullptr, &descriptor_pool) != VK_SUCCESS) {
-            throw std::runtime_error("failed to create descriptor pool");
+                    vkCmdPushConstants(frame.cmds, pipeline->layout, VK_SHADER_STAGE_FRAGMENT_BIT, sizeof(m4f), sizeof(material_push_block_t), &push_block);
+                },
+            }, op);
         }
     }
-
-    // create unique gpu stuffs for imgui...
-    // @todo: technically, we should recreate this on swapchain recreation. I think.
-    ImGui_ImplGlfw_InitForVulkan(gpu.window, true);
-    ImGui_ImplVulkan_InitInfo init_info = {};
-    init_info.Instance = gpu.instance;
-    init_info.PhysicalDevice = gpu.pdev;
-    init_info.Device = gpu.device;
-    init_info.QueueFamily = gpu.queue_families.graphics,
-    init_info.Queue = gpu.graphics_queue,
-    init_info.PipelineCache = VK_NULL_HANDLE;
-    init_info.DescriptorPool = descriptor_pool;
-    init_info.UseDynamicRendering = true;
-    init_info.Subpass = 0;
-    init_info.MinImageCount = gpu.swapchain.image_count;
-    init_info.ImageCount = gpu.swapchain.image_count;
-    init_info.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
-    init_info.Allocator = VK_NULL_HANDLE;
-    init_info.CheckVkResultFn = nullptr;
-
-    init_info.PipelineRenderingCreateInfo = {};
-    init_info.PipelineRenderingCreateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
-	init_info.PipelineRenderingCreateInfo.colorAttachmentCount = 1;
-	init_info.PipelineRenderingCreateInfo.pColorAttachmentFormats = &gpu.swapchain.image_format;
-	init_info.PipelineRenderingCreateInfo.depthAttachmentFormat = VK_FORMAT_D32_SFLOAT;
-
-    ImGui_ImplVulkan_Init(&init_info);
 }
 
 material_push_block_t make_material_push_block(switch_material_op_t &op) {

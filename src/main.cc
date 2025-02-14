@@ -39,94 +39,9 @@
 #include "sg/renderer_visitor.h"
 #include "sg/bounds_visitor.h"
 
+#include "render/imgui_renderer.h"
+
 #include <tracy/Tracy.hpp>
-
-struct cpu_timer_t {
-    cpu_timer_t() {
-        memset(measures, 0, sizeof(measures));
-        measure_idx = 0;
-    }
-    void start() {
-        timespec time1;
-        clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &time1);
-
-        start_time = time1.tv_sec * 1e9 + time1.tv_nsec;
-    }
-
-    void stop() {
-        timespec time2;
-        clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &time2);
-
-        // f32 time_ns = (time2.tv_sec * 1e9 + time2.tv_nsec - start_time);
-        f32 time_ms = (time2.tv_sec * 1e3 + time2.tv_nsec / 1e6 - start_time / 1e6);
-
-        measures[measure_idx] = time_ms;
-        measure_idx = (measure_idx + 1) % array_size(measures);
-    }
-
-    f32 measure_ms() {
-        i64 idx = (i64)measure_idx - 1;
-        if (idx < 0) {
-            idx = array_size(measures) - 1;
-        }
-        return measures[idx];
-    }
-
-    u32 size() {
-        return array_size(measures);
-    }
-
-    u64 start_time = 0;
-    f32 measures[256];
-    u32 measure_idx = 0;
-};
-
-// @todo: aaaah correctness!!!
-struct gpu_timer_t {
-    void init(gpu_t &gpu) {
-        VkQueryPoolCreateInfo query_pool_info = {};
-        query_pool_info.sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;
-        query_pool_info.queryType = VK_QUERY_TYPE_TIMESTAMP;
-        query_pool_info.queryCount = 2;
-        VK_CHECK(vkCreateQueryPool(gpu.device, &query_pool_info, nullptr, &query_pool));
-    }
-
-    void reset(gpu_t &gpu, VkCommandBuffer &cmds) {
-        if (!is_first) vkGetQueryPoolResults(
-           	gpu.device,
-           	query_pool,
-           	0,
-           	2,
-           	4 * sizeof(u64),
-           	timestamps,
-           	2 * sizeof(u64),
-           	VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WITH_AVAILABILITY_BIT);
-        is_first = false;
-
-        vkCmdResetQueryPool(cmds, query_pool, 0, 2);
-    }
-
-    void start(gpu_t &gpu, VkCommandBuffer &cmds) {
-        if (timestamps[1] != 0 && timestamps[3] != 0) {
-            auto as_nanos = (timestamps[2] - timestamps[0]) / gpu.limits.timestamp_period;
-            measures[measure_idx] = (f32)as_nanos / 1e6;
-            measure_idx = (measure_idx + 1) % array_size(measures);
-        }
-
-        vkCmdWriteTimestamp(cmds, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, query_pool, 0);
-    }
-    void stop(gpu_t &gpu, VkCommandBuffer &cmds) {
-        vkCmdWriteTimestamp(cmds, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, query_pool, 1);
-
-        (void)gpu;
-    }
-
-    u64 timestamps[4] = {0};
-    f32 measures[256] = {0};
-    u32 measure_idx = 0;
-    bool is_first = true;
-    VkQueryPool query_pool;
-};
 
 void gui();
 
@@ -195,10 +110,12 @@ int main(int argc, char **argv) {
     g_log.info("gpu initialized");
 
     renderer_t renderer;
+    ImGuiRenderer imgui_renderer;
 
     g_loader.init(gpu);
 
     renderer.init(gpu, g_loader);
+    imgui_renderer.init(gpu);
 
     if (argc < 2) {
         g_log.error("no scene file provided");
@@ -211,8 +128,6 @@ int main(int argc, char **argv) {
 
     compute_bounds_visitor_t bounds_visitor;
     scene->accept(bounds_visitor);
-
-    cpu_timer_t full_loop_timer;
 
     auto camera = camera_t(
         v3f{0, 0, 5}, v3f{0, 0, 0},
@@ -231,36 +146,39 @@ int main(int argc, char **argv) {
 
         g_loader.process_hotreload();
         renderer.new_frame();
+        imgui_renderer.new_frame();
 
-        full_loop_timer.start();
+        {
+            ZoneScopedN("update");
+            controller.update(window, 0.16);
 
-        controller.update(window, 0.16);
+            gui();
 
-        gui();
+            scene->accept(g_renderer_visitor);
 
-        scene->accept(g_renderer_visitor);
+            // @todo: move into scene graph
+            renderer.set_camera(camera);
 
-        // @todo: move into scene graph
-        renderer.set_camera(camera);
+            v3f lamp1_pos = v3f{4 * sin(t), 2, 4 * cos(t)};
+            renderer.add_point_light({
+                .position = lamp1_pos,
+                .color = v3f{1, 1, 1},
+                .linear = 0.09f,
+                .quadratic = 0.032f,
+            });
+        }
 
-        v3f lamp1_pos = v3f{4 * sin(t), 2, 4 * cos(t)};
-        renderer.add_point_light({
-            .position = lamp1_pos,
-            .color = v3f{1, 1, 1},
-            .linear = 0.09f,
-            .quadratic = 0.032f,
-        });
-
-        renderer.update_frame_data();
         gpu.frame([&](gpu_t::frame_t &frame) {
-            renderer.draw(frame);
+            ZoneScopedN("frame-submit");
 
-            FrameMarkNamed("gpu");
+            renderer.draw(frame);
+            imgui_renderer.draw(frame);
         });
 
-        glfwPollEvents();
-
-        full_loop_timer.stop();
+        {
+            ZoneScopedN("poll-events");
+            glfwPollEvents();
+        }
 
         FrameMark;
     }

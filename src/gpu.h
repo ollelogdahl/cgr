@@ -250,7 +250,9 @@ struct gpu_t {
     void create_buffer(usize size, VkBufferUsageFlags usage, gpu_buffer_t &buffer);
     void write_buffer(gpu_buffer_t &buffer, slice<u8> data);
 
-    void write_buffer_with_barrier(gpu_buffer_t &buffer, slice<u8> data, buffer_write_barrier_t &barrier);
+    void write_buffer_with_barrier(gpu_buffer_t &buffer, slice<u8> data,
+        VkCommandBuffer cmd,
+        buffer_write_barrier_t &barrier);
 
     void create_image(usize width, usize height, VkFormat format, VkImageUsageFlags usage, gpu_image_t &image);
     void create_image(slice<u8> data, usize width, usize height, VkFormat format, VkImageUsageFlags usage, bool mipmap, gpu_image_t &image);

@@ -111,7 +111,9 @@ void gpu_t::write_buffer(gpu_buffer_t &buffer, slice<u8> data) {
     }
 }
 
-void gpu_t::write_buffer_with_barrier(gpu_buffer_t &buffer, slice<u8> data, buffer_write_barrier_t &barrier_info) {
+void gpu_t::write_buffer_with_barrier(gpu_buffer_t &buffer, slice<u8> data,
+    VkCommandBuffer cmd,
+    buffer_write_barrier_t &barrier_info) {
     // based on praxis:
     // https://gpuopen-librariesandsdks.github.io/VulkanMemoryAllocator/html/usage_patterns.html#usage_patterns_advanced_data_uploading
 
@@ -196,17 +198,12 @@ void gpu_t::write_buffer_with_barrier(gpu_buffer_t &buffer, slice<u8> data, buff
         barrier_info.dependency_info.pBufferMemoryBarriers = barrier_info.barriers.data();
 
         // Perform the copy
-        // @todo: should maybe be done in a separate command buffer
-        VkCommandBuffer cmd = begin_single_use_command_buffer();
-
         VkBufferCopy copy_region{};
         copy_region.srcOffset = 0;
         copy_region.dstOffset = 0;
         copy_region.size = data.len;
 
         vkCmdCopyBuffer(cmd, staging_buffer, buffer.handle, 1, &copy_region);
-
-        end_single_use_command_buffer(cmd);
 
         // Cleanup staging buffer
         vmaDestroyBuffer(allocator, staging_buffer, staging_allocation);

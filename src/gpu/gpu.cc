@@ -54,20 +54,30 @@ void gpu_t::frame(std::function<void(frame_t &)> fn) {
     {
         VkCommandBufferBeginInfo beginInfo{};
         beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-        beginInfo.flags = 0; // Optional
-        beginInfo.pInheritanceInfo = nullptr; // Optional
 
         VK_CHECK(vkBeginCommandBuffer(cmds, &beginInfo));
     }
 
     // @todo: please no, we should maybe not draw directly to the swapchain. I think it would
     // be cooler to draw to an image and then copy it to the swapchain. But what do i know?
-    transition_image(cmds, swapchain.images[image_idx], VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+    {
+        TracyVkZone(current_frame.tracy_ctx, cmds, "transition-attachment");
+        transition_image(cmds, swapchain.images[image_idx], VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+    }
 
     current_frame.image_idx = image_idx;
-    fn(current_frame);
+    {
+        TracyVkZone(current_frame.tracy_ctx, cmds, "frame");
+        fn(current_frame);
 
-    transition_image(cmds, swapchain.images[image_idx], VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+        TracyVkCollect(current_frame.tracy_ctx, cmds);
+        FrameMarkNamed("gpu");
+    }
+
+    {
+        TracyVkZone(current_frame.tracy_ctx, cmds, "transition-present");
+        transition_image(cmds, swapchain.images[image_idx], VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+    }
 
     VK_CHECK(vkEndCommandBuffer(cmds));
 

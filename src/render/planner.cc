@@ -2,7 +2,10 @@
 #include "renderer.h"
 #include <algorithm>
 
+#include <tracy/Tracy.hpp>
+
 std::vector<render_op_t> &RenderPlanner::plan_rendering(renderer_t &renderer) {
+    ZoneScoped;
     // given the commands in commands, we need to generate rendering ops.
     //
     // @todo: I would like this function to take only the commands_t.

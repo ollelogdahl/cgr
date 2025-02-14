@@ -388,8 +388,11 @@ void gpu_t::init(GLFWwindow *window) {
         }
 
         frame.tracy_ctx = TracyVkContext(pdev, device, graphics_queue, frame.cmds);
-        std::string name = fmt::format("frame {}", i);
-        TracyVkContextName(frame.tracy_ctx, name.c_str(), name.length());
+        //std::string name = fmt::format("frame {}", i);
+        //static char *name_cstr = malloc(name.length() + 1);
+        //memcpy(name_cstr, name.c_str(), name.length() + 1);
+
+        //TracyVkContextName(frame.tracy_ctx, name.c_str(), name.length());
     }
 
     // setup depth buffer
