@@ -1,4 +1,3 @@
-#include <asm-generic/errno-base.h>
 #include <cerrno>
 #include <cmath>
 #include <cstdint>
@@ -39,6 +38,8 @@
 
 #include "sg/renderer_visitor.h"
 #include "sg/bounds_visitor.h"
+
+#include <tracy/Tracy.hpp>
 
 struct cpu_timer_t {
     cpu_timer_t() {
@@ -129,8 +130,6 @@ struct gpu_timer_t {
 
 void gui();
 
-#include "optick/optick.h"
-
 class log_dump_visitor_t : public sg::node_visitor_t {
 public:
 
@@ -180,6 +179,7 @@ renderer_visitor_t g_renderer_visitor;
 loader_t g_loader;
 
 int main(int argc, char **argv) {
+    TracyNoop;
 
     oc_init();
     glfwInit();
@@ -227,8 +227,6 @@ int main(int argc, char **argv) {
     float t = 0.0f;
     g_log.info("running...");
     while(!glfwWindowShouldClose(window)) {
-        OPTICK_FRAME("MainThread");
-        OPTICK_EVENT();
         t += 0.017f;
 
         g_loader.process_hotreload();
@@ -256,11 +254,15 @@ int main(int argc, char **argv) {
         renderer.update_frame_data();
         gpu.frame([&](gpu_t::frame_t &frame) {
             renderer.draw(frame);
+
+            FrameMarkNamed("gpu");
         });
 
         glfwPollEvents();
 
         full_loop_timer.stop();
+
+        FrameMark;
     }
 
     glfwDestroyWindow(window);

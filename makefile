@@ -22,18 +22,22 @@ CC_OFILES_VENDOR_RELEASE = $(patsubst vendor/%.cc,${ODIR_REL}/vendor/%.cc.o,$(CC
 CC_OFILES_SRC_MEM = $(patsubst src/%.cc,${ODIR_MEM}/src/%.cc.o,$(CCFILES_SRC))
 CC_OFILES_VENDOR_MEM = $(patsubst vendor/%.cc,${ODIR_MEM}/vendor/%.cc.o,$(CCFILES_VENDOR))
 
-OFILES_DEV = $(CC_OFILES_VENDOR_DEV) $(CC_OFILES_SRC_DEV)
+CCFILES_TRACY = vendor/tracy/TracyClient.cpp
+CC_OFILES_TRACY = $(ODIR_DEV)/vendor/TracyClient.cpp.o
+
+OFILES_DEV = $(CC_OFILES_VENDOR_DEV) $(CC_OFILES_SRC_DEV) $(CC_OFILES_TRACY)
 OFILES_RELEASE = $(CC_OFILES_VENDOR_RELEASE) $(CC_OFILES_SRC_RELEASE)
 OFILES_MEM = $(CC_OFILES_VENDOR_MEM) $(CC_OFILES_SRC_MEM)
 
 CCFLAGS_COMMON = -std=c++2a -Wall -Wextra -Werror -Ivendor/include -Isrc -I. -g \
 	-Wno-nullability-completeness -Wno-unused-parameter -Wno-unused-variable -Wno-unused-function -Wno-unused-private-field \
-	-Wno-missing-field-initializers
+	-Wno-missing-field-initializers \
+	-Ivendor/tracy
 LDFLAGS_COMMON = -ldl -lglfw -lvulkan
 
-CCFLAGS_DEV = $(CCFLAGS_COMMON) -DDEV -O0
+CCFLAGS_DEV = $(CCFLAGS_COMMON) -O3 -DTRACY_ENABLE -DTRACY_ON_DEMAND
 CCFLAGS_RELEASE = $(CCFLAGS_COMMON) -DRELEASE -O3
-CCFLAGS_MEM = $(CCFLAGS_COMMON) -O0 -fsanitize=undefined -fsanitize=address
+CCFLAGS_MEM = $(CCFLAGS_COMMON) -DVALIDATE -O0 -fsanitize=undefined -fsanitize=address
 
 LDFLAGS_DEV = $(LDFLAGS_COMMON)
 LDFLAGS_RELEASE = $(LDFLAGS_COMMON)
@@ -101,3 +105,8 @@ $(ODIR_MEM)/vendor/%.cc.o: vendor/%.cc $(HFILES_VENDOR)
 	@mkdir -p $(dir $@)
 	@echo "CC $<"
 	@$(CXX) -c -o $@ $< $(CCFLAGS_MEM)
+
+$(CC_OFILES_TRACY): vendor/tracy/TracyClient.cpp
+	@mkdir -p $(dir $@)
+	@echo "CC $<"
+	@$(CXX) -c -o $@ $< $(CCFLAGS_DEV)

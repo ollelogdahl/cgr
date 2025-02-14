@@ -24,10 +24,10 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL vk_debug_callback(
 void gpu_t::init(GLFWwindow *window) {
     this->window = window;
 
-#ifdef RELEASE
-    bool requests_validation_layers = false;
-#else
+#ifdef VALIDATE
     bool requests_validation_layers = true;
+#else
+    bool requests_validation_layers = false;
 #endif
 
     const char *validation_layers[] = {
@@ -386,6 +386,10 @@ void gpu_t::init(GLFWwindow *window) {
 
             VK_CHECK(vkAllocateCommandBuffers(device, &allocInfo, &frame.cmds));
         }
+
+        frame.tracy_ctx = TracyVkContext(pdev, device, graphics_queue, frame.cmds);
+        std::string name = fmt::format("frame {}", i);
+        TracyVkContextName(frame.tracy_ctx, name.c_str(), name.length());
     }
 
     // setup depth buffer

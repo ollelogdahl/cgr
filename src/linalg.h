@@ -347,7 +347,7 @@ struct aabb_t {
 
         // Transform each corner and include it in the result
         for (int i = 0; i < 8; i++) {
-            v3f transformed = (v4f(corners[i].x, corners[i].y, corners[i].z, 1.0f) * matrix).xyz();
+            v3f transformed = (corners[i].to_homogeneous() * matrix).xyz();
             result.include(transformed);
         }
 

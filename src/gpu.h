@@ -12,6 +12,8 @@
 #include <functional>
 #include <vulkan/vulkan_core.h>
 
+#include <tracy/TracyVulkan.hpp>
+
 #define VK_CHECK(...) do { VkResult result = __VA_ARGS__; if (result != VK_SUCCESS) { \
     auto err_str = vk_result_to_cstr(result); \
     panic("vulkan api error: {}", err_str); } } while(0)
@@ -219,6 +221,8 @@ struct gpu_t {
 
         // @todo: use a draw image instead.
         u32 image_idx;
+
+        TracyVkCtx tracy_ctx;
     };
 
     gpu_image_t depth_image;

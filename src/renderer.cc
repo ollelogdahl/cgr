@@ -9,6 +9,9 @@
 template<class... Ts>
 struct overloaded : Ts... { using Ts::operator()...; };
 
+template<class... Ts>
+overloaded(Ts...) -> overloaded<Ts...>;
+
 enum struct draw_indexed_flags_t {
     none = 0,
     use_albedo_tex = 1 << 0,
@@ -359,6 +362,7 @@ void renderer_t::update_frame_data() {
     }
 }
 void renderer_t::draw(gpu_t::frame_t &frame) {
+    TracyVkZone(frame.tracy_ctx, frame.cmds, "draw");
 
     // wait for the ubo to be written.
     ubo_write_barrier.set_dst(
