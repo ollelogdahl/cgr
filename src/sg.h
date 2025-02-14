@@ -106,21 +106,46 @@ public:
     virtual ~transform_t() = default;
 
     m4f get_local_matrix() {
-        auto rot = m4f::rotate(rotation_x, v3f{1, 0, 0})
-            * m4f::rotate(rotation_y, v3f{0, 1, 0})
-            * m4f::rotate(rotation_z, v3f{0, 0, 1});
-        return m4f::scale(scale) * rot * m4f::translate(position);
+        if (m_dirty) {
+            auto rot = m4f::rotate(rotation_x, v3f{1, 0, 0})
+                * m4f::rotate(rotation_y, v3f{0, 1, 0})
+                * m4f::rotate(rotation_z, v3f{0, 0, 1});
+            m_local_matrix = m4f::scale(scale) * rot * m4f::translate(position);
+            m_dirty = false;
+        }
+        return m_local_matrix;
     }
 
     void accept(node_visitor_t &visitor) {
         visitor.visit(*this);
     }
 
+    void set_position(const v3f &position) {
+        this->position = position;
+        m_dirty = true;
+    }
+
+    void set_euler_rotation(const v3f &euler_deg) {
+        rotation_x = anglef::from_deg(euler_deg.x);
+        rotation_y = anglef::from_deg(euler_deg.y);
+        rotation_z = anglef::from_deg(euler_deg.z);
+        m_dirty = true;
+    }
+
+    void set_scale(const v3f &scale) {
+        this->scale = scale;
+        m_dirty = true;
+    }
+
+private:
     v3f position = {0, 0, 0};
     anglef rotation_x = anglef::zero();
-    anglef rotation_y = anglef::zero();
-    anglef rotation_z = anglef::zero();
     v3f scale = {1, 1, 1};
+    anglef rotation_y = anglef::zero();
+    m4f m_local_matrix;
+    anglef rotation_z = anglef::zero();
+    bool m_dirty = true;
+
 };
 
 class geometry_t : public node_t {
@@ -190,7 +215,7 @@ public:
         nodes.push_back(node);
     }
     void accept(node_visitor_t &visitor) {
-        ZoneScoped;
+        ZoneScopedN("scene-graph-accept");
         for (auto &node : nodes) {
             node->accept(visitor);
         }

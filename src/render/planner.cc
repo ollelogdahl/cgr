@@ -2,6 +2,7 @@
 #include "renderer.h"
 #include <algorithm>
 
+#include <numeric>
 #include <tracy/Tracy.hpp>
 
 std::vector<render_op_t> &RenderPlanner::plan_rendering(renderer_t &renderer) {
@@ -20,22 +21,33 @@ std::vector<render_op_t> &RenderPlanner::plan_rendering(renderer_t &renderer) {
     // this ensures no dynamic allocations during the loop.
     ops.reserve(renderer.commands.draw_indexed.size() * 3);
 
-    // sort the draw commands by material, then by vertex buffer.
-    std::sort(renderer.commands.draw_indexed.begin(), renderer.commands.draw_indexed.end(),
-        [](const draw_indexed_command_t &a, const draw_indexed_command_t &b) {
-            return a.material.get() < b.material.get();
-        });
+    std::vector<u32> indices(renderer.commands.draw_indexed.size());
+    std::iota(indices.begin(), indices.end(), 0);
 
-    std::stable_sort(renderer.commands.draw_indexed.begin(), renderer.commands.draw_indexed.end(),
-        [](const draw_indexed_command_t &a, const draw_indexed_command_t &b) {
-            return a.index_buffer.get() < b.index_buffer.get();
-        });
+    // sort the draw commands by material, then by vertex buffer.
+    // @note: optimization: sort indices instead of the actual commands. 54% -> 1%
+    std::sort(indices.begin(), indices.end(), [&](u32 a, u32 b) {
+        auto &commands = renderer.commands.draw_indexed;
+        auto &cmd_a = commands[a];
+        auto &cmd_b = commands[b];
+
+        // Compare materials first
+        auto mat_a = cmd_a.material.get();
+        auto mat_b = cmd_b.material.get();
+        if (mat_a != mat_b) {
+            return mat_a < mat_b;
+        }
+
+        // If materials are equal, compare index buffers
+        return cmd_a.index_buffer.get() < cmd_b.index_buffer.get();
+    });
 
     // iterate over the sorted list and generate the ops.
     ref_t<material_t> current_material = nullptr;
     ref_t<gpu_buffer_t> current_vertex_buffer = nullptr;
     ref_t<gpu_buffer_t> current_index_buffer = nullptr;
-    for (auto &cmd : renderer.commands.draw_indexed) {
+    for (auto idx : indices) {
+        auto &cmd = renderer.commands.draw_indexed[idx];
         if (cmd.material != current_material) {
             ops.push_back(switch_material_op_t{
                 .material = cmd.material,

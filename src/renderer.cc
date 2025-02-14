@@ -441,6 +441,7 @@ void renderer_t::draw(gpu_t::frame_t &frame) {
 
     // @todo: implement different
     {
+        ZoneScopedN("draw-ops");
         TracyVkZone(frame.tracy_ctx, frame.cmds, "draw-ops");
         for (auto &op : planned_ops) {
             std::visit(overloaded{
