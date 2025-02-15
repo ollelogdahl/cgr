@@ -14,11 +14,15 @@
 logger_t gpu_log = logger_t("gpu");
 
 void gpu_t::frame(std::function<void(frame_t &)> fn) {
+    ZoneScopedN("draw");
     auto &current_frame = frames[frame_number];
 
     const auto timeout = 1000000000;
-    VK_CHECK(vkWaitForFences(device, 1, &current_frame.in_flight, VK_TRUE, timeout));
-    VK_CHECK(vkResetFences(device, 1, &current_frame.in_flight));
+    {
+        ZoneScopedN("wait-ready");
+        VK_CHECK(vkWaitForFences(device, 1, &current_frame.in_flight, VK_TRUE, timeout));
+        VK_CHECK(vkResetFences(device, 1, &current_frame.in_flight));
+    }
 
     u32 image_idx;
     auto swapchain_result = vkAcquireNextImageKHR(device, swapchain.handle, timeout,
@@ -28,6 +32,7 @@ void gpu_t::frame(std::function<void(frame_t &)> fn) {
         // but I'm not sure it has a big impact. On my machine, this causes swapchain recreation
         // every time i move ANY window.
         if (swapchain_result == VK_ERROR_OUT_OF_DATE_KHR) {
+            ZoneScopedN("swapchain-recreate");
             u32 width, height;
             glfwGetFramebufferSize(window, (int*)&width, (int*)&height);
 
@@ -61,21 +66,16 @@ void gpu_t::frame(std::function<void(frame_t &)> fn) {
     // @todo: please no, we should maybe not draw directly to the swapchain. I think it would
     // be cooler to draw to an image and then copy it to the swapchain. But what do i know?
     {
-        TracyVkZone(current_frame.tracy_ctx, cmds, "transition-attachment");
-        transition_image(cmds, swapchain.images[image_idx], VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-    }
-
-    current_frame.image_idx = image_idx;
-    {
         TracyVkZone(current_frame.tracy_ctx, cmds, "frame");
-        fn(current_frame);
 
-        TracyVkCollect(current_frame.tracy_ctx, cmds);
-        FrameMarkNamed("gpu");
-    }
+        transition_image(cmds, swapchain.images[image_idx], VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
 
-    {
-        TracyVkZone(current_frame.tracy_ctx, cmds, "transition-present");
+        current_frame.image_idx = image_idx;
+        {
+            TracyVkZone(current_frame.tracy_ctx, cmds, "render");
+            fn(current_frame);
+        }
+
         transition_image(cmds, swapchain.images[image_idx], VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
     }
 
@@ -96,7 +96,10 @@ void gpu_t::frame(std::function<void(frame_t &)> fn) {
     submitInfo.signalSemaphoreCount = 1;
     submitInfo.pSignalSemaphores = &current_frame.render_finished;
 
-    VK_CHECK(vkQueueSubmit(graphics_queue, 1, &submitInfo, current_frame.in_flight));
+    {
+        ZoneScopedN("queue-submit");
+        VK_CHECK(vkQueueSubmit(graphics_queue, 1, &submitInfo, current_frame.in_flight));
+    }
 
     // present
     VkPresentInfoKHR presentInfo{};
@@ -110,9 +113,15 @@ void gpu_t::frame(std::function<void(frame_t &)> fn) {
     presentInfo.pImageIndices = &image_idx;
     presentInfo.pResults = nullptr;
 
-    vkQueuePresentKHR(present_queue, &presentInfo);
+    {
+        ZoneScopedN("queue-present");
+        vkQueuePresentKHR(present_queue, &presentInfo);
+    }
 
     frame_number = (frame_number + 1) % MAX_FRAMES_IN_FLIGHT;
+
+    FrameMarkNamed("gpu");
+    TracyVkCollect(current_frame.tracy_ctx, cmds);
 }
 
 VkCommandBuffer gpu_t::begin_single_use_command_buffer() {

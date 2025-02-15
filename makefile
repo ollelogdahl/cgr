@@ -36,7 +36,7 @@ CCFLAGS_COMMON = -std=c++2a -Wall -Wextra -Werror -Ivendor/include -Isrc -I. -g 
 	-Ivendor/tracy
 LDFLAGS_COMMON = -ldl -lglfw -lvulkan
 
-CCFLAGS_DEV = $(CCFLAGS_COMMON) -O3 -DTRACY_ENABLE -DTRACY_ON_DEMAND -DTRACY_CALLSTACK=4
+CCFLAGS_DEV = $(CCFLAGS_COMMON) -O3 -DTRACY_ENABLE -DTRACY_CALLSTACK=2
 CCFLAGS_RELEASE = $(CCFLAGS_COMMON) -DRELEASE -O3
 CCFLAGS_MEM = $(CCFLAGS_COMMON) -DVALIDATE -O0 -fsanitize=undefined -fsanitize=address
 
@@ -110,4 +110,4 @@ $(ODIR_MEM)/vendor/%.cc.o: vendor/%.cc $(HFILES_VENDOR)
 $(CC_OFILES_TRACY): vendor/tracy/TracyClient.cpp
 	@mkdir -p $(dir $@)
 	@echo "CC $<"
-	@$(CXX) -c -o $@ $< -O3 -march=native -DTRACY_ENABLE -DTRACY_ON_DEMAND
+	@$(CXX) -c -o $@ $< $(CCFLAGS_DEV)

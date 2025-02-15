@@ -7,8 +7,8 @@
 typedef u32 texhnd_t;
 
 struct switch_buffers_op_t {
-    ref_t<gpu_buffer_t> vertex_buffer;
-    ref_t<gpu_buffer_t> index_buffer;
+    gpu_buffer_t *vertex_buffer;
+    gpu_buffer_t *index_buffer;
 };
 
 struct draw_indexed_op_t {
@@ -20,7 +20,7 @@ struct draw_indexed_op_t {
 };
 
 struct switch_material_op_t {
-    ref_t<material_t> material;
+    material_t *material;
 
     texhnd_t albedo0_idx;
     texhnd_t albedo1_idx;

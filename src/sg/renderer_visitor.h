@@ -23,13 +23,13 @@ public:
     void visit(sg::geometry_t &geometry) override {
         // @todo: extract from state.
         renderer->add_draw_indexed({
-            .vertex_buffer = geometry.vertex_buffer,
-            .index_buffer = geometry.index_buffer,
+            .vertex_buffer = geometry.vertex_buffer.get(),
+            .index_buffer = geometry.index_buffer.get(),
             .index_count = geometry.index_count,
             .vertex_offset = 0,
             .index_offset = 0,
             .transform = transform_stack.back(),
-            .material = geometry.state().material,
+            .material = geometry.state().material.get(),
         });
     }
 

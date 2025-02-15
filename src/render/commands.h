@@ -6,14 +6,16 @@
 #include <vector>
 
 struct draw_indexed_command_t {
-    ref_t<gpu_buffer_t> vertex_buffer;
-    ref_t<gpu_buffer_t> index_buffer;
+    // @note: we could use ref-count objects here, but these elements are created & destroyed often.
+    // It seems reasonable to assume that the lifetime of the objects will outlive a frame.
+    gpu_buffer_t *vertex_buffer;
+    gpu_buffer_t *index_buffer;
     u32 index_count;
     u32 vertex_offset;
     u32 index_offset;
 
     m4f transform;
-    ref_t<material_t> material;
+    material_t *material;
 };
 
 struct dl_command_t {

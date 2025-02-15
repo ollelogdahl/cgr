@@ -32,20 +32,20 @@ std::vector<render_op_t> &RenderPlanner::plan_rendering(renderer_t &renderer) {
         auto &cmd_b = commands[b];
 
         // Compare materials first
-        auto mat_a = cmd_a.material.get();
-        auto mat_b = cmd_b.material.get();
+        auto mat_a = cmd_a.material;
+        auto mat_b = cmd_b.material;
         if (mat_a != mat_b) {
             return mat_a < mat_b;
         }
 
         // If materials are equal, compare index buffers
-        return cmd_a.index_buffer.get() < cmd_b.index_buffer.get();
+        return cmd_a.index_buffer < cmd_b.index_buffer;
     });
 
     // iterate over the sorted list and generate the ops.
-    ref_t<material_t> current_material = nullptr;
-    ref_t<gpu_buffer_t> current_vertex_buffer = nullptr;
-    ref_t<gpu_buffer_t> current_index_buffer = nullptr;
+    material_t *current_material = nullptr;
+    gpu_buffer_t *current_vertex_buffer = nullptr;
+    gpu_buffer_t *current_index_buffer = nullptr;
     for (auto idx : indices) {
         auto &cmd = renderer.commands.draw_indexed[idx];
         if (cmd.material != current_material) {
