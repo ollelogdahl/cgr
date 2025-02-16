@@ -8,8 +8,8 @@
             mat-diffuse="0.1 0.1 0.1"
             mat-roughness="1.0"
             mat-tex-albedo0="assets/tiles074_color.jpg"
-            mat-tex-albedo1="assets/tiles081_color.jpg"
-            mat-tex-albedo2="assets/tiles133a_color.jpg"
+            mat-tex-albedo1="assets/multitex/ground048-color.jpg"
+            mat-tex-albedo2="assets/multitex/ground086-color.jpg"
         />
     </transform>
 </scene>

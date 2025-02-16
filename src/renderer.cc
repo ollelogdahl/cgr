@@ -3,6 +3,8 @@
 #include "log.h"
 #include <variant>
 
+#include <tracy/Tracy.hpp>
+
 template<class... Ts>
 struct overloaded : Ts... { using Ts::operator()...; };
 

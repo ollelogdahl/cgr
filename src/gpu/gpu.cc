@@ -11,6 +11,8 @@
 #include <GLFW/glfw3.h>
 #include <vulkan/vulkan_core.h>
 
+#include <tracy/Tracy.hpp>
+
 logger_t gpu_log = logger_t("gpu");
 
 void gpu_t::frame(std::function<void(frame_t &)> fn) {

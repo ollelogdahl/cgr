@@ -3,6 +3,7 @@
 #include <fmt/core.h>
 
 #include <math.h>
+#include <immintrin.h>
 
 #include "oc.h"
 
@@ -364,6 +365,7 @@ struct aabb_t {
 };
 
 m4f constexpr m4f::operator*(const m4f &o) const {
+    // This usually gets auto-vectorized by the compiler.
     m4f res = {0};
     for (int i = 0; i < 4; i++) {
         for (int j = 0; j < 4; j++) {

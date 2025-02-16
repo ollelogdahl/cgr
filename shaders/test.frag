@@ -198,7 +198,7 @@ void main() {
             vec3 a2 = texture(textures[element.albedo1_idx], frag_uv).rgb * frag_vertex_color.y;
             vec3 a3 = texture(textures[element.albedo2_idx], frag_uv).rgb * frag_vertex_color.z;
             float sum = frag_vertex_color.x + frag_vertex_color.y + frag_vertex_color.z;
-            albedo = (a1 + a2 + a3) / sum;
+            albedo = (a1 + a2 + a3);
         } else {
             albedo = texture(textures[element.albedo0_idx], frag_uv).rgb;
         }

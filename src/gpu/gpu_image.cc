@@ -28,10 +28,28 @@ void gpu_t::create_image(usize width, usize height, VkFormat format, VkImageUsag
 }
 
 void gpu_t::create_image(slice<u8> data, usize width, usize height, VkFormat format, VkImageUsageFlags usage, bool mipmap, gpu_image_t &image) {
+    // @todo: make an api providing barriers and stuff.
+
     // we need to create a staging buffer for the image data.
-    gpu_buffer_t staging_buffer;
-    create_buffer(data.len, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, staging_buffer);
-    write_buffer(staging_buffer, data);
+    VkBuffer staging_buffer;
+    VmaAllocation staging_allocation;
+    VmaAllocationInfo staging_allocation_info;
+
+    {
+        VkBufferCreateInfo buffer_info{};
+        buffer_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        buffer_info.size = data.len;
+        buffer_info.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+        buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+        VmaAllocationCreateInfo alloc_info{};
+        alloc_info.usage = VMA_MEMORY_USAGE_AUTO;
+        alloc_info.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT;
+
+        VK_CHECK(vmaCreateBuffer(allocator, &buffer_info, &alloc_info, &staging_buffer, &staging_allocation, &staging_allocation_info));
+
+        VK_CHECK(vmaCopyMemoryToAllocation(allocator, data.data, staging_allocation, 0, data.len));
+    }
 
     create_image(width, height, format, VK_IMAGE_USAGE_TRANSFER_DST_BIT | usage, image);
 
@@ -51,7 +69,7 @@ void gpu_t::create_image(slice<u8> data, usize width, usize height, VkFormat for
 		copy_region.imageSubresource.layerCount = 1;
 		copy_region.imageExtent = { .width = (u32)width, .height = (u32)height, .depth = 1 };
 
-		vkCmdCopyBufferToImage(cmd, staging_buffer.handle, image.image,
+		vkCmdCopyBufferToImage(cmd, staging_buffer, image.image,
 		  VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy_region);
 
 		// @todo: this is kinda hard-coded (VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
@@ -59,6 +77,8 @@ void gpu_t::create_image(slice<u8> data, usize width, usize height, VkFormat for
 		  VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     }
     end_single_use_command_buffer(cmd);
+
+    vmaDestroyBuffer(allocator, staging_buffer, staging_allocation);
 
     image.owner = this;
 }
