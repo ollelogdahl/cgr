@@ -34,6 +34,17 @@ public:
             .quadratic = point_light.quadratic,
         });
     }
+
+    void visit(sg::directional_light_t &directional_light) override {
+        v4f d1 = v4f{directional_light.direction().x, directional_light.direction().y, directional_light.direction().z, 0};
+        v3f direction = (d1 * transform_stack.back()).xyz();
+
+        m_renderer->add_directional_light({
+            .direction = direction,
+            .color = directional_light.color(),
+        });
+    }
+
     void visit(sg::transform_t &transform) override {
         transform_stack.push_back(transform.get_local_matrix() * transform_stack.back());
         transform.accept_children(*this);

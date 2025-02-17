@@ -17,6 +17,7 @@ namespace sg {
 class node_t;
 class group_t;
 class point_light_t;
+class directional_light_t;
 class transform_t;
 class geometry_t;
 class camera_t;
@@ -69,9 +70,9 @@ protected:
 
 class node_visitor_t {
 public:
-
     virtual void visit(geometry_t &geometry) {}
     virtual void visit(point_light_t &point_light) {}
+    virtual void visit(directional_light_t &directional_light) {}
     virtual void visit(camera_t &camera) {}
 
     virtual void visit(group_t &group);
@@ -117,6 +118,34 @@ public:
     void accept(node_visitor_t &visitor) {
         visitor.visit(*this);
     }
+};
+
+class directional_light_t : public node_t {
+public:
+    virtual ~directional_light_t() = default;
+    void accept(node_visitor_t &visitor) override {
+        visitor.visit(*this);
+    }
+
+    v3f direction() const {
+        return m_direction;
+    }
+
+    v3f color() const {
+        return m_color;
+    }
+
+    void set_direction(const v3f &direction) {
+        m_direction = direction;
+    }
+
+    void set_color(const v3f &color) {
+        m_color = color;
+    }
+
+private:
+    v3f m_direction;
+    v3f m_color;
 };
 
 class transform_t : public group_t {
@@ -356,6 +385,7 @@ public:
     DECL_CREATOR(group, group_t, storage.groups)
     DECL_CREATOR(geometry, geometry_t, storage.geometries)
     DECL_CREATOR(point_light, point_light_t, storage.point_lights)
+    DECL_CREATOR(directional_light, directional_light_t, storage.directional_lights)
     DECL_CREATOR(transform, transform_t, storage.transforms)
     DECL_CREATOR(camera, camera_t, storage.cameras)
     DECL_CREATOR(lod, lod_t, storage.lods)
@@ -384,6 +414,7 @@ private:
         pool_allocator_t<group_t> groups;
         pool_allocator_t<geometry_t> geometries;
         pool_allocator_t<point_light_t> point_lights;
+        pool_allocator_t<directional_light_t> directional_lights;
         pool_allocator_t<transform_t> transforms;
         pool_allocator_t<camera_t> cameras;
         pool_allocator_t<lod_t> lods;

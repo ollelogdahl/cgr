@@ -19,6 +19,7 @@ sg::state_t parse_state(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLEleme
 sg::node_t *parse_group(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLElement *elem);
 sg::node_t *parse_model(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLElement *elem);
 sg::node_t *parse_point_light(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLElement *elem);
+sg::node_t *parse_directional_light(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLElement *elem);
 sg::node_t *parse_transform(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLElement *elem);
 sg::node_t *parse_lod(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLElement *elem);
 sg::node_t *parse_grid(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLElement *elem);
@@ -31,6 +32,8 @@ sg::node_t *interpret_node(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLEl
         return parse_model(loader, scene, elem);
     } else if (elem->Name() == std::string("point-light")) {
         return parse_point_light(loader, scene, elem);
+    } else if (elem->Name() == std::string("directional-light")) {
+        return parse_directional_light(loader, scene, elem);
     } else if (elem->Name() == std::string("transform")) {
         return parse_transform(loader, scene, elem);
     } else if (elem->Name() == std::string("lod")) {
@@ -204,6 +207,35 @@ sg::node_t *parse_point_light(loader_t &loader, sg::scene_t &scene, tinyxml2::XM
     }
 
     return point_light;
+}
+
+sg::node_t *parse_directional_light(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLElement *elem) {
+    sg::directional_light_t *directional_light = scene.create_directional_light();
+
+    bool set_state;
+    sg::state_t state = parse_state(loader, scene, elem, set_state);
+    if (set_state) {
+        auto sref = scene.create_state();
+        *sref = state;
+        directional_light->set_state(sref);
+    }
+
+    auto color_attr = elem->Attribute("color");
+    auto position_attr = elem->Attribute("direction");
+
+    if (color_attr) {
+        directional_light->set_color(parse_attr_color3(std::string_view(color_attr)));
+    } else {
+        directional_light->set_color(v3f{1, 1, 1});
+    }
+
+    if (position_attr) {
+        directional_light->set_direction(v3f::normalize(parse_attr_v3f(std::string_view(position_attr))));
+    } else {
+        directional_light->set_direction(v3f{0, -1, 0});
+    }
+
+    return directional_light;
 }
 
 sg::node_t *parse_transform(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLElement *elem) {
