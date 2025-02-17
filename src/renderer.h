@@ -30,9 +30,10 @@ private:
     friend class RenderPlanner;
 
     gpu_t *gpu;
-    ref_t<gpu_pipeline_t> pipeline;
 
+    // @todo: figure out how to unload these.
     texhnd_t get_or_create_texture_handle(ref_t<texture_t> texture);
+    gpu_pipeline_t *get_or_create_pipeline(material_t &material);
 
     struct {
         std::unordered_map<ref_t<texture_t>, texhnd_t> textures = {};

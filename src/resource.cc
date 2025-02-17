@@ -34,6 +34,55 @@ std::size_t std::hash<texture_load_params_t>::operator()(const texture_load_para
     return std::hash<std::string>{}(params.path) ^ std::hash<bool>{}(params.srgb) ^ std::hash<u32>{}(params.num_channels);
 }
 
+bool operator==(const shader_program_load_params_t &lhs, const shader_program_load_params_t &rhs) {
+    // horrific code!!!
+    {
+        auto luse_glsl = lhs.vertex_glsl_path != nullptr;
+        auto ruse_glsl = rhs.vertex_glsl_path != nullptr;
+
+        // if one uses glsl, the other must also use glsl.
+        if (luse_glsl != ruse_glsl) return false;
+
+        if (luse_glsl) {
+            if (lhs.vertex_glsl_path != rhs.vertex_glsl_path) return false;
+        } else {
+            if (lhs.vertex_spv_path != rhs.vertex_spv_path) return false;
+        }
+    }
+
+    {
+        auto luse_glsl = lhs.fragment_glsl_path != nullptr;
+        auto ruse_glsl = rhs.fragment_glsl_path != nullptr;
+
+        // if one uses glsl, the other must also use glsl.
+        if (luse_glsl != ruse_glsl) return false;
+
+        if (luse_glsl) {
+            if (lhs.fragment_glsl_path != rhs.fragment_glsl_path) return false;
+        } else {
+            if (lhs.fragment_spv_path != rhs.fragment_spv_path) return false;
+        }
+    }
+}
+
+std::size_t std::hash<shader_program_load_params_t>::operator()(const shader_program_load_params_t &params) const {
+    std::size_t h = 0;
+    // @todo: this uses just the pointer? we want to read it i think.
+    if (params.vertex_glsl_path) {
+        h ^= std::hash<const char *>{}(params.vertex_glsl_path);
+    } else {
+        h ^= std::hash<const char *>{}(params.vertex_spv_path);
+    }
+
+    if (params.fragment_glsl_path) {
+        h ^= std::hash<const char *>{}(params.fragment_glsl_path);
+    } else {
+        h ^= std::hash<const char *>{}(params.fragment_spv_path);
+    }
+
+    return h;
+}
+
 bool operator==(const model_load_params_t &lhs, const model_load_params_t &rhs) {
     bool equal = true;
     equal = lhs.path == rhs.path;
@@ -58,24 +107,24 @@ std::size_t std::hash<model_load_params_t>::operator()(const model_load_params_t
     return h;
 }
 
-ref_t<shader_program_t> loader_t::load_shader_program(const shader_program_load_params_t &params) {
+ref_t<gpu_shader_t> loader_t::load_shader_program(const shader_program_load_params_t &params) {
     auto exists_it = loaded_shaders.find(params);
     if (exists_it != loaded_shaders.end()) {
         return exists_it->second;
     }
 
-    loaded_shaders[params] = make_ref<shader_program_t>();
-    shader_program_t &program = *loaded_shaders[params];
+    loaded_shaders[params] = make_ref<gpu_shader_t>();
+    gpu_shader_t &program = *loaded_shaders[params];
     program.stages = std::vector<VkPipelineShaderStageCreateInfo>();
     program.params = params;
     program.modified = true;
 
     watcher.add_watch(params.vertex_hlsl_path, [](std::string, void *userdata) {
-        auto *shader = static_cast<shader_program_t *>(userdata);
+        auto *shader = static_cast<gpu_shader_t *>(userdata);
         shader->modified = true;
     }, &program);
     watcher.add_watch(params.fragment_hlsl_path, [](std::string, void *userdata) {
-        auto *shader = static_cast<shader_program_t *>(userdata);
+        auto *shader = static_cast<gpu_shader_t *>(userdata);
         shader->modified = true;
     }, &program);
 

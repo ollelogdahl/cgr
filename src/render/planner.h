@@ -19,6 +19,10 @@ struct draw_indexed_op_t {
     m4f transform;
 };
 
+struct switch_pipeline_op_t {
+    gpu_pipeline_t *pipeline;
+};
+
 struct switch_material_op_t {
     material_t *material;
 
@@ -30,6 +34,7 @@ struct switch_material_op_t {
 };
 
 typedef std::variant<
+    switch_pipeline_op_t,
     switch_buffers_op_t,
     draw_indexed_op_t,
     switch_material_op_t> render_op_t;

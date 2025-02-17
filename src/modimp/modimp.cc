@@ -4,7 +4,7 @@
 #include <unordered_map>
 
 #include "linalg.h"
-#include "modimp/m3d.h"
+#include "m3d/m3d.h"
 #include "obj.h"
 
 struct vertex_attribs_t {

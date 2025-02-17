@@ -32,6 +32,15 @@ struct model_load_params_t {
 };
 DECL_IMPL_LOAD_PARAM(model_load_params_t)
 
+struct shader_program_load_params_t {
+    // use either glsl or spv.
+    const char *vertex_glsl_path;
+    const char *fragment_glsl_path;
+    const char *vertex_spv_path;
+    const char *fragment_spv_path;
+};
+DECL_IMPL_LOAD_PARAM(shader_program_load_params_t)
+
 struct texture_t {
     struct {
         u32 width;
@@ -84,7 +93,7 @@ class scene_t;
 }
 
 struct loader_t {
-    ref_t<shader_program_t> load_shader_program(const shader_program_load_params_t &params);
+    ref_t<gpu_shader_t> load_shader_program(const shader_program_load_params_t &params);
 
     ref_t<texture_t> load_texture(const texture_load_params_t &params);
 
@@ -106,7 +115,7 @@ struct loader_t {
     void process_hotreload();
 
 private:
-    std::unordered_map<shader_program_load_params_t, ref_t<shader_program_t>> loaded_shaders;
+    std::unordered_map<shader_program_load_params_t, ref_t<gpu_shader_t>> loaded_shaders;
     std::unordered_map<texture_load_params_t, ref_t<texture_t>> loaded_textures;
     std::unordered_map<model_load_params_t, model_description_t> loaded_models;
     std::unordered_map<std::string, ref_t<sg::scene_t>> loaded_scenes;

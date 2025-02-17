@@ -1,6 +1,67 @@
 #include "gpu.h"
 #include "gpu_impl.h"
 
+inline bool operator ==(const VkPushConstantRange &a, const VkPushConstantRange &b) {
+    return a.stageFlags == b.stageFlags &&
+           a.offset == b.offset &&
+           a.size == b.size;
+}
+
+bool operator==(const pipeline_layout_config_t &a, const pipeline_layout_config_t &b) {
+    if (a.flags != b.flags) return false;
+    if (a.descriptor_set_layouts.len != b.descriptor_set_layouts.len) return false;
+    if (a.push_constant_ranges.len != b.push_constant_ranges.len) return false;
+
+    for (u32 i = 0; i < a.descriptor_set_layouts.len; i++) {
+        if (a.descriptor_set_layouts[i] != b.descriptor_set_layouts[i]) return false;
+    }
+
+    for (u32 i = 0; i < a.push_constant_ranges.len; i++) {
+        if (a.push_constant_ranges[i] != b.push_constant_ranges[i]) return false;
+    }
+
+    return true;
+}
+
+std::size_t std::hash<pipeline_layout_config_t>::operator()(const pipeline_layout_config_t &info) const {
+    // @todo: can surely be done cheaper. We likely don't need to check everything..
+    usize h = 0;
+    h ^= std::hash<VkPipelineLayoutCreateFlags>{}(info.flags);
+    h ^= std::hash<u32>{}(info.descriptor_set_layouts.len);
+    h ^= std::hash<u32>{}(info.push_constant_ranges.len);
+
+    for (u32 i = 0; i < info.descriptor_set_layouts.len; i++) {
+        h ^= std::hash<VkDescriptorSetLayout>{}(info.descriptor_set_layouts[i]);
+    }
+
+    for (u32 i = 0; i < info.push_constant_ranges.len; i++) {
+        h ^= std::hash<VkPushConstantRange>{}(info.push_constant_ranges[i]);
+    }
+
+    return h;
+}
+
+bool operator==(const pipeline_config_t &a, const pipeline_config_t &b) {
+    if (a.shader != b.shader) return false;
+    if (a.layout != b.layout) return false;
+    if (a.vertex_input_info != b.vertex_input_info) return false;
+    if (a.color_attachment_formats != b.color_attachment_formats) return false;
+    if (a.depth_attachment_format != b.depth_attachment_format) return false;
+
+    return true;
+}
+
+std::size_t std::hash<pipeline_config_t>::operator()(const pipeline_config_t &config) const {
+    // @todo: expand! but also, idgaf.
+    std::size_t h = 0;
+    h ^= std::hash<shader_program_load_params_t>{}(config.shader->params);
+    h ^= std::hash<gpu_cull_mode_t>{}(config.cull_mode);
+    h ^= std::hash<pipeline_layout_config_t>{}(config.layout);
+    //h ^= std::hash<decltype(config.vertex_input_info)>{}(config.vertex_input_info);
+
+    return h;
+}
+
 ref_t<gpu_pipeline_t> gpu_t::make_pipeline(const pipeline_config_t &config) {
     // making the pipeline does not neccessarily create it. It will be created
     // when
@@ -50,6 +111,7 @@ ref_t<gpu_pipeline_t> gpu_t::make_pipeline(const pipeline_config_t &config) {
     pipeline->color_attachment_formats = std::vector<VkFormat>(config.color_attachment_formats.len);
     memcpy(pipeline->color_attachment_formats.data(), config.color_attachment_formats.data, config.color_attachment_formats.len * sizeof(VkFormat));
 
+    rebuild_pipelines();
     gpu_log.info("pipeline :{:p} created", pipeline);
     loaded_pipelines[config] = pipeline;
 

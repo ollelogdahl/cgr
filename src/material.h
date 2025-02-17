@@ -2,8 +2,17 @@
 
 #include "resource.h"
 
+enum class cull_mode_t {
+    none,
+    front,
+    back,
+};
+
 class material_t {
 public:
+    ref_t<gpu_shader_t> shader = nullptr;
+    cull_mode_t cull_mode = cull_mode_t::back;
+
     v4f ambient;
     v4f diffuse;
     v4f specular;
@@ -16,4 +25,6 @@ public:
 
     ref_t<texture_t> tex_normal = nullptr;
     ref_t<texture_t> tex_roughness = nullptr;
+
+    // @todo: vector for additional attributes
 };

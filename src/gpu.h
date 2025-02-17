@@ -23,6 +23,18 @@ const char * vk_result_to_cstr(VkResult result);
 
 struct gpu_t;
 
+#define DECL_KEY(name) \
+    bool operator==(const name &lhs, const name &rhs); \
+    template <> struct std::hash<name> { \
+        std::size_t operator()(const name &params) const; \
+    };
+
+enum class gpu_cull_mode_t {
+    none,
+    front,
+    back,
+};
+
 struct gpu_buffer_t {
     gpu_t *owner;
     VkBuffer handle = VK_NULL_HANDLE;
@@ -41,20 +53,7 @@ struct gpu_image_t {
     ~gpu_image_t();
 };
 
-// i am not convinced these types should live here. Although it is fine for now i guess.
-// in reality, the resource loader should have it's own type 'managed_shader_program'
-// which keeps both a gpu_shader_program but also the modified flag and the load params.
-// I think that would be way nicer.
-struct shader_program_load_params_t {
-    const char *vertex_hlsl_path;
-    const char *fragment_hlsl_path;
-
-    bool operator==(const shader_program_load_params_t &other) const {
-        return strcmp(vertex_hlsl_path, other.vertex_hlsl_path) == 0 &&
-               strcmp(fragment_hlsl_path, other.fragment_hlsl_path) == 0;
-    }
-};
-struct shader_program_t {
+struct gpu_shader_t {
     std::vector<VkPipelineShaderStageCreateInfo> stages;
     shader_program_load_params_t params;
     bool modified = false;
@@ -64,26 +63,16 @@ struct pipeline_layout_config_t {
     VkPipelineLayoutCreateFlags flags;
     slice<const VkDescriptorSetLayout> descriptor_set_layouts;
     slice<const VkPushConstantRange> push_constant_ranges;
-
-    bool operator ==(const pipeline_layout_config_t &other) const {
-        return flags == other.flags &&
-               descriptor_set_layouts == other.descriptor_set_layouts &&
-               push_constant_ranges == other.push_constant_ranges;
-    }
 };
-
-inline bool operator ==(const VkPushConstantRange &a, const VkPushConstantRange &b) {
-    return a.stageFlags == b.stageFlags &&
-           a.offset == b.offset &&
-           a.size == b.size;
-}
+DECL_KEY(pipeline_layout_config_t)
 
 struct pipeline_config_t {
-    ref_t<shader_program_t> shader;
+    ref_t<gpu_shader_t> shader;
+    gpu_cull_mode_t cull_mode = gpu_cull_mode_t::back;
 
     struct pipeline_layout_config_t layout;
 
-    // this could have a nicer api.
+    // @todo: this could have a nicer api.
     struct {
         slice<const VkVertexInputBindingDescription> bindings;
         slice<const VkVertexInputAttributeDescription> attributes;
@@ -98,12 +87,8 @@ struct pipeline_config_t {
     VkPipelineMultisampleStateCreateInfo multisampling;
     slice<const VkFormat> color_attachment_formats;
     VkFormat depth_attachment_format;
-
-    bool operator ==(const pipeline_config_t &other) const {
-        // @todo: fix this up when the config is done.
-        return shader == other.shader;
-    }
 };
+DECL_KEY(pipeline_config_t)
 
 struct gpu_pipeline_t {
     VkPipeline pipeline;

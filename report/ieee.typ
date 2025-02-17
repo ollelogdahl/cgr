@@ -32,6 +32,7 @@
 
   // Set the body font.
   // set text(font: "STIX Two Text", size: 10pt)
+  set text(size: 10pt)
 
   // Configure the page.
   set page(
@@ -150,8 +151,8 @@
 
   // Start two column mode and configure paragraph properties.
   show: columns.with(2, gutter: 12pt)
-  set par(justify: true, first-line-indent: 1em)
-  show par: set block(spacing: 0.65em)
+  set par(justify: true, first-line-indent: 0em)
+  set par(spacing: 1.2em)
 
   // Display abstract and index terms.
   if abstract != none [

@@ -1,2 +1,2 @@
 #define M3D_IMPLEMENTATION
-#include "m3d.h"
+#include "m3d/m3d.h"

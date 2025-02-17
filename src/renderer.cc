@@ -58,6 +58,67 @@ struct material_push_block_t {
     u32 padding[1] = {0};
 };
 
+gpu_pipeline_t *renderer_t::get_or_create_pipeline(material_t &material) {
+    const VkPushConstantRange ranges[2] = {
+        { VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(m4f) },
+        { VK_SHADER_STAGE_FRAGMENT_BIT, sizeof(material_push_block_t), sizeof(m4f) }
+    };
+
+    // @todo: It would be fun to try to de-interlace the properties.
+    auto ref = gpu->make_pipeline({
+        .shader = material.shader,
+        .layout = {
+            .flags = 0,
+            .descriptor_set_layouts = { main_descriptor_set_layout, texture_descriptor_set_layout },
+            .push_constant_ranges = { ranges[0], ranges[1] },
+        },
+        .vertex_input_info = {
+            .bindings = {
+                {
+                    .binding = 0,
+                    .stride = 9 * sizeof(f32),
+                    .inputRate = VK_VERTEX_INPUT_RATE_VERTEX,
+                }
+            },
+            .attributes = {
+                {
+                    .location = 0,
+                    .binding = 0,
+                    .format = VK_FORMAT_R32G32B32_SFLOAT,
+                    .offset = 0,
+                },
+                {
+                    .location = 1,
+                    .binding = 0,
+                    .format = VK_FORMAT_R32G32B32_SFLOAT,
+                    .offset = 3 * sizeof(f32),
+                },
+                {
+                    .location = 2,
+                    .binding = 0,
+                    .format = VK_FORMAT_R32G32_SFLOAT,
+                    .offset = 7 * sizeof(f32),
+                },
+                {
+                    .location = 3,
+                    .binding = 0,
+                    .format = VK_FORMAT_R8G8B8A8_UNORM,
+                    .offset = 6 * sizeof(f32),
+                }
+
+            },
+        },
+        .depth_stencil = {
+            .depth_test = true,
+            .depth_write = true,
+            .depth_compare_op = VK_COMPARE_OP_LESS,
+        },
+        .multisampling = multisampling,
+        .color_attachment_formats = { VK_FORMAT_B8G8R8A8_UNORM },
+        .depth_attachment_format = VK_FORMAT_D32_SFLOAT,
+    });
+}
+
 void renderer_t::init(gpu_t &gpu, loader_t &loader) {
     this->gpu = &gpu;
 
