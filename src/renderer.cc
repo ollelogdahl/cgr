@@ -305,14 +305,18 @@ void renderer_t::add_directional_light(const dl_command_t &cmd) {
     commands.directional_lights.push_back(cmd);
 }
 
-void renderer_t::set_camera(camera_t &camera) {
-    this->camera = &camera;
+void renderer_t::set_view(const v3f &view_pos, const m4f &view) {
+    view_position = view_pos;
+    view_matrix = view;
+}
+
+void renderer_t::set_projection(const m4f &projection) {
+    projection_matrix = projection;
 }
 
 void renderer_t::new_frame() {
     // reset the draw elements
     commands.clear();
-    camera = nullptr;
 }
 
 material_push_block_t make_material_push_block(switch_material_op_t &op);
@@ -328,10 +332,11 @@ void renderer_t::draw(gpu_t::frame_t &frame) {
         // write to ubo buffers.
         // @todo: it is expensive to update the whole buffer all the time.
         // we can probably be smarter about this.
+        // Its hard to tell if multiple smaller writes would be quicker. Possibly.
         env_ubo_t ubo = {};
-        ubo.view = camera->view_matrix;
-        ubo.proj = camera->projection_matrix;
-        ubo.view_pos = camera->position;
+        ubo.view = view_matrix;
+        ubo.proj = projection_matrix;
+        ubo.view_pos = view_position;
         ubo.num_point_lights = commands.point_lights.size();
         ubo.num_dir_lights = commands.directional_lights.size();
 
@@ -348,8 +353,6 @@ void renderer_t::draw(gpu_t::frame_t &frame) {
         }
         auto ubo_slice = slice<u8>((u8 *)&ubo, sizeof(ubo));
 
-        // @todo: we could be smart and only update parts of the buffer.
-        // This would mean more writes and more bookkeeping, so not sure if better.
         buffer_write_barrier_t ubo_write_barrier;
         gpu->write_buffer_with_barrier(env_ubo_buffer, ubo_slice, frame.cmds, ubo_write_barrier);
         ubo_write_barrier.set_dst(

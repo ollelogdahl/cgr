@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8" ?>
 <scene>
+    <camera position="0 0 1.6" />
     <point-light position="0 2 1" color="2 2 2" />
     <model file="assets/normal-test.obj"
         mat-roughness="0.3"

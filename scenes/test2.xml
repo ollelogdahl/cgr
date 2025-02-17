@@ -1,8 +1,0 @@
-<?xml version="1.0" encoding="utf-8" ?>
-<scene>
-    <group>
-        <grid count="2 1 1" spacing="10 10 10">
-            <model file="assets/cube.obj" auto-lod="5,e-2" />
-        </grid>
-    </group>
-</scene>

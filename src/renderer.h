@@ -1,6 +1,5 @@
 #pragma once
 
-#include "camera.h"
 #include "gpu.h"
 #include "resource.h"
 #include "oc.h"
@@ -19,7 +18,10 @@ public:
     void add_point_light(const pl_command_t &cmd);
     void add_directional_light(const dl_command_t &cmd);
 
-    void set_camera(camera_t &camera);
+    void set_view(const v3f &view_pos, const m4f &view);
+
+    // @todo: redesign this!
+    void set_projection(const m4f &projection);
 
     void new_frame();
     void draw(gpu_t::frame_t &frame);
@@ -46,7 +48,9 @@ private:
 
     RenderPlanner planner;
 
-    camera_t *camera;
+    m4f view_matrix;
+    m4f projection_matrix;
+    v3f view_position;
 
     VkSampler shared_sampler;
 

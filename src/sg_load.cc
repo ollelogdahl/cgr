@@ -22,6 +22,7 @@ sg::node_t *parse_point_light(loader_t &loader, sg::scene_t &scene, tinyxml2::XM
 sg::node_t *parse_transform(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLElement *elem);
 sg::node_t *parse_lod(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLElement *elem);
 sg::node_t *parse_grid(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLElement *elem);
+sg::node_t *parse_camera(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLElement *elem);
 
 sg::node_t *interpret_node(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLElement *elem) {
     if (elem->Name() == std::string("group")) {
@@ -36,6 +37,8 @@ sg::node_t *interpret_node(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLEl
         return parse_lod(loader, scene, elem);
     } else if (elem->Name() == std::string("grid")) {
         return parse_grid(loader, scene, elem);
+    } else if (elem->Name() == std::string("camera")) {
+        return parse_camera(loader, scene, elem);
     } else {
         g_log.error("unknown node type: {}", elem->Name());
         return nullptr;
@@ -214,20 +217,24 @@ sg::node_t *parse_transform(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLE
         transform->set_state(sref);
     }
 
-    auto position = elem->Attribute("position");
-    auto scale = elem->Attribute("scale");
-    auto rotation = elem->Attribute("rotation");
+    auto translate_attr = elem->Attribute("translate");
+    auto scale_attr = elem->Attribute("scale");
+    auto rotate_attr = elem->Attribute("rotate");
 
-    if (position != nullptr) {
-        transform->set_position(parse_attr_v3f(std::string_view(position)));
+    v3f translate = {0, 0, 0};
+    v3f scale = {1, 1, 1};
+    v3f rotate = {0, 0, 0};
+    if (translate_attr != nullptr) {
+        translate = parse_attr_v3f(std::string_view(translate_attr));
     }
-    if (scale != nullptr) {
-        transform->set_scale(parse_attr_v3f(std::string_view(scale)));
+    if (scale_attr != nullptr) {
+        scale = parse_attr_v3f(std::string_view(scale_attr));
     }
-    if (rotation != nullptr) {
-        v3f eulers = parse_attr_v3f(std::string_view(rotation));
-        transform->set_euler_rotation(eulers);
+    if (rotate_attr != nullptr) {
+        rotate = parse_attr_v3f(std::string_view(rotate_attr));
     }
+
+    transform->set_initial_transform(translate, rotate, scale);
 
     for (tinyxml2::XMLElement *child = elem->FirstChildElement(); child; child = child->NextSiblingElement()) {
         auto subnode = interpret_node(loader, scene, child);
@@ -311,13 +318,10 @@ sg::node_t *parse_grid(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLElemen
                 auto halfz = (count.z - 1) * spacing.z / 2;
 
                 auto transform = scene.create_transform();
-
                 transform->set_state(state_ptr);
-                transform->set_position(v3f{
-                    x * spacing.x - halfx,
-                    y * spacing.y - halfy,
-                    z * spacing.z - halfz
-                });
+
+                v3f translate = {x * spacing.x - halfx, y * spacing.y - halfy, z * spacing.z - halfz};
+                transform->set_initial_transform(translate, v3f{0, 0, 0}, v3f{1, 1, 1});
 
                 for (auto &child : children) {
                     transform->add(child);
@@ -329,6 +333,50 @@ sg::node_t *parse_grid(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLElemen
     }
 
     return grid;
+}
+
+sg::node_t *parse_camera(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLElement *elem) {
+    auto camera = scene.create_camera();
+
+    bool set_state;
+    sg::state_t state = parse_state(loader, scene, elem, set_state);
+    if (set_state) {
+        auto sref = scene.create_state();
+        *sref = state;
+        camera->set_state(sref);
+    }
+
+    auto position_attr = elem->Attribute("position");
+    auto target_attr = elem->Attribute("target");
+    auto up_attr = elem->Attribute("up");
+
+    auto is_controlled = elem->Attribute("controlled") != nullptr;
+
+    v3f position = {0, 0, 0};
+    v3f target;
+    v3f up = {0, 1, 0};
+    if (position_attr) {
+        position = parse_attr_v3f(std::string_view(position_attr));
+    }
+    if (target_attr) {
+        target = parse_attr_v3f(std::string_view(target_attr));
+    } else {
+        target = position - v3f{0, 0, 1};
+    }
+
+    if (up_attr) {
+        up = parse_attr_v3f(std::string_view(up_attr));
+    }
+
+    camera->set_initial_state(position, target, up);
+
+    camera->set_controlled(true);
+
+    // @todo: different projections.
+    // @todo: aspect ratio ?????
+    // camera->initial_perspective(anglef::from_deg(80.0f), 1.0f, 0.1f, 100.0f);
+
+    return camera;
 }
 
 std::vector<f32> parse_attr_list_f32(const std::string_view &v) {

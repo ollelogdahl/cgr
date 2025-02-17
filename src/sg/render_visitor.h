@@ -1,28 +1,18 @@
 #pragma once
 
-#include "camera.h"
 #include "renderer.h"
 #include "sg.h"
 
-class renderer_visitor_t : public sg::node_visitor_t {
+class RenderVisitor : public sg::node_visitor_t {
 public:
-    bool lod_override = false;
-    f32 lod_p = 0.0f;
-    // @todo: real camera
-    camera_t *camera = nullptr;
-    renderer_t *renderer = nullptr;
-
-    renderer_visitor_t() {
+    RenderVisitor(renderer_t &renderer) {
+        m_renderer = &renderer;
         transform_stack.push_back(m4f::identity());
-    }
-
-    void visit(sg::group_t &group) override {
-        group.accept_children(*this);
     }
 
     void visit(sg::geometry_t &geometry) override {
         // @todo: extract from state.
-        renderer->add_draw_indexed({
+        m_renderer->add_draw_indexed({
             .vertex_buffer = geometry.vertex_buffer.get(),
             .index_buffer = geometry.index_buffer.get(),
             .index_count = geometry.index_count,
@@ -34,11 +24,10 @@ public:
     }
 
     void visit(sg::point_light_t &point_light) override {
-
         v4f p1 = v4f{point_light.position.x, point_light.position.y, point_light.position.z, 1};
         v3f position = (p1 * transform_stack.back()).xyz();
 
-        renderer->add_point_light({
+        m_renderer->add_point_light({
             .position = position,
             .color = point_light.color,
             .linear = point_light.linear,
@@ -50,21 +39,22 @@ public:
         transform.accept_children(*this);
         transform_stack.pop_back();
     }
+
     void visit(sg::camera_t &camera) override {
-        (void)camera;
+        // @todo: this could be a good place to transform the camera position into world space.
+        m_camera_position = camera.position();
+        m_renderer->set_view(camera.position(), camera.view_matrix());
     }
+
     void visit(sg::lod_t &lod) override {
-        if (lod_override) {
-            lod.set_center(v3f{0, lod_p, 0});
-        } else {
-            // we have the camera in world space, but we need it in object space.
-            v3f position_ws = (v4f{0, 0, 0, 1} * transform_stack.back()).xyz();
-            lod.set_center(camera->position - position_ws);
-        }
+        // we have the camera in world space, but we need it in object space.
+        v3f position_ws = (v4f{0, 0, 0, 1} * transform_stack.back()).xyz();
+        lod.set_center(m_camera_position - position_ws);
 
         lod.traverse(*this);
-
     }
 private:
+    renderer_t *m_renderer = nullptr;
     std::vector<m4f> transform_stack;
+    v3f m_camera_position;
 };

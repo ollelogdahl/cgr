@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8" ?>
 <scene>
+    <camera position="0 0 5" target="0 0 0" up="0 1 0" />
     <point-light color="1 1 1" />
     <grid count="20 20 20" spacing="4 4 4">
         <transform scale="0.02 0.02 0.02">

@@ -1,14 +1,15 @@
 <?xml version="1.0" encoding="utf-8" ?>
 <scene>
+    <camera position="0 1 0" />
     <point-light position="0 2 0" color="1 1 1" />
     <point-light position="4 2 0" color="1 1 1" />
     <point-light position="0 -4 0" color="1 1 1" />
-    <transform position="0 -0.5 0" scale="20 1 20">
+    <transform translate="0 -0.5 0" scale="20 1 20">
         <model file="assets/plane-paint.obj"
             mat-diffuse="0.1 0.1 0.1"
             mat-roughness="1.0"
             mat-tex-albedo0="assets/tiles074_color.jpg"
-            mat-tex-albedo1="assets/multitex/ground048-color.jpg"
+            mat-tex-albedo1="assets/tiles081_color.jpg"
             mat-tex-albedo2="assets/multitex/ground086-color.jpg"
         />
     </transform>

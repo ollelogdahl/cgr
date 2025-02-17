@@ -1,9 +1,9 @@
 #pragma once
 
 #include <vector>
+#include <functional>
 
 #include "oc.h"
-#include "resource.h"
 #include "linalg.h"
 
 #include "material.h"
@@ -14,6 +14,7 @@ struct loader_t;
 
 namespace sg {
 
+class node_t;
 class group_t;
 class point_light_t;
 class transform_t;
@@ -21,29 +22,21 @@ class geometry_t;
 class camera_t;
 class lod_t;
 
-class node_visitor_t {
-public:
-    virtual void visit(group_t &group) = 0;
-    virtual void visit(geometry_t &geometry) = 0;
-    virtual void visit(point_light_t &point_light) = 0;
-    virtual void visit(transform_t &transform) = 0;
-    virtual void visit(camera_t &camera) = 0;
-    virtual void visit(lod_t &lod) = 0;
-};
+class node_visitor_t;
 
 class state_t {
 public:
     ref_t<material_t> material;
 };
 
+typedef std::function<void(node_t &)> update_callback_t;
+
 class node_t {
 public:
     virtual ~node_t() = default;
     virtual void accept(node_visitor_t &visitor) = 0;
 
-    aabb_t bounding_box() {
-        return m_aabb;
-    }
+    virtual void reset_to_initial_state() {}
 
     state_t &state() {
         return *m_state;
@@ -52,13 +45,38 @@ public:
         this->m_state = state;
     }
 
+    aabb_t bounding_box() {
+        return m_aabb;
+    }
     void set_bounding_box(const aabb_t &aabb) {
         m_aabb = aabb;
     }
 
+    void update() {
+        if (m_update_callback) {
+            m_update_callback(*this);
+        }
+    }
+    void set_update_callback(update_callback_t callback) {
+        m_update_callback = callback;
+    }
+
 protected:
+    update_callback_t m_update_callback = nullptr;
     state_t *m_state = nullptr;
     aabb_t m_aabb;
+};
+
+class node_visitor_t {
+public:
+
+    virtual void visit(geometry_t &geometry) {}
+    virtual void visit(point_light_t &point_light) {}
+    virtual void visit(camera_t &camera) {}
+
+    virtual void visit(group_t &group);
+    virtual void visit(transform_t &transform);
+    virtual void visit(lod_t &lod);
 };
 
 // specialized nodes
@@ -75,7 +93,7 @@ public:
         }
     }
 
-    void accept(node_visitor_t &visitor) {
+    void accept(node_visitor_t &visitor) override {
         visitor.visit(*this);
     }
 
@@ -110,18 +128,37 @@ public:
             auto rot = m4f::rotate(rotation_x, v3f{1, 0, 0})
                 * m4f::rotate(rotation_y, v3f{0, 1, 0})
                 * m4f::rotate(rotation_z, v3f{0, 0, 1});
-            m_local_matrix = m4f::scale(scale) * rot * m4f::translate(position);
+            m_local_matrix = m4f::scale(scale) * rot * m4f::translate(translation);
             m_dirty = false;
         }
         return m_local_matrix;
     }
 
-    void accept(node_visitor_t &visitor) {
+    void reset_to_initial_state() override {
+        translation = initial_transform.translation;
+        rotation_x = initial_transform.rotation_x;
+        rotation_y = initial_transform.rotation_y;
+        rotation_z = initial_transform.rotation_z;
+        scale = initial_transform.scale;
+        m_dirty = true;
+    }
+
+    void accept(node_visitor_t &visitor) override {
         visitor.visit(*this);
     }
 
-    void set_position(const v3f &position) {
-        this->position = position;
+    void set_initial_transform(const v3f &translation, const v3f &euler_deg, const v3f &scale) {
+        initial_transform.translation = translation;
+        initial_transform.rotation_x = anglef::from_deg(euler_deg.x);
+        initial_transform.rotation_y = anglef::from_deg(euler_deg.y);
+        initial_transform.rotation_z = anglef::from_deg(euler_deg.z);
+        initial_transform.scale = scale;
+
+        reset_to_initial_state();
+    }
+
+    void set_translation(const v3f &translation) {
+        this->translation = translation;
         m_dirty = true;
     }
 
@@ -138,13 +175,21 @@ public:
     }
 
 private:
-    v3f position = {0, 0, 0};
+    v3f translation = {0, 0, 0};
     anglef rotation_x = anglef::zero();
     v3f scale = {1, 1, 1};
     anglef rotation_y = anglef::zero();
     m4f m_local_matrix;
     anglef rotation_z = anglef::zero();
     bool m_dirty = true;
+
+    struct {
+        v3f translation = {0, 0, 0};
+        anglef rotation_x = anglef::zero();
+        v3f scale = {1, 1, 1};
+        anglef rotation_y = anglef::zero();
+        anglef rotation_z = anglef::zero();
+    } initial_transform;
 
 };
 
@@ -155,7 +200,7 @@ public:
     geometry_t(ref_t<gpu_buffer_t> vertex_buffer, ref_t<gpu_buffer_t> index_buffer, u32 index_count)
         : vertex_buffer(vertex_buffer), index_buffer(index_buffer), index_count(index_count) {}
 
-    void accept(node_visitor_t &visitor) {
+    void accept(node_visitor_t &visitor) override {
         visitor.visit(*this);
     }
 
@@ -164,13 +209,87 @@ public:
     u32 index_count;
 };
 
+// @note: camera doesn't care about it's surrounding transforms.
 class camera_t : public node_t {
 public:
     virtual ~camera_t() = default;
 
-    void accept(node_visitor_t &visitor) {
+    v3f position() const {
+        return m_position;
+    }
+    v3f forward() const {
+        return m_forward;
+    }
+    v3f up() const {
+        return m_up;
+    }
+    v3f target() const {
+        return m_position + m_forward;
+    }
+    bool controlled() const {
+        return m_controlled;
+    }
+
+    m4f view_matrix() {
+        if (m_dirty) {
+            m_view_matrix = m4f::look_at(m_position, m_position + m_forward, m_up);
+            m_dirty = false;
+        }
+
+        return m_view_matrix;
+    }
+
+    void set_position(const v3f &position) {
+        m_position = position;
+        m_dirty = true;
+    }
+    void set_forward(const v3f &forward) {
+        m_forward = forward;
+        m_dirty = true;
+    }
+    void set_up(const v3f &up) {
+        m_up = up;
+        m_dirty = true;
+    }
+    void set_target(const v3f &target) {
+        m_forward = v3f::normalize(target - m_position);
+        m_dirty = true;
+    }
+
+    void set_controlled(bool controlled) {
+        m_controlled = controlled;
+    }
+
+    void set_initial_state(const v3f &position, const v3f &target, const v3f &up) {
+        m_initial.position = position;
+        m_initial.forward = v3f::normalize(target - position);
+        m_initial.up = up;
+        reset_to_initial_state();
+    }
+
+    void accept(node_visitor_t &visitor) override {
         visitor.visit(*this);
     }
+
+    void reset_to_initial_state() override {
+        m_position = m_initial.position;
+        m_forward = m_initial.forward;
+        m_up = m_initial.up;
+        m_dirty = true;
+    }
+private:
+    m4f m_view_matrix;
+    v3f m_position;
+    v3f m_forward;
+    v3f m_up;
+    bool m_dirty = true;
+    bool m_controlled = false;
+
+    struct {
+        v3f position;
+        v3f forward;
+        v3f up;
+    } m_initial;
 };
 
 class lod_t : public group_t {
@@ -222,6 +341,9 @@ public:
     }
 
     void clear();
+
+    // resets the scene to its initial state.
+    void reset_to_initial_state();
 
 #define DECL_CREATOR(name, tname, storage) \
     template <typename ...Args> \
