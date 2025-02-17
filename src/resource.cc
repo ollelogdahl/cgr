@@ -170,7 +170,9 @@ model_description_t loader_t::load_model(const model_load_params_t &params) {
 
             if (colors.data != nullptr) {
                 u32 *uptr = (u32 *)(ptr + 6);
-                uptr[0] = colors[i];
+                // @note: we need to flip it, as rgba8 is stored as abgr8 on the cpu (little-endian)
+                u32 flipped = ((colors[i] & 0xff000000) >> 24) | ((colors[i] & 0x00ff0000) >> 8) | ((colors[i] & 0x0000ff00) << 8) | ((colors[i] & 0x000000ff) << 24);
+                uptr[0] = flipped;
             }
 
             if (uvs.data != nullptr) {
