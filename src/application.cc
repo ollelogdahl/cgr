@@ -1,13 +1,17 @@
 #include "application.h"
 
+#include "imgui/imgui.h"
 #include "log.h"
 #include "sg/render_visitor.h"
+#include "sg/update_visitor.h"
 
 #include "control/freefly_controller.h"
 
 #include <tracy/Tracy.hpp>
 
 #include <GLFW/glfw3.h>
+
+std::string num_to_human(usize num);
 
 void Application::init_and_run(const char *scene_file_path) {
     oc_init();
@@ -34,6 +38,8 @@ void Application::init_and_run(const char *scene_file_path) {
     // renderer visitor
     RenderVisitor render_visitor(m_renderer);
 
+    update_visitor_t update_visitor;
+
     // camera movement visitor
     struct camera_movement_visitor_t : sg::node_visitor_t {
         camera_movement_visitor_t(Application &app) : controller(app) {}
@@ -59,6 +65,7 @@ void Application::init_and_run(const char *scene_file_path) {
             ZoneScopedN("update");
 
             m_current_scene->accept(camera_movement_visitor);
+            m_current_scene->accept(update_visitor);
 
             if (glfwGetKey(m_window, GLFW_KEY_ESCAPE) == GLFW_PRESS) {
                 glfwSetWindowShouldClose(m_window, GLFW_TRUE);
@@ -80,6 +87,28 @@ void Application::init_and_run(const char *scene_file_path) {
 
         m_loader.process_hotreload();
 
+        ImGui::Begin("Loaded Models");
+
+        for (auto &[params, model] : m_loader.get_loaded_models()) {
+            ImGui::BeginGroup();
+
+            ImGui::Text("%s", params.path.c_str());
+            ImGui::Text("  meshes: %lu", model.meshes.size());
+
+            ImGui::Text("  LODs");
+            for (u32 i = 0; i < model.meshes[0].lods.size(); ++i) {
+                auto sum = 0;
+                for (auto &m : model.meshes) {
+                    sum += m.lods[i].index_count;
+                }
+                ImGui::Text("    %u: %s", i, num_to_human(sum).c_str());
+            }
+
+            ImGui::EndGroup();
+        }
+
+        ImGui::End();
+
         m_gpu.frame([&](gpu_t::frame_t &frame) {
             ZoneScopedN("frame-submit");
 
@@ -93,5 +122,17 @@ void Application::init_and_run(const char *scene_file_path) {
         }
 
         FrameMark;
+    }
+}
+
+std::string num_to_human(usize num) {
+    if (num < 1000) {
+        return std::to_string(num);
+    }
+    else if (num < 1000000) {
+        return fmt::format("{:.2f}k", (f32)num / 1000);
+    }
+    else {
+        return fmt::format("{:.2f}M", (f32)num / 1000000);
     }
 }

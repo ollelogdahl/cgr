@@ -6,9 +6,9 @@ krav kvar!!!
     - X Knapp för att reseta positionen.
 - X Knapp för avsluta program
 - X Reset till initial translate
-- Utöka State att innehålla shader-program och möjligvis uniforms.
+- X/ Utöka State att innehålla shader-program och möjligvis uniforms.
 - State ska också kunna ändra pipeline (dis-/enable lighting, Cull-face)
-- Update visitor och enkla animationer (en transform kan ha en element).
+- X Update visitor och enkla animationer (en transform kan ha en element).
 - Geometri builder
 - Kunna spec:a lod själv?
 

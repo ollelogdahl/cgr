@@ -95,16 +95,16 @@ struct loader_t {
 
     ref_t<sg::scene_t> load_scene(const char *path);
 
-    std::vector<model_description_t> get_loaded_models() {
-        std::vector<model_description_t> models;
-        for (auto &[_, model] : loaded_models) {
-            models.push_back(model);
+    void init(gpu_t &gpu);
+    void process_hotreload();
+
+    std::vector<std::pair<model_load_params_t, model_description_t>> get_loaded_models() {
+        std::vector<std::pair<model_load_params_t, model_description_t>> models;
+        for (auto &[params, model] : loaded_models) {
+            models.push_back({params, model});
         }
         return models;
     }
-
-    void init(gpu_t &gpu);
-    void process_hotreload();
 
 private:
     std::unordered_map<shader_program_load_params_t, ref_t<gpu_shader_t>> loaded_shaders;

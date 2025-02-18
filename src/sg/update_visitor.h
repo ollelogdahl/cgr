@@ -1,32 +1,34 @@
-#pragma
+#pragma once
+
+#include "sg.h"
 
 class update_visitor_t : public sg::node_visitor_t {
 public:
-    void visit(geometry_t &geometry) override {
-        geometry->update();
+    void visit(sg::geometry_t &geometry) override {
+        geometry.update();
     }
-    void visit(point_light_t &point_light) override {
-        point_light->update();
+    void visit(sg::point_light_t &point_light) override {
+        point_light.update();
     }
-    void visit(camera_t &camera) override {
-        camera->update();
+    void visit(sg::camera_t &camera) override {
+        camera.update();
     }
-    void visit(group_t &group) override {
-        for (auto &child : group->children()) {
+    void visit(sg::group_t &group) override {
+        for (auto &child : group.children()) {
             child->accept(*this);
         }
-        group->update();
+        group.update();
     }
-    void visit(transform_t &transform) override {
-        for (auto &child : transform->children()) {
+    void visit(sg::transform_t &transform) override {
+        for (auto &child : transform.children()) {
             child->accept(*this);
         }
-        transform->update();
+        transform.update();
     }
-    void visit(lod_t &lod) override {
-        for (auto &child : lod->children()) {
+    void visit(sg::lod_t &lod) override {
+        for (auto &child : lod.children()) {
             child->accept(*this);
         }
-        lod->update();
+        lod.update();
     }
 };

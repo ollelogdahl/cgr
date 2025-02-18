@@ -253,6 +253,8 @@ sg::node_t *parse_transform(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLE
     auto scale_attr = elem->Attribute("scale");
     auto rotate_attr = elem->Attribute("rotate");
 
+    auto spin_attr = elem->Attribute("spin");
+
     v3f translate = {0, 0, 0};
     v3f scale = {1, 1, 1};
     v3f rotate = {0, 0, 0};
@@ -267,6 +269,13 @@ sg::node_t *parse_transform(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLE
     }
 
     transform->set_initial_transform(translate, rotate, scale);
+
+    if (spin_attr) {
+        auto spin = parse_attr_v3f(std::string_view(spin_attr));
+        transform->set_update_callback([spin, transform](sg::node_t &node) {
+            transform->set_euler_rotation(transform->euler_rotation() + spin);
+        });
+    }
 
     for (tinyxml2::XMLElement *child = elem->FirstChildElement(); child; child = child->NextSiblingElement()) {
         auto subnode = interpret_node(loader, scene, child);
@@ -524,7 +533,7 @@ sg::state_t parse_state(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLEleme
 
     if (any_material_attr_set) {
         state.material = scene.create_material();
-    
+
         auto default_state = scene.default_state();
 
         state.material->ambient = default_state->material->ambient;

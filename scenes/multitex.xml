@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8" ?>
 <scene>
     <camera position="0 1 0" />
-    <directional-light direction="0 -1 0" />
+    <directional-light color="2 2 2" direction="0 -1 0" />
     <transform translate="0 -0.5 0" scale="20 1 20">
         <model file="assets/plane-paint.obj"
             mat-diffuse="0.1 0.1 0.1"

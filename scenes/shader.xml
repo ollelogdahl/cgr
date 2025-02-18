@@ -3,10 +3,16 @@
     <camera position="0 0 5" target="0 0 0" up="0 1 0" />
     <point-light position="0 0.7 1" color="3 3 3" />
     <point-light position="2 2 1" color="0 0.5 1.5" />
-    <transform translate="0 0 0" scale="0.5 0.5 0.5">
+    <transform translate="0 2 0" scale="0.5 0.5 0.5">
         <model file="assets/ico7s.obj"
             shader-vert-glsl="shaders/default.vert"
             shader-frag-glsl="shaders/toon.frag"
+        />
+    </transform>
+    <transform translate="1 0 0" scale="0.5 0.5 0.5">
+        <model file="assets/man.obj"
+            mat-roughness="0.9"
+            mat-tex-albedo0="assets/man.png"
         />
     </transform>
 </scene>

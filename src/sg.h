@@ -154,21 +154,21 @@ public:
 
     m4f get_local_matrix() {
         if (m_dirty) {
-            auto rot = m4f::rotate(rotation_x, v3f{1, 0, 0})
-                * m4f::rotate(rotation_y, v3f{0, 1, 0})
-                * m4f::rotate(rotation_z, v3f{0, 0, 1});
-            m_local_matrix = m4f::scale(scale) * rot * m4f::translate(translation);
+            auto rot = m4f::rotate(m_rotation_x, v3f{1, 0, 0})
+                * m4f::rotate(m_rotation_y, v3f{0, 1, 0})
+                * m4f::rotate(m_rotation_z, v3f{0, 0, 1});
+            m_local_matrix = m4f::scale(m_scale) * rot * m4f::translate(m_translation);
             m_dirty = false;
         }
         return m_local_matrix;
     }
 
     void reset_to_initial_state() override {
-        translation = initial_transform.translation;
-        rotation_x = initial_transform.rotation_x;
-        rotation_y = initial_transform.rotation_y;
-        rotation_z = initial_transform.rotation_z;
-        scale = initial_transform.scale;
+        m_translation = initial_transform.translation;
+        m_rotation_x = initial_transform.rotation_x;
+        m_rotation_y = initial_transform.rotation_y;
+        m_rotation_z = initial_transform.rotation_z;
+        m_scale = initial_transform.scale;
         m_dirty = true;
     }
 
@@ -187,29 +187,33 @@ public:
     }
 
     void set_translation(const v3f &translation) {
-        this->translation = translation;
+        this->m_translation = translation;
         m_dirty = true;
     }
 
     void set_euler_rotation(const v3f &euler_deg) {
-        rotation_x = anglef::from_deg(euler_deg.x);
-        rotation_y = anglef::from_deg(euler_deg.y);
-        rotation_z = anglef::from_deg(euler_deg.z);
+        m_rotation_x = anglef::from_deg(euler_deg.x);
+        m_rotation_y = anglef::from_deg(euler_deg.y);
+        m_rotation_z = anglef::from_deg(euler_deg.z);
         m_dirty = true;
     }
 
+    v3f euler_rotation() {
+        return {m_rotation_x.as_deg(), m_rotation_y.as_deg(), m_rotation_z.as_deg()};
+    }
+
     void set_scale(const v3f &scale) {
-        this->scale = scale;
+        this->m_scale = scale;
         m_dirty = true;
     }
 
 private:
-    v3f translation = {0, 0, 0};
-    anglef rotation_x = anglef::zero();
-    v3f scale = {1, 1, 1};
-    anglef rotation_y = anglef::zero();
     m4f m_local_matrix;
-    anglef rotation_z = anglef::zero();
+    v3f m_translation = {0, 0, 0};
+    anglef m_rotation_x = anglef::zero();
+    v3f m_scale = {1, 1, 1};
+    anglef m_rotation_y = anglef::zero();
+    anglef m_rotation_z = anglef::zero();
     bool m_dirty = true;
 
     struct {
