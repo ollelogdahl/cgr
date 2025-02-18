@@ -349,16 +349,6 @@ private:
 
 class scene_t {
 public:
-    scene_t() {
-        m_default_material = create_material();
-        m_default_material->ambient = {0.1f, 0.1f, 0.1f, 1.0f};
-        m_default_material->diffuse = {0.5f, 0.5f, 0.5f, 1.0f};
-        m_default_material->specular = {0.5f, 0.5f, 0.5f, 1.0f};
-        m_default_material->roughness = 0.5f;
-
-        m_default_state.material = m_default_material;
-    }
-
     void add(node_t *node) {
         nodes.push_back(node);
     }
@@ -374,11 +364,18 @@ public:
     // resets the scene to its initial state.
     void reset_to_initial_state();
 
+    void set_default_state(state_t *state) {
+        m_default_state = state;
+    }
+    state_t *default_state() {
+        return m_default_state;
+    }
+
 #define DECL_CREATOR(name, tname, storage) \
     template <typename ...Args> \
     tname *create_##name(Args... args) { \
         auto ptr = storage.alloc_make(args...); \
-        ptr->set_state(&m_default_state); \
+        ptr->set_state(m_default_state); \
         return ptr; \
     }
 
@@ -393,7 +390,7 @@ public:
 
     state_t *create_state() {
         auto ptr = storage.states.alloc_make();
-        ptr->material = m_default_material;
+        ptr->material = m_default_state->material;
         return ptr;
     }
 
@@ -401,10 +398,6 @@ public:
         auto ptr = make_ref<material_t>();
         storage.materials.push_back(ptr);
         return ptr;
-    }
-
-    ref_t<material_t> default_material() {
-        return m_default_material;
     }
 
 private:
@@ -423,8 +416,7 @@ private:
         std::vector<ref_t<material_t>> materials;
     } storage;
 
-    state_t m_default_state;
-    ref_t<material_t> m_default_material;
+    state_t *m_default_state;
 
     bool modified_on_disk = false;
     std::string disk_path;

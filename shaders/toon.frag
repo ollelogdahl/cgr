@@ -244,8 +244,8 @@ void main() {
         out_color += vec4(color, 1.0);
     }
 
-    float ambient = 0.02;
-    out_color += vec4(ambient, ambient, ambient, 0.0);
+
+    out_color = floor(out_color * 4) / 4;
 
     outColor = out_color;
 }

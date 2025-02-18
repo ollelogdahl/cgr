@@ -52,7 +52,6 @@ void Application::init_and_run(const char *scene_file_path) {
 
     g_log.info("running...");
     while (!glfwWindowShouldClose(m_window)) {
-        m_loader.process_hotreload();
         m_renderer.new_frame();
         m_gui_renderer.new_frame();
 
@@ -75,7 +74,11 @@ void Application::init_and_run(const char *scene_file_path) {
             );
 
             m_current_scene->accept(render_visitor);
+
+            m_renderer.prepare_drawing();
         }
+
+        m_loader.process_hotreload();
 
         m_gpu.frame([&](gpu_t::frame_t &frame) {
             ZoneScopedN("frame-submit");

@@ -1,7 +1,9 @@
 <?xml version="1.0" encoding="utf-8" ?>
 <scene>
     <camera position="0 0 1.6" />
-    <point-light position="0 2 1" color="2 2 2" />
+    <point-light position="0 2 1" color="2 0 0" />
+    <point-light position="1 2 1" color="0 0 2" />
+    <point-light position="-1 2 1" color="0 2 0" />
     <model file="assets/normal-test.obj"
         mat-roughness="0.3"
         mat-tex-albedo0="assets/normal-test-0.png"

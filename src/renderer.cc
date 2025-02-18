@@ -113,10 +113,11 @@ gpu_pipeline_t *renderer_t::get_or_create_pipeline(material_t &material) {
             .depth_write = true,
             .depth_compare_op = VK_COMPARE_OP_LESS,
         },
-        .multisampling = multisampling,
         .color_attachment_formats = { VK_FORMAT_B8G8R8A8_UNORM },
         .depth_attachment_format = VK_FORMAT_D32_SFLOAT,
     });
+
+    return ref.get();
 }
 
 void renderer_t::init(gpu_t &gpu, loader_t &loader) {
@@ -124,15 +125,6 @@ void renderer_t::init(gpu_t &gpu, loader_t &loader) {
 
     // setup pipeline
     {
-        VkPipelineMultisampleStateCreateInfo multisampling{};
-        multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
-        multisampling.sampleShadingEnable = VK_FALSE;
-        multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
-        multisampling.minSampleShading = 1.0f; // Optional
-        multisampling.pSampleMask = nullptr; // Optional
-        multisampling.alphaToCoverageEnable = VK_FALSE; // Optional
-        multisampling.alphaToOneEnable = VK_FALSE; // Optional
-
         // @todo: temp
         {
             VkDescriptorSetLayoutBinding uboLayoutBinding{};
@@ -187,9 +179,10 @@ void renderer_t::init(gpu_t &gpu, loader_t &loader) {
             { VK_SHADER_STAGE_FRAGMENT_BIT, sizeof(material_push_block_t), sizeof(m4f) }
         };
 
+        /*
         auto shader = loader.load_shader_program({
-           .vertex_hlsl_path = "shaders/test.vert",
-           .fragment_hlsl_path = "shaders/test.frag",
+           .vertex_glsl_path = "shaders/test.vert",
+           .fragment_glsl_path = "shaders/test.frag",
         });
 
         // @todo: It would be fun to try to de-interlace the properties.
@@ -245,6 +238,7 @@ void renderer_t::init(gpu_t &gpu, loader_t &loader) {
             .color_attachment_formats = { VK_FORMAT_B8G8R8A8_UNORM },
             .depth_attachment_format = VK_FORMAT_D32_SFLOAT,
         });
+         */
     }
 
     // setup descriptor sets
@@ -382,9 +376,12 @@ void renderer_t::new_frame() {
 
 material_push_block_t make_material_push_block(switch_material_op_t &op);
 
+void renderer_t::prepare_drawing() {
+    ops = planner.plan_rendering(*this);
+}
+
 void renderer_t::draw(gpu_t::frame_t &frame) {
     TracyVkZone(frame.tracy_ctx, frame.cmds, "renderer-draw");
-    auto planned_ops = planner.plan_rendering(*this);
 
     // wait for the ubo to be written.
     {
@@ -473,8 +470,6 @@ void renderer_t::draw(gpu_t::frame_t &frame) {
 
     vkCmdBeginRendering(frame.cmds, &rendering_info);
 
-    vkCmdBindPipeline(frame.cmds, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline->pipeline);
-
     VkViewport viewport{
         .x = 0.0f,
         .y = 0.0f,
@@ -490,10 +485,6 @@ void renderer_t::draw(gpu_t::frame_t &frame) {
 
     vkCmdSetViewport(frame.cmds, 0, 1, &viewport);
     vkCmdSetScissor(frame.cmds, 0, 1, &scissor);
-    VkDescriptorSet sets[] = { main_descriptor_set, texture_descriptor_set };
-    vkCmdBindDescriptorSets(frame.cmds, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline->layout,
-        0, array_size(sets), sets, 0, nullptr);
-
 
     // @todo: implement instancing.
     // this is actually really simple. If we can sort the elements by the mesh,
@@ -509,8 +500,17 @@ void renderer_t::draw(gpu_t::frame_t &frame) {
     {
         ZoneScopedN("draw-ops");
         TracyVkZone(frame.tracy_ctx, frame.cmds, "draw-ops");
-        for (auto &op : planned_ops) {
+        VkPipelineLayout current_pipeline_layout = VK_NULL_HANDLE;
+        for (auto &op : ops) {
             std::visit(overloaded{
+                [&](switch_pipeline_op_t &op) {
+                    auto pipeline = op.pipeline;
+                    current_pipeline_layout = pipeline->layout;
+                    vkCmdBindPipeline(frame.cmds, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline->pipeline);
+                    VkDescriptorSet sets[] = { main_descriptor_set, texture_descriptor_set };
+                    vkCmdBindDescriptorSets(frame.cmds, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline->layout,
+                        0, array_size(sets), sets, 0, nullptr);
+                },
                 [&](switch_buffers_op_t &op) {
                     VkBuffer buffers[] = {op.vertex_buffer->handle};
                     VkDeviceSize offsets[] = {0};
@@ -518,17 +518,21 @@ void renderer_t::draw(gpu_t::frame_t &frame) {
                     vkCmdBindIndexBuffer(frame.cmds, op.index_buffer->handle, 0, VK_INDEX_TYPE_UINT32);
                 },
                 [&](draw_indexed_op_t &op) {
-                    vkCmdPushConstants(frame.cmds, pipeline->layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(m4f), &op.transform);
+                    assert(current_pipeline_layout != VK_NULL_HANDLE);
+                    vkCmdPushConstants(frame.cmds, current_pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(m4f), &op.transform);
                     vkCmdDrawIndexed(frame.cmds, op.index_count, 1, op.index_offset, op.vertex_offset, 0);
                 },
                 [&](switch_material_op_t &op) {
+                    assert(current_pipeline_layout != VK_NULL_HANDLE);
+
                     auto push_block = make_material_push_block(op);
 
-                    vkCmdPushConstants(frame.cmds, pipeline->layout, VK_SHADER_STAGE_FRAGMENT_BIT, sizeof(m4f), sizeof(material_push_block_t), &push_block);
+                    vkCmdPushConstants(frame.cmds, current_pipeline_layout, VK_SHADER_STAGE_FRAGMENT_BIT, sizeof(m4f), sizeof(material_push_block_t), &push_block);
                 },
             }, op);
         }
     }
+    vkCmdEndRendering(frame.cmds);
 }
 
 material_push_block_t make_material_push_block(switch_material_op_t &op) {

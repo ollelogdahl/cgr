@@ -53,6 +53,15 @@ struct gpu_image_t {
     ~gpu_image_t();
 };
 
+struct shader_program_load_params_t {
+    // use either glsl or spv.
+    std::string vertex_glsl_path;
+    std::string fragment_glsl_path;
+    std::string vertex_spv_path;
+    std::string fragment_spv_path;
+};
+DECL_KEY(shader_program_load_params_t)
+
 struct gpu_shader_t {
     std::vector<VkPipelineShaderStageCreateInfo> stages;
     shader_program_load_params_t params;
@@ -61,8 +70,8 @@ struct gpu_shader_t {
 
 struct pipeline_layout_config_t {
     VkPipelineLayoutCreateFlags flags;
-    slice<const VkDescriptorSetLayout> descriptor_set_layouts;
-    slice<const VkPushConstantRange> push_constant_ranges;
+    std::vector<VkDescriptorSetLayout> descriptor_set_layouts;
+    std::vector<VkPushConstantRange> push_constant_ranges;
 };
 DECL_KEY(pipeline_layout_config_t)
 
@@ -74,8 +83,8 @@ struct pipeline_config_t {
 
     // @todo: this could have a nicer api.
     struct {
-        slice<const VkVertexInputBindingDescription> bindings;
-        slice<const VkVertexInputAttributeDescription> attributes;
+        std::vector<VkVertexInputBindingDescription> bindings;
+        std::vector<VkVertexInputAttributeDescription> attributes;
     } vertex_input_info;
 
     struct {
@@ -84,8 +93,7 @@ struct pipeline_config_t {
         VkCompareOp depth_compare_op;
     } depth_stencil;
 
-    VkPipelineMultisampleStateCreateInfo multisampling;
-    slice<const VkFormat> color_attachment_formats;
+    std::vector<VkFormat> color_attachment_formats;
     VkFormat depth_attachment_format;
 };
 DECL_KEY(pipeline_config_t)
@@ -93,67 +101,6 @@ DECL_KEY(pipeline_config_t)
 struct gpu_pipeline_t {
     VkPipeline pipeline;
     VkPipelineLayout layout;
-
-    std::vector<VkFormat> color_attachment_formats;
-
-    struct {
-        std::vector<VkVertexInputBindingDescription> bindings;
-        std::vector<VkVertexInputAttributeDescription> attributes;
-    } vertex_input_info;
-};
-
-template <>
-struct std::hash<shader_program_load_params_t> {
-    std::size_t operator()(const shader_program_load_params_t &params) const {
-        std::size_t h1 = std::hash<const char*>{}(params.vertex_hlsl_path);
-        std::size_t h2 = std::hash<const char*>{}(params.fragment_hlsl_path);
-        return h1 ^ (h2 << 1);
-    }
-};
-
-template <>
-struct std::hash<pipeline_config_t> {
-    std::size_t operator()(const pipeline_config_t &config) const {
-        // @todo: hash all fields.
-        std::size_t h1 = std::hash<shader_program_load_params_t>{}(config.shader->params);
-        return h1;
-    }
-};
-
-/*
-u64 fnv1a(slice<u8> data) {
-    u64 hash = 14695981039346656037u;
-    for (u8 byte : data) {
-        hash ^= byte;
-        hash *= 1099511628211;
-    }
-    return hash;
-}
- */
-
-template <>
-struct std::hash<pipeline_layout_config_t> {
-    std::size_t operator()(const pipeline_layout_config_t &info) const {
-        // @todo: most likely a really shitty hash function.
-        // we should probably use a better hash_combine, or maybe go hard with
-        // FNV-1a hashing.
-        auto h1 = std::hash<VkPipelineLayoutCreateFlags>{}(info.flags);
-        auto h2 = std::hash<u32>{}(info.descriptor_set_layouts.len);
-        auto h3 = std::hash<u32>{}(info.push_constant_ranges.len);
-
-        auto h = h1 ^ (h2 << 1) ^ (h3 << 2);
-        for (u32 i = 0; i < info.descriptor_set_layouts.len; i++) {
-            h ^= (std::hash<VkDescriptorSetLayout>{}(info.descriptor_set_layouts[i]) << i);
-        }
-        for (u32 i = 0; i < info.push_constant_ranges.len; i++) {
-            auto &range = info.push_constant_ranges[i];
-            h ^= (std::hash<VkShaderStageFlags>{}(range.stageFlags) << i);
-            h ^= (std::hash<u32>{}(range.offset) << i);
-            h ^= (std::hash<u32>{}(range.size) << i);
-        }
-
-        return h;
-    }
 };
 
 struct buffer_write_barrier_t {

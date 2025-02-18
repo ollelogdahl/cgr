@@ -129,7 +129,7 @@ sg::node_t *parse_model(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLEleme
 
     if (use_autolod) {
         auto lod = scene.create_lod();
-        lod->set_state(state_ptr);
+        if (state_ptr) lod->set_state(state_ptr);
         lod->set_bounding_box(model_desc.aabb);
 
         std::vector<f32> min_ranges = {};
@@ -142,13 +142,13 @@ sg::node_t *parse_model(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLEleme
             }
 
             auto group = scene.create_group();
-            group->set_state(state_ptr);
+            if (state_ptr) group->set_state(state_ptr);
 
             for (auto &mesh : model_desc.meshes) {
                 auto geometry = scene.create_geometry(mesh.vertex_buffer,
                     mesh.lods[i].index_buffer, mesh.lods[i].index_count);
 
-                geometry->set_state(state_ptr);
+                if (state_ptr) geometry->set_state(state_ptr);
                 geometry->set_bounding_box(model_desc.aabb);
 
                 group->add(geometry);
@@ -162,14 +162,14 @@ sg::node_t *parse_model(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLEleme
         return lod;
     } else {
         auto group = scene.create_group();
-        group->set_state(state_ptr);
+        if (state_ptr) group->set_state(state_ptr);
         group->set_bounding_box(model_desc.aabb);
 
         for (auto &mesh : model_desc.meshes) {
             auto geometry = scene.create_geometry(mesh.vertex_buffer,
                 mesh.lods[0].index_buffer, mesh.lods[0].index_count);
 
-            geometry->set_state(state_ptr);
+            if (state_ptr) geometry->set_state(state_ptr);
             geometry->set_bounding_box(model_desc.aabb);
             group->add(geometry);
         }
@@ -506,6 +506,9 @@ sg::state_t parse_state(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLEleme
     auto mat_tex_normal_attr = elem->Attribute("mat-tex-normal");
     auto mat_tex_roughness_attr = elem->Attribute("mat-tex-roughness");
 
+    auto shader_glsl_frag_attr = elem->Attribute("shader-frag-glsl");
+    auto shader_glsl_vert_attr = elem->Attribute("shader-vert-glsl");
+
     any_material_attr_set |= mat_diffuse_attr != nullptr;
     any_material_attr_set |= mat_specular_attr != nullptr;
     any_material_attr_set |= mat_ambient_attr != nullptr;
@@ -516,8 +519,26 @@ sg::state_t parse_state(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLEleme
     any_material_attr_set |= mat_tex_normal_attr != nullptr;
     any_material_attr_set |= mat_tex_roughness_attr != nullptr;
 
+    any_material_attr_set |= shader_glsl_frag_attr != nullptr;
+    any_material_attr_set |= shader_glsl_vert_attr != nullptr;
+
     if (any_material_attr_set) {
         state.material = scene.create_material();
+    
+        auto default_state = scene.default_state();
+
+        state.material->ambient = default_state->material->ambient;
+        state.material->diffuse = default_state->material->diffuse;
+        state.material->specular = default_state->material->specular;
+        state.material->roughness = default_state->material->roughness;
+        state.material->metallic = default_state->material->metallic;
+        state.material->tex_albedo0 = default_state->material->tex_albedo0;
+        state.material->tex_albedo1 = default_state->material->tex_albedo1;
+        state.material->tex_albedo2 = default_state->material->tex_albedo2;
+        state.material->tex_normal = default_state->material->tex_normal;
+        state.material->tex_roughness = default_state->material->tex_roughness;
+        state.material->shader = default_state->material->shader;
+        state.material->cull_mode = default_state->material->cull_mode;
     }
 
     if (mat_diffuse_attr) {
@@ -555,6 +576,14 @@ sg::state_t parse_state(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLEleme
     if (mat_tex_roughness_attr) {
         success = true;
         state.material->tex_roughness = loader.load_texture({.path = mat_tex_roughness_attr, .srgb = false});
+    }
+
+    if (shader_glsl_frag_attr && shader_glsl_vert_attr) {
+        success = true;
+        state.material->shader = loader.load_shader_program({
+            .vertex_glsl_path = shader_glsl_vert_attr,
+            .fragment_glsl_path = shader_glsl_frag_attr,
+        });
     }
 
     return state;

@@ -43,12 +43,21 @@ std::vector<render_op_t> &RenderPlanner::plan_rendering(renderer_t &renderer) {
     });
 
     // iterate over the sorted list and generate the ops.
+    gpu_pipeline_t *current_pipeline = nullptr;
     material_t *current_material = nullptr;
     gpu_buffer_t *current_vertex_buffer = nullptr;
     gpu_buffer_t *current_index_buffer = nullptr;
     for (auto idx : indices) {
         auto &cmd = renderer.commands.draw_indexed[idx];
         if (cmd.material != current_material) {
+            auto pipeline = renderer.get_or_create_pipeline(*cmd.material);
+            if (pipeline != current_pipeline) {
+                ops.push_back(switch_pipeline_op_t{
+                    .pipeline = pipeline,
+                });
+                current_pipeline = pipeline;
+            }
+
             ops.push_back(switch_material_op_t{
                 .material = cmd.material,
                 .albedo0_idx = renderer.get_or_create_texture_handle(cmd.material->tex_albedo0),

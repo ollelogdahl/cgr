@@ -32,15 +32,6 @@ struct model_load_params_t {
 };
 DECL_IMPL_LOAD_PARAM(model_load_params_t)
 
-struct shader_program_load_params_t {
-    // use either glsl or spv.
-    const char *vertex_glsl_path;
-    const char *fragment_glsl_path;
-    const char *vertex_spv_path;
-    const char *fragment_spv_path;
-};
-DECL_IMPL_LOAD_PARAM(shader_program_load_params_t)
-
 struct texture_t {
     struct {
         u32 width;
@@ -90,6 +81,7 @@ struct fswatcher_t {
 
 namespace sg {
 class scene_t;
+class state_t;
 }
 
 struct loader_t {
@@ -122,6 +114,8 @@ private:
 
     fswatcher_t watcher;
     gpu_t *gpu;
+
+    sg::state_t *m_default_state;
 
     const char *glslc_path;
 };

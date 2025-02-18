@@ -19,7 +19,7 @@
 #define SHADER_STAGE_VERTEX 0
 #define SHADER_STAGE_FRAGMENT 1
 
-static VkPipelineShaderStageCreateInfo compile_shader(const loader_t &loader, const char *glslc_path, gpu_t &gpu, const char *path, int type);
+static VkPipelineShaderStageCreateInfo compile_shader(const loader_t &loader, const char *glslc_path, gpu_t &gpu, std::string path, int type);
 static bool file_a_is_newer_than_b(const char *a, const char *b);
 
 static logger_t logger = logger_t("loader");
@@ -37,8 +37,8 @@ std::size_t std::hash<texture_load_params_t>::operator()(const texture_load_para
 bool operator==(const shader_program_load_params_t &lhs, const shader_program_load_params_t &rhs) {
     // horrific code!!!
     {
-        auto luse_glsl = lhs.vertex_glsl_path != nullptr;
-        auto ruse_glsl = rhs.vertex_glsl_path != nullptr;
+        auto luse_glsl = !lhs.vertex_glsl_path.empty();
+        auto ruse_glsl = !rhs.vertex_glsl_path.empty();
 
         // if one uses glsl, the other must also use glsl.
         if (luse_glsl != ruse_glsl) return false;
@@ -51,8 +51,8 @@ bool operator==(const shader_program_load_params_t &lhs, const shader_program_lo
     }
 
     {
-        auto luse_glsl = lhs.fragment_glsl_path != nullptr;
-        auto ruse_glsl = rhs.fragment_glsl_path != nullptr;
+        auto luse_glsl = !lhs.fragment_glsl_path.empty();
+        auto ruse_glsl = !rhs.fragment_glsl_path.empty();
 
         // if one uses glsl, the other must also use glsl.
         if (luse_glsl != ruse_glsl) return false;
@@ -63,21 +63,22 @@ bool operator==(const shader_program_load_params_t &lhs, const shader_program_lo
             if (lhs.fragment_spv_path != rhs.fragment_spv_path) return false;
         }
     }
+
+    return true;
 }
 
 std::size_t std::hash<shader_program_load_params_t>::operator()(const shader_program_load_params_t &params) const {
     std::size_t h = 0;
-    // @todo: this uses just the pointer? we want to read it i think.
-    if (params.vertex_glsl_path) {
-        h ^= std::hash<const char *>{}(params.vertex_glsl_path);
+    if (!params.vertex_glsl_path.empty()) {
+        h ^= std::hash<std::string>{}(params.vertex_glsl_path);
     } else {
-        h ^= std::hash<const char *>{}(params.vertex_spv_path);
+        h ^= std::hash<std::string>{}(params.vertex_spv_path);
     }
 
-    if (params.fragment_glsl_path) {
-        h ^= std::hash<const char *>{}(params.fragment_glsl_path);
+    if (!params.fragment_glsl_path.empty()) {
+        h ^= std::hash<std::string>{}(params.fragment_glsl_path);
     } else {
-        h ^= std::hash<const char *>{}(params.fragment_spv_path);
+        h ^= std::hash<std::string>{}(params.fragment_spv_path);
     }
 
     return h;
@@ -119,11 +120,11 @@ ref_t<gpu_shader_t> loader_t::load_shader_program(const shader_program_load_para
     program.params = params;
     program.modified = true;
 
-    watcher.add_watch(params.vertex_hlsl_path, [](std::string, void *userdata) {
+    watcher.add_watch(params.vertex_glsl_path.c_str(), [](std::string, void *userdata) {
         auto *shader = static_cast<gpu_shader_t *>(userdata);
         shader->modified = true;
     }, &program);
-    watcher.add_watch(params.fragment_hlsl_path, [](std::string, void *userdata) {
+    watcher.add_watch(params.fragment_glsl_path.c_str(), [](std::string, void *userdata) {
         auto *shader = static_cast<gpu_shader_t *>(userdata);
         shader->modified = true;
     }, &program);
@@ -310,6 +311,8 @@ ref_t<sg::scene_t> loader_t::load_scene(const char *path) {
     logger.info("loading scene: {}", path);
     loaded_scenes[path] = make_ref_owned<sg::scene_t>();
     sg::scene_t &scene = *loaded_scenes[path];
+    scene.set_default_state(m_default_state);
+
     sg::load(*this, path, scene);
 
     watcher.add_watch(path, [](std::string path, void *userdata) {
@@ -330,6 +333,22 @@ void loader_t::init(gpu_t &gpu) {
         this->glslc_path = "glslc";
     }
     logger.info("using glslc: {}", this->glslc_path);
+
+    {
+        m_default_state = new sg::state_t();
+        m_default_state->material = make_ref<material_t>();
+        auto &mat = *m_default_state->material;
+        // create the default material.
+        mat.shader = load_shader_program({
+            .vertex_glsl_path = "shaders/default.vert",
+            .fragment_glsl_path = "shaders/default.frag",
+        });
+        mat.ambient = v4f{0.1, 0.1, 0.1, 1};
+        mat.diffuse = v4f{0.8, 0.8, 0.8, 1};
+        mat.specular = v4f{1, 1, 1, 1};
+        mat.roughness = 0.07;
+        mat.metallic = 0.0;
+    }
 }
 
 void loader_t::process_hotreload() {
@@ -340,8 +359,8 @@ void loader_t::process_hotreload() {
         if (program->modified) {
             program->stages.clear();
 
-            program->stages.push_back(compile_shader(*this, glslc_path, *gpu, program->params.vertex_hlsl_path, SHADER_STAGE_VERTEX));
-            program->stages.push_back(compile_shader(*this, glslc_path, *gpu, program->params.fragment_hlsl_path, SHADER_STAGE_FRAGMENT));
+            program->stages.push_back(compile_shader(*this, glslc_path, *gpu, program->params.vertex_glsl_path, SHADER_STAGE_VERTEX));
+            program->stages.push_back(compile_shader(*this, glslc_path, *gpu, program->params.fragment_glsl_path, SHADER_STAGE_FRAGMENT));
         }
     }
 
@@ -362,6 +381,7 @@ void loader_t::process_hotreload() {
             // all unchanged resources to be reloaded. Not cool!
 
             sg::scene_t new_scene;
+            new_scene.set_default_state(m_default_state);
             sg::load(*this, scene->disk_path.c_str(), new_scene);
 
             scene->clear();
@@ -371,11 +391,11 @@ void loader_t::process_hotreload() {
     }
 }
 
-VkPipelineShaderStageCreateInfo compile_shader(const loader_t &loader, const char *glslc_path, gpu_t &gpu, const char *path, int type) {
+VkPipelineShaderStageCreateInfo compile_shader(const loader_t &loader, const char *glslc_path, gpu_t &gpu, std::string path, int type) {
     // in dev mode, we compile the shader into the tmp dir. The filename in tmp is
     // based on the hash of the original file name.
 
-    u64 hash = std::hash<const char *>{}(path);
+    u64 hash = std::hash<std::string>{}(path);
 
     const char *tmp_dir = "/tmp";
     auto tmp_path = fmt::format("{}/{}.spv", tmp_dir, hash);
@@ -395,7 +415,7 @@ VkPipelineShaderStageCreateInfo compile_shader(const loader_t &loader, const cha
         panic("unknown shader stage");
     }
 
-    if (file_a_is_newer_than_b(path, tmp_path.c_str())) {
+    if (file_a_is_newer_than_b(path.c_str(), tmp_path.c_str())) {
         logger.info("compiling shader {}", path);
 
         bool emit_debug_info = true;

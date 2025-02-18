@@ -1,67 +1,6 @@
 #include "gpu.h"
 #include "gpu_impl.h"
 
-inline bool operator ==(const VkPushConstantRange &a, const VkPushConstantRange &b) {
-    return a.stageFlags == b.stageFlags &&
-           a.offset == b.offset &&
-           a.size == b.size;
-}
-
-bool operator==(const pipeline_layout_config_t &a, const pipeline_layout_config_t &b) {
-    if (a.flags != b.flags) return false;
-    if (a.descriptor_set_layouts.len != b.descriptor_set_layouts.len) return false;
-    if (a.push_constant_ranges.len != b.push_constant_ranges.len) return false;
-
-    for (u32 i = 0; i < a.descriptor_set_layouts.len; i++) {
-        if (a.descriptor_set_layouts[i] != b.descriptor_set_layouts[i]) return false;
-    }
-
-    for (u32 i = 0; i < a.push_constant_ranges.len; i++) {
-        if (a.push_constant_ranges[i] != b.push_constant_ranges[i]) return false;
-    }
-
-    return true;
-}
-
-std::size_t std::hash<pipeline_layout_config_t>::operator()(const pipeline_layout_config_t &info) const {
-    // @todo: can surely be done cheaper. We likely don't need to check everything..
-    usize h = 0;
-    h ^= std::hash<VkPipelineLayoutCreateFlags>{}(info.flags);
-    h ^= std::hash<u32>{}(info.descriptor_set_layouts.len);
-    h ^= std::hash<u32>{}(info.push_constant_ranges.len);
-
-    for (u32 i = 0; i < info.descriptor_set_layouts.len; i++) {
-        h ^= std::hash<VkDescriptorSetLayout>{}(info.descriptor_set_layouts[i]);
-    }
-
-    for (u32 i = 0; i < info.push_constant_ranges.len; i++) {
-        h ^= std::hash<VkPushConstantRange>{}(info.push_constant_ranges[i]);
-    }
-
-    return h;
-}
-
-bool operator==(const pipeline_config_t &a, const pipeline_config_t &b) {
-    if (a.shader != b.shader) return false;
-    if (a.layout != b.layout) return false;
-    if (a.vertex_input_info != b.vertex_input_info) return false;
-    if (a.color_attachment_formats != b.color_attachment_formats) return false;
-    if (a.depth_attachment_format != b.depth_attachment_format) return false;
-
-    return true;
-}
-
-std::size_t std::hash<pipeline_config_t>::operator()(const pipeline_config_t &config) const {
-    // @todo: expand! but also, idgaf.
-    std::size_t h = 0;
-    h ^= std::hash<shader_program_load_params_t>{}(config.shader->params);
-    h ^= std::hash<gpu_cull_mode_t>{}(config.cull_mode);
-    h ^= std::hash<pipeline_layout_config_t>{}(config.layout);
-    //h ^= std::hash<decltype(config.vertex_input_info)>{}(config.vertex_input_info);
-
-    return h;
-}
-
 ref_t<gpu_pipeline_t> gpu_t::make_pipeline(const pipeline_config_t &config) {
     // making the pipeline does not neccessarily create it. It will be created
     // when
@@ -86,34 +25,18 @@ ref_t<gpu_pipeline_t> gpu_t::make_pipeline(const pipeline_config_t &config) {
             VkPipelineLayoutCreateInfo pipeline_layout_info{};
             pipeline_layout_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
             pipeline_layout_info.flags = config.layout.flags;
-            pipeline_layout_info.setLayoutCount = config.layout.descriptor_set_layouts.len;
-            pipeline_layout_info.pSetLayouts = config.layout.descriptor_set_layouts.data;
-            pipeline_layout_info.pushConstantRangeCount = config.layout.push_constant_ranges.len;
-            pipeline_layout_info.pPushConstantRanges = config.layout.push_constant_ranges.data;
+            pipeline_layout_info.setLayoutCount = config.layout.descriptor_set_layouts.size();
+            pipeline_layout_info.pSetLayouts = config.layout.descriptor_set_layouts.data();
+            pipeline_layout_info.pushConstantRangeCount = config.layout.push_constant_ranges.size();
+            pipeline_layout_info.pPushConstantRanges = config.layout.push_constant_ranges.data();
 
             VK_CHECK(vkCreatePipelineLayout(device, &pipeline_layout_info, nullptr, &pipeline->layout));
             pipeline_layouts[config.layout] = pipeline->layout;
         }
     }
 
-    // @note: the config can contain temporary pointers (like slices to descriptors).
-    // these need to be copied into the pipeline struct.
-    //
-    // Usually these slices are declared inline, which really messes with the lifetime.
-    // I am not actually sure how long they live, but I think the pointers are invalid
-    // outside the function scope. Ideally, these things should be silently be declared
-    // globally. But that is not possible in C++.
-    pipeline->vertex_input_info.bindings = std::vector<VkVertexInputBindingDescription>(config.vertex_input_info.bindings.len);
-    pipeline->vertex_input_info.attributes = std::vector<VkVertexInputAttributeDescription>(config.vertex_input_info.attributes.len);
-    memcpy(pipeline->vertex_input_info.bindings.data(), config.vertex_input_info.bindings.data, config.vertex_input_info.bindings.len * sizeof(VkVertexInputBindingDescription));
-    memcpy(pipeline->vertex_input_info.attributes.data(), config.vertex_input_info.attributes.data, config.vertex_input_info.attributes.len * sizeof(VkVertexInputAttributeDescription));
-
-    pipeline->color_attachment_formats = std::vector<VkFormat>(config.color_attachment_formats.len);
-    memcpy(pipeline->color_attachment_formats.data(), config.color_attachment_formats.data, config.color_attachment_formats.len * sizeof(VkFormat));
-
-    rebuild_pipelines();
-    gpu_log.info("pipeline :{:p} created", pipeline);
     loaded_pipelines[config] = pipeline;
+    gpu_log.info("pipeline :{:p} created", pipeline);
 
     return pipeline;
 }
@@ -121,7 +44,7 @@ ref_t<gpu_pipeline_t> gpu_t::make_pipeline(const pipeline_config_t &config) {
 void gpu_t::rebuild_pipelines() {
     for (auto &[config, pipeline] : loaded_pipelines) {
         auto has_shader_changed = config.shader->modified;
-        if (!has_shader_changed) continue;
+        if (!has_shader_changed && pipeline->pipeline != VK_NULL_HANDLE) continue;
 
         gpu_log.info("rebuilding pipeline :{:p}", pipeline);
 
@@ -130,12 +53,21 @@ void gpu_t::rebuild_pipelines() {
             pipeline->pipeline = VK_NULL_HANDLE;
         }
 
+        // create the pipeline itself.
         {
-            // create the pipeline itself.
+            VkPipelineMultisampleStateCreateInfo multisampling{};
+            multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+            multisampling.sampleShadingEnable = VK_FALSE;
+            multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+            multisampling.minSampleShading = 1.0f; // Optional
+            multisampling.pSampleMask = nullptr; // Optional
+            multisampling.alphaToCoverageEnable = VK_FALSE; // Optional
+            multisampling.alphaToOneEnable = VK_FALSE; // Optional
+
             VkPipelineRenderingCreateInfoKHR rendering_info{};
             rendering_info.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR;
-            rendering_info.colorAttachmentCount = pipeline->color_attachment_formats.size();
-            rendering_info.pColorAttachmentFormats = pipeline->color_attachment_formats.data();
+            rendering_info.colorAttachmentCount = config.color_attachment_formats.size();
+            rendering_info.pColorAttachmentFormats = config.color_attachment_formats.data();
             rendering_info.depthAttachmentFormat = config.depth_attachment_format;
             rendering_info.stencilAttachmentFormat = VK_FORMAT_UNDEFINED;
 
@@ -194,10 +126,10 @@ void gpu_t::rebuild_pipelines() {
             VkPipelineVertexInputStateCreateInfo vertex_input_info{};
             {
                 vertex_input_info.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-                vertex_input_info.vertexBindingDescriptionCount = pipeline->vertex_input_info.bindings.size();
-                vertex_input_info.pVertexBindingDescriptions = pipeline->vertex_input_info.bindings.data();
-                vertex_input_info.vertexAttributeDescriptionCount = pipeline->vertex_input_info.attributes.size();
-                vertex_input_info.pVertexAttributeDescriptions = pipeline->vertex_input_info.attributes.data();
+                vertex_input_info.vertexBindingDescriptionCount = config.vertex_input_info.bindings.size();
+                vertex_input_info.pVertexBindingDescriptions = config.vertex_input_info.bindings.data();
+                vertex_input_info.vertexAttributeDescriptionCount = config.vertex_input_info.attributes.size();
+                vertex_input_info.pVertexAttributeDescriptions = config.vertex_input_info.attributes.data();
 
                 pipeline_info.pVertexInputState = &vertex_input_info;
             }
@@ -232,7 +164,7 @@ void gpu_t::rebuild_pipelines() {
             pipeline_info.pInputAssemblyState = &input_assembly;
             pipeline_info.pViewportState = &viewport_state;
             pipeline_info.pRasterizationState = &rasterizer;
-            pipeline_info.pMultisampleState = &config.multisampling;
+            pipeline_info.pMultisampleState = &multisampling;
             pipeline_info.pDepthStencilState = &depth_stencil_state;
             pipeline_info.pColorBlendState = &color_blending;
             pipeline_info.pDynamicState = &dynamic_state;
@@ -246,4 +178,90 @@ void gpu_t::rebuild_pipelines() {
 
         }
     }
+}
+
+inline bool operator ==(const VkPushConstantRange &a, const VkPushConstantRange &b) {
+    return a.stageFlags == b.stageFlags &&
+           a.offset == b.offset &&
+           a.size == b.size;
+}
+
+bool operator==(const pipeline_layout_config_t &a, const pipeline_layout_config_t &b) {
+    if (a.flags != b.flags) return false;
+    if (a.descriptor_set_layouts != b.descriptor_set_layouts) return false;
+    if (a.push_constant_ranges != b.push_constant_ranges) return false;
+
+    return true;
+}
+
+template <>
+struct std::hash<VkPushConstantRange> {
+    std::size_t operator()(const VkPushConstantRange &range) const;
+};
+
+template <>
+struct std::hash<VkDescriptorSetLayout> {
+    std::size_t operator()(const VkDescriptorSetLayout &layout) const;
+};
+
+std::size_t std::hash<VkPushConstantRange>::operator()(const VkPushConstantRange &range) const {
+    usize h = 0;
+    h ^= std::hash<VkShaderStageFlags>{}(range.stageFlags);
+    h ^= std::hash<u32>{}(range.offset);
+    h ^= std::hash<u32>{}(range.size);
+
+    return h;
+}
+
+std::size_t std::hash<VkDescriptorSetLayout>::operator()(const VkDescriptorSetLayout &layout) const {
+    return std::hash<u64>{}(reinterpret_cast<u64>(layout));
+}
+
+std::size_t std::hash<pipeline_layout_config_t>::operator()(const pipeline_layout_config_t &info) const {
+    // @todo: can surely be done cheaper. We likely don't need to check everything..
+    usize h = 0;
+    h ^= std::hash<VkPipelineLayoutCreateFlags>{}(info.flags);
+    // h ^= std::hash<std::vector<VkDescriptorSetLayout>>{}(info.descriptor_set_layouts);
+    for (auto &layout : info.descriptor_set_layouts) {
+        h ^= std::hash<VkDescriptorSetLayout>{}(layout);
+    }
+    for (auto &range : info.push_constant_ranges) {
+        h ^= std::hash<VkPushConstantRange>{}(range);
+    }
+
+    return h;
+}
+
+bool operator==(const VkVertexInputBindingDescription &a, const VkVertexInputBindingDescription &b) {
+    return a.binding == b.binding &&
+           a.stride == b.stride &&
+           a.inputRate == b.inputRate;
+}
+
+bool operator==(const VkVertexInputAttributeDescription &a, const VkVertexInputAttributeDescription &b) {
+    return a.location == b.location &&
+           a.binding == b.binding &&
+           a.format == b.format &&
+           a.offset == b.offset;
+}
+
+bool operator==(const pipeline_config_t &a, const pipeline_config_t &b) {
+    if (a.shader != b.shader) return false;
+    if (a.layout != b.layout) return false;
+    if (a.vertex_input_info.bindings != b.vertex_input_info.bindings) return false;
+    if (a.vertex_input_info.attributes != b.vertex_input_info.attributes) return false;
+    if (a.color_attachment_formats != b.color_attachment_formats) return false;
+    if (a.depth_attachment_format != b.depth_attachment_format) return false;
+
+    return true;
+}
+
+std::size_t std::hash<pipeline_config_t>::operator()(const pipeline_config_t &config) const {
+    // @todo: expand! but also, idgaf.
+    std::size_t h = 0;
+    h ^= std::hash<shader_program_load_params_t>{}(config.shader->params);
+    h ^= std::hash<gpu_cull_mode_t>{}(config.cull_mode);
+    h ^= std::hash<pipeline_layout_config_t>{}(config.layout);
+
+    return h;
 }

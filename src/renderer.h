@@ -24,6 +24,7 @@ public:
     void set_projection(const m4f &projection);
 
     void new_frame();
+    void prepare_drawing();
     void draw(gpu_t::frame_t &frame);
 
 private:
@@ -45,7 +46,7 @@ private:
     } textures;
 
     commands_t commands;
-
+    std::vector<render_op_t> ops;
 
     RenderPlanner planner;
 
