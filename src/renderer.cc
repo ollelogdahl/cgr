@@ -4,6 +4,7 @@
 #include <variant>
 
 #include <tracy/Tracy.hpp>
+#include <vulkan/vulkan_core.h>
 
 template<class... Ts>
 struct overloaded : Ts... { using Ts::operator()...; };
@@ -383,6 +384,9 @@ void renderer_t::prepare_drawing() {
 void renderer_t::draw(gpu_t::frame_t &frame) {
     TracyVkZone(frame.tracy_ctx, frame.cmds, "renderer-draw");
 
+    m_last_metrics.draw_calls = 0;
+    m_last_metrics.vertices = 0;
+
     // wait for the ubo to be written.
     {
         TracyVkZone(frame.tracy_ctx, frame.cmds, "update-ubo");
@@ -410,6 +414,33 @@ void renderer_t::draw(gpu_t::frame_t &frame) {
             ubo.dir_lights[i].color = commands.directional_lights[i].color;
         }
         auto ubo_slice = slice<u8>((u8 *)&ubo, sizeof(ubo));
+
+
+        {
+            // pre barrier!
+            // all_graphics or VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT
+            // this does not seem to have done the job. well well.
+            //
+            // @todo: improve api of write_buffer_with_barrier
+            //
+            // we cannot know here if we need to block host writes (if the buffer is
+            // mapped directly), or just a transfer (if the buffer is staged).
+            VkMemoryBarrier2 memory_barrier{
+                .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
+                .srcStageMask = VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT,
+                .srcAccessMask = VK_ACCESS_2_SHADER_READ_BIT,
+                .dstStageMask = VK_PIPELINE_STAGE_2_HOST_BIT | VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                .dstAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT,
+            };
+            VkDependencyInfo dependency_info{
+                .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+                .memoryBarrierCount = 1,
+                .pMemoryBarriers = &memory_barrier,
+            };
+
+            vkCmdPipelineBarrier2(frame.cmds, &dependency_info);
+        }
+
 
         buffer_write_barrier_t ubo_write_barrier;
         gpu->write_buffer_with_barrier(env_ubo_buffer, ubo_slice, frame.cmds, ubo_write_barrier);
@@ -496,7 +527,15 @@ void renderer_t::draw(gpu_t::frame_t &frame) {
     //
     // I think this is a viable route.
 
-    // @todo: implement different
+    // @todo: issue!
+    // I think that if we are rendering lots and lots of things,
+    // the next update on the ubo will happen mid frame. This causes stuff to
+    // drag behind a bit.
+    //
+    // we should probably add some form of memory barrier / pipeline barrier
+    // which states that
+    //
+    // UBO -> SHADER -> UBO
     {
         ZoneScopedN("draw-ops");
         TracyVkZone(frame.tracy_ctx, frame.cmds, "draw-ops");
@@ -518,6 +557,8 @@ void renderer_t::draw(gpu_t::frame_t &frame) {
                     vkCmdBindIndexBuffer(frame.cmds, op.index_buffer->handle, 0, VK_INDEX_TYPE_UINT32);
                 },
                 [&](draw_indexed_op_t &op) {
+                    m_last_metrics.draw_calls += 1;
+                    m_last_metrics.vertices += op.index_count;
                     assert(current_pipeline_layout != VK_NULL_HANDLE);
                     vkCmdPushConstants(frame.cmds, current_pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(m4f), &op.transform);
                     vkCmdDrawIndexed(frame.cmds, op.index_count, 1, op.index_offset, op.vertex_offset, 0);

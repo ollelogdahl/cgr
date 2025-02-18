@@ -27,6 +27,15 @@ public:
     void prepare_drawing();
     void draw(gpu_t::frame_t &frame);
 
+    struct DrawMetrics {
+        usize draw_calls = 0;
+        usize vertices = 0;
+    };
+
+    DrawMetrics last_metrics() {
+        return m_last_metrics;
+    }
+
 private:
     friend class RenderPlanner;
 
@@ -63,4 +72,6 @@ private:
     VkDescriptorSet texture_descriptor_set;
 
     gpu_buffer_t env_ubo_buffer;
+
+    DrawMetrics m_last_metrics;
 };

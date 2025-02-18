@@ -87,6 +87,15 @@ void Application::init_and_run(const char *scene_file_path) {
 
         m_loader.process_hotreload();
 
+        ImGui::Begin("Metrics");
+
+        auto metrics = m_renderer.last_metrics();
+
+        ImGui::Text("draw calls: %lu", metrics.draw_calls);
+        ImGui::Text("vertices: %s", num_to_human(metrics.vertices).c_str());
+
+        ImGui::End();
+
         ImGui::Begin("Loaded Models");
 
         for (auto &[params, model] : m_loader.get_loaded_models()) {
