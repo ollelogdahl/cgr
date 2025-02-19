@@ -18,8 +18,18 @@ void FreeflyController::update(sg::camera_t &camera, float dt) {
         auto right = v3f::cross(forward, camera.up());
         auto up = camera.up();
 
+        // limit rotation to not be directly up or down
+        auto dot = v3f::dot(up, forward);
+        if (dot > 0.98) {
+            pitch = std::max(pitch, anglef::zero());
+        }
+        if (dot < -0.98) {
+            pitch = std::min(pitch, anglef::zero());
+        }
+
         auto rotation = m4f::rotate(pitch, right) * m4f::rotate(yaw, up);
         auto new_forward = (v4f{forward.x, forward.y, forward.z, 0} * rotation).xyz();
+
         camera.set_forward(new_forward);
     };
 

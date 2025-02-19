@@ -84,6 +84,8 @@ struct slice {
     inline constexpr slice(ptr_type data, usize len) : data(data), len(len) {}
     inline constexpr slice(std::initializer_list<T> list) : data(list.begin()), len(list.size()) {}
 
+    inline constexpr slice(const std::vector<T> &vec) : data((T *)vec.data()), len(vec.size()) {}
+
     template <typename U>
     bool operator ==(const slice<U>& other) const {
         // @todo: optimize this

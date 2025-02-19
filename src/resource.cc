@@ -158,6 +158,35 @@ ref_t<texture_t> loader_t::load_texture(const texture_load_params_t &params) {
     return loaded_textures[params];
 }
 
+const usize interleaved_vertex_size = 9 * sizeof(f32);
+void interleave_vertex_attributes(slice<v3f> vertices, slice<u32> colors, slice<v3f> normals, slice<v2f> uvs, slice<u8> &out);
+
+model_description_t loader_t::build_proc_model(const proc_model_desc_t &desc) {
+    slice<u8> interleaved;
+    interleave_vertex_attributes(desc.vertices, desc.colors, desc.normals, desc.uvs, interleaved);
+
+    model_description_t model;
+
+    mesh_description_t::lod_t lod_default;
+    mesh_description_t mesh;
+
+    lod_default.index_buffer = make_ref<gpu_buffer_t>();
+    mesh.vertex_buffer = make_ref<gpu_buffer_t>();
+
+    slice<u8> indices_slice = slice<u8>((u8 *)desc.indices.data(), desc.indices.size() * sizeof(u32));
+    gpu->create_buffer_persistent(indices_slice, VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+        *lod_default.index_buffer);
+    lod_default.index_count = desc.indices.size();
+
+    gpu->create_buffer_persistent(interleaved, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+        *mesh.vertex_buffer);
+
+    mesh.lods.push_back(lod_default);
+    model.meshes.push_back(mesh);
+
+    return model;
+}
+
 model_description_t loader_t::load_model(const model_load_params_t &params) {
     // loading models is kinda special. The result of this operation is not
     // a reference to a model, but a description of where the model data is
@@ -200,39 +229,6 @@ model_description_t loader_t::load_model(const model_load_params_t &params) {
         return model;
     }
 
-    const usize interleaved_vertex_size = 9 * sizeof(f32);
-    auto interleave_attributes = [](slice<v3f> vertices, slice<u32> colors, slice<v3f> normals, slice<v2f> uvs, slice<u8> &out) {
-        usize size = interleaved_vertex_size * vertices.len;
-        out = slice<u8>((u8 *)malloc(size), size);
-
-        for (usize i = 0; i < vertices.len; i++) {
-            f32 *ptr = (f32 *)(out.data + i * interleaved_vertex_size);
-
-            auto &v = vertices[i];
-            ptr[0] = v.x;
-            ptr[1] = v.y;
-            ptr[2] = v.z;
-
-            auto &n = normals[i];
-            ptr[3] = n.x;
-            ptr[4] = n.y;
-            ptr[5] = n.z;
-
-            if (colors.data != nullptr) {
-                u32 *uptr = (u32 *)(ptr + 6);
-                // @note: we need to flip it, as rgba8 is stored as abgr8 on the cpu (little-endian)
-                u32 flipped = ((colors[i] & 0xff000000) >> 24) | ((colors[i] & 0x00ff0000) >> 8) | ((colors[i] & 0x0000ff00) << 8) | ((colors[i] & 0x000000ff) << 24);
-                uptr[0] = flipped;
-            }
-
-            if (uvs.data != nullptr) {
-                auto &uv = uvs[i];
-                ptr[7] = uv.x;
-                ptr[8] = uv.y;
-            }
-        }
-    };
-
     aabb_t model_aabb = aabb_t();
     for (auto &m : scene.meshes) {
         mesh_description_t mesh;
@@ -243,7 +239,7 @@ model_description_t loader_t::load_model(const model_load_params_t &params) {
         mesh_description_t::lod_t lod_default;
 
         slice<byte> interleaved;
-        interleave_attributes(m.vertices, m.colors, m.normals, m.texcoords, interleaved);
+        interleave_vertex_attributes(m.vertices, m.colors, m.normals, m.texcoords, interleaved);
         slice<u32> indices = m.indices;
         usize vertex_count = m.vertices.len;
 
@@ -300,6 +296,38 @@ model_description_t loader_t::load_model(const model_load_params_t &params) {
     model.aabb = model_aabb;
 
     return loaded_models[params];
+}
+
+void interleave_vertex_attributes(slice<v3f> vertices, slice<u32> colors, slice<v3f> normals, slice<v2f> uvs, slice<u8> &out) {
+    usize size = interleaved_vertex_size * vertices.len;
+    out = slice<u8>((u8 *)malloc(size), size);
+
+    for (usize i = 0; i < vertices.len; i++) {
+        f32 *ptr = (f32 *)(out.data + i * interleaved_vertex_size);
+
+        auto &v = vertices[i];
+        ptr[0] = v.x;
+        ptr[1] = v.y;
+        ptr[2] = v.z;
+
+        auto &n = normals[i];
+        ptr[3] = n.x;
+        ptr[4] = n.y;
+        ptr[5] = n.z;
+
+        if (colors.data != nullptr) {
+            u32 *uptr = (u32 *)(ptr + 6);
+            // @note: we need to flip it, as rgba8 is stored as abgr8 on the cpu (little-endian)
+            u32 flipped = ((colors[i] & 0xff000000) >> 24) | ((colors[i] & 0x00ff0000) >> 8) | ((colors[i] & 0x0000ff00) << 8) | ((colors[i] & 0x000000ff) << 24);
+            uptr[0] = flipped;
+        }
+
+        if (uvs.data != nullptr) {
+            auto &uv = uvs[i];
+            ptr[7] = uv.x;
+            ptr[8] = uv.y;
+        }
+    }
 }
 
 ref_t<sg::scene_t> loader_t::load_scene(const char *path) {

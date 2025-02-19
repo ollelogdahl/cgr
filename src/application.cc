@@ -18,11 +18,13 @@ void Application::init_and_run(const char *scene_file_path) {
 
     glfwInit();
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-    glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
-    glfwWindowHint(GLFW_SRGB_CAPABLE, GLFW_TRUE);
+    glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
+    glfwWindowHint(GLFW_SRGB_CAPABLE, GLFW_FALSE);
     m_window = glfwCreateWindow(1200, 900, "cgr", nullptr, nullptr);
 
-    m_gpu.init(m_window);
+    m_gpu.init(m_window, {
+        .request_validation_layers = true,
+    });
     g_log.info("gpu initialized");
 
     m_loader.init(m_gpu);
@@ -91,8 +93,9 @@ void Application::init_and_run(const char *scene_file_path) {
 
         auto metrics = m_renderer.last_metrics();
 
-        ImGui::Text("draw calls: %lu", metrics.draw_calls);
-        ImGui::Text("vertices: %s", num_to_human(metrics.vertices).c_str());
+        ImGui::Text("draw calls:        %s", num_to_human(metrics.draw_calls).c_str());
+        ImGui::Text("pipeline switches: %s", num_to_human(metrics.pipeline_switches).c_str());
+        ImGui::Text("triangles:         %s", num_to_human(metrics.triangles).c_str());
 
         ImGui::End();
 
@@ -108,9 +111,9 @@ void Application::init_and_run(const char *scene_file_path) {
             for (u32 i = 0; i < model.meshes[0].lods.size(); ++i) {
                 auto sum = 0;
                 for (auto &m : model.meshes) {
-                    sum += m.lods[i].index_count;
+                    sum += m.lods[i].index_count / 3;
                 }
-                ImGui::Text("    %u: %s", i, num_to_human(sum).c_str());
+                ImGui::Text("    %u: tri %s", i, num_to_human(sum).c_str());
             }
 
             ImGui::EndGroup();

@@ -21,14 +21,8 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL vk_debug_callback(
     const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData,
     void* pUserData);
 
-void gpu_t::init(GLFWwindow *window) {
+void gpu_t::init(GLFWwindow *window, const gpu_create_options_t &options) {
     this->window = window;
-
-#ifdef VALIDATE
-    bool requests_validation_layers = true;
-#else
-    bool requests_validation_layers = false;
-#endif
 
     const char *validation_layers[] = {
         "VK_LAYER_KHRONOS_validation"
@@ -42,7 +36,7 @@ void gpu_t::init(GLFWwindow *window) {
     };
 
     bool validation_layers_available = false;
-    if (requests_validation_layers) {
+    if (options.request_validation_layers) {
         if (check_validation_layer_support(validation_layers)) {
             validation_layers_available = true;
         } else  {
@@ -50,6 +44,8 @@ void gpu_t::init(GLFWwindow *window) {
             dump_available_validation_layers();
             gpu_log.info("proceeding without validation layers");
         }
+    } else {
+        gpu_log.info("validation layers not requested");
     }
 
     if (validation_layers_available) {
@@ -316,14 +312,15 @@ void gpu_t::init(GLFWwindow *window) {
 
     swapchain = swapchain_builder_t(pdev, device, surface, queue_families.graphics, queue_families.present)
         .set_desired_format({.format = VK_FORMAT_B8G8R8A8_UNORM, .colorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR})
-        .set_desired_present_mode(VK_PRESENT_MODE_FIFO_RELAXED_KHR)
+        .set_desired_present_modes({VK_PRESENT_MODE_MAILBOX_KHR, VK_PRESENT_MODE_FIFO_RELAXED_KHR, VK_PRESENT_MODE_FIFO_KHR})
         .set_desired_extent(width, height)
         .add_image_usage(VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT)
         .build().unwrap();
 
     gpu_log.info("swapchain created");
-    gpu_log.info("    format: {}", swapchain.image_format);
-    gpu_log.info("    image count: {}", swapchain.image_count);
+    gpu_log.info("    present_mode: {}", swapchain.present_mode);
+    gpu_log.info("    format:       {}", swapchain.image_format);
+    gpu_log.info("    image count:  {}", swapchain.image_count);
 
     // setup the command pools
     {

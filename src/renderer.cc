@@ -385,7 +385,8 @@ void renderer_t::draw(gpu_t::frame_t &frame) {
     TracyVkZone(frame.tracy_ctx, frame.cmds, "renderer-draw");
 
     m_last_metrics.draw_calls = 0;
-    m_last_metrics.vertices = 0;
+    m_last_metrics.pipeline_switches = 0;
+    m_last_metrics.triangles = 0;
 
     // wait for the ubo to be written.
     {
@@ -543,6 +544,7 @@ void renderer_t::draw(gpu_t::frame_t &frame) {
         for (auto &op : ops) {
             std::visit(overloaded{
                 [&](switch_pipeline_op_t &op) {
+                    m_last_metrics.pipeline_switches += 1;
                     auto pipeline = op.pipeline;
                     current_pipeline_layout = pipeline->layout;
                     vkCmdBindPipeline(frame.cmds, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline->pipeline);
@@ -558,7 +560,7 @@ void renderer_t::draw(gpu_t::frame_t &frame) {
                 },
                 [&](draw_indexed_op_t &op) {
                     m_last_metrics.draw_calls += 1;
-                    m_last_metrics.vertices += op.index_count;
+                    m_last_metrics.triangles += op.index_count / 3.0;
                     assert(current_pipeline_layout != VK_NULL_HANDLE);
                     vkCmdPushConstants(frame.cmds, current_pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(m4f), &op.transform);
                     vkCmdDrawIndexed(frame.cmds, op.index_count, 1, op.index_offset, op.vertex_offset, 0);

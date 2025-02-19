@@ -3,22 +3,8 @@
 #include "oc.h"
 #include <fmt/format.h>
 #include <vulkan/vulkan.h>
-
-template <>
-struct fmt::formatter<VkFormat> {
-    constexpr auto parse(format_parse_context& ctx) {
-        return ctx.begin();
-    }
-
-    auto format(const VkFormat& format, auto& ctx) const {
-        switch(format) {
-        case VK_FORMAT_UNDEFINED:
-            return format_to(ctx.out(), "VK_FORMAT_UNDEFINED");
-        default:
-            return format_to(ctx.out(), "unknown format: {}", static_cast<u32>(format));
-        }
-    }
-};
+std::string format_as(VkFormat format);
+std::string format_as(VkPresentModeKHR present_mode);
 
 // this is really stupid. we just want to remove the need for sType, and
 // make the code a bit more readable.

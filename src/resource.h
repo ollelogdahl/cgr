@@ -84,6 +84,14 @@ class scene_t;
 class state_t;
 }
 
+struct proc_model_desc_t {
+    std::vector<v3f> vertices;
+    std::vector<u32> colors = {};
+    std::vector<v3f> normals = {};
+    std::vector<v2f> uvs = {};
+    std::vector<u32> indices;
+};
+
 struct loader_t {
     ref_t<gpu_shader_t> load_shader_program(const shader_program_load_params_t &params);
 
@@ -92,6 +100,8 @@ struct loader_t {
     // @todo: loading models is actually really funky. They could contain materials and textures,
     // which we do not support yet.
     model_description_t load_model(const model_load_params_t &params);
+
+    model_description_t build_proc_model(const proc_model_desc_t &desc);
 
     ref_t<sg::scene_t> load_scene(const char *path);
 

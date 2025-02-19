@@ -6,7 +6,7 @@
     <point-light position="-32 0 0" color="0 0 1" />
     <point-light position="0 32 0" color="0 0.7 0.7" />
     <point-light position="0 -32 0" color="0.7 0 0.7" />
-    <grid count="20 20 20" spacing="4 4 4">
+    <grid count="30 30 30" spacing="4 4 4">
         <transform scale="0.25 0.25 0.25" rotate="90 0 0">
             <model file="assets/bug.obj"
                 mat-diffuse="0.7 0.5 0.5"

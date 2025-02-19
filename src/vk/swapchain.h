@@ -7,6 +7,7 @@ struct swapchain_t {
     VkSwapchainKHR handle;
     VkFormat image_format;
     VkExtent2D extent;
+    VkPresentModeKHR present_mode;
 
     u32 image_count;
     VkImage *images;
@@ -20,7 +21,7 @@ public:
         u32 graphics_queue_index, u32 present_queue_index);
 
     swapchain_builder_t &set_desired_format(VkSurfaceFormatKHR surface);
-    swapchain_builder_t &set_desired_present_mode(VkPresentModeKHR mode);
+    swapchain_builder_t &set_desired_present_modes(const std::vector<VkPresentModeKHR> &modes);
     swapchain_builder_t &set_desired_extent(u32 width, u32 height);
     swapchain_builder_t &add_image_usage(VkImageUsageFlags usage);
     swapchain_builder_t &set_old_swapchain(swapchain_t &old_swapchain);
@@ -31,7 +32,7 @@ private:
     VkDevice device;
     VkSurfaceKHR surface;
     VkSurfaceFormatKHR desired_format;
-    VkPresentModeKHR desired_present_mode;
+    std::vector<VkPresentModeKHR> desired_present_modes;
     VkExtent2D desired_extent;
     VkSwapchainKHR old_swapchain;
 

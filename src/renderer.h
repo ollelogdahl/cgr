@@ -29,7 +29,8 @@ public:
 
     struct DrawMetrics {
         usize draw_calls = 0;
-        usize vertices = 0;
+        usize pipeline_switches = 0;
+        usize triangles = 0;
     };
 
     DrawMetrics last_metrics() {

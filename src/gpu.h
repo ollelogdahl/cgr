@@ -113,6 +113,10 @@ struct buffer_write_barrier_t {
     }
 };
 
+struct gpu_create_options_t {
+    bool request_validation_layers = false;
+};
+
 struct gpu_t {
     VkInstance instance;
     VkPhysicalDevice pdev = VK_NULL_HANDLE;
@@ -162,7 +166,7 @@ struct gpu_t {
     frame_t frames[MAX_FRAMES_IN_FLIGHT];
     u32 frame_number = 0;
 
-    void init(GLFWwindow *window);
+    void init(GLFWwindow *window, const gpu_create_options_t &options);
     void recreate_swapchain(u32 width, u32 height);
 
     ref_t<gpu_pipeline_t> make_pipeline(const pipeline_config_t &config);

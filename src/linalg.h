@@ -23,7 +23,11 @@ struct anglef {
         return {value};
     }
     constexpr anglef static inline from_deg(f32 value) {
+        if (value > 360) value -= 360;
+        if (value < -360) value += 360;
+
         return {(f32)(value * M_PI / 180)};
+        // get the value in 0..360 range
     }
 
     constexpr f32 inline as_rad() const {
@@ -57,6 +61,13 @@ struct anglef {
     constexpr anglef& operator-=(anglef other) {
         value -= other.value;
         return *this;
+    }
+
+    constexpr inline bool operator<(const anglef &other) const {
+        return value < other.value;
+    }
+    constexpr inline bool operator>(const anglef &other) const {
+        return value > other.value;
     }
 private:
     constexpr anglef(f32 value) : value(value) {}

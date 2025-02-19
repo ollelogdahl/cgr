@@ -26,8 +26,8 @@ swapchain_builder_t &swapchain_builder_t::set_desired_format(VkSurfaceFormatKHR 
     this->desired_format = surface;
     return *this;
 }
-swapchain_builder_t &swapchain_builder_t::set_desired_present_mode(VkPresentModeKHR mode) {
-    this->desired_present_mode = mode;
+swapchain_builder_t &swapchain_builder_t::set_desired_present_modes(const std::vector<VkPresentModeKHR> &modes) {
+    this->desired_present_modes = modes;
     return *this;
 }
 swapchain_builder_t &swapchain_builder_t::set_desired_extent(u32 width, u32 height) {
@@ -65,15 +65,22 @@ result_t<swapchain_t, std::string> swapchain_builder_t::build() {
     // ensure that desired present mode is available.
     {
         bool found = false;
-        for (auto &mode : swap_chain_support.present_modes) {
-            if (mode == desired_present_mode) {
-                found = true;
-                break;
-            }
+        VkPresentModeKHR found_mode;
+        for (auto &desired : desired_present_modes) {
+            if (found) break;
+
+            for (auto &mode : swap_chain_support.present_modes) {
+                if (mode == desired) {
+                    found = true;
+                    found_mode = mode;
+                    break;
+                }
+            }    
         }
         if (!found) {
             return std::string("desired present mode not available");
         }
+        swapchain.present_mode = found_mode;
     }
 
     // ensure that the desired extents are possible.
@@ -120,7 +127,7 @@ result_t<swapchain_t, std::string> swapchain_builder_t::build() {
 
     createInfo.preTransform = swap_chain_support.capabilities.currentTransform;
     createInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
-    createInfo.presentMode = desired_present_mode;
+    createInfo.presentMode = swapchain.present_mode;
     createInfo.clipped = VK_TRUE;
     createInfo.oldSwapchain = old_swapchain;
 
