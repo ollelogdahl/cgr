@@ -1,4 +1,5 @@
 #include "render_state.h"
+#include "rend2/render_handles.h"
 
 const u32 vertex_size = 9 * sizeof(f32);
 const u32 index_size = sizeof(u32);
@@ -9,16 +10,19 @@ const u32 global_size = 64;
 RenderState::RenderState(gpu_t &gpu, const RenderStateConfig &config)
 :
     m_gpu(&gpu),
+    m_object_buffer(gpu, config.max_objects * sizeof(ObjectData), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT),
+    m_object_data(new ObjectData[config.max_objects]),
     m_vertex_buffer(gpu, config.max_vertices * vertex_size, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT),
     m_index_buffer(gpu, config.max_indices * index_size, VK_BUFFER_USAGE_INDEX_BUFFER_BIT),
     m_material_buffer(gpu, config.max_materials * material_size, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT),
-    m_transform_buffer(gpu, config.max_transforms * transform_size, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT),
+    m_mesh_buffer(gpu, config.max_meshes * transform_size, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT),
     m_global_buffer(gpu, global_size, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT),
     m_vertex_alloc(config.max_vertices),
     m_index_alloc(config.max_indices),
     m_material_alloc(config.max_materials),
-    m_transform_alloc(config.max_transforms),
-    m_texture_alloc(config.max_textures) {
+    m_mesh_alloc(config.max_meshes),
+    m_texture_alloc(config.max_textures),
+    m_object_alloc(config.max_objects) {
 
     // create the global descriptor set
     {
@@ -44,6 +48,7 @@ RenderState::RenderState(gpu_t &gpu, const RenderStateConfig &config)
             VkDescriptorBindingFlags binding_flags[] = {
                 0,
                 0,
+                0,
                 VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT | VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT
             };
 
@@ -52,7 +57,7 @@ RenderState::RenderState(gpu_t &gpu, const RenderStateConfig &config)
                     .binding = 0,
                     .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
                     .descriptorCount = 1,
-                    .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
+                    .stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
                 },
                 {
                     .binding = 1,
@@ -62,12 +67,19 @@ RenderState::RenderState(gpu_t &gpu, const RenderStateConfig &config)
                 },
                 {
                     .binding = 2,
+                    .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+                    .descriptorCount = 1,
+                    .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
+                },
+                {
+                    .binding = 3,
                     .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
                     .descriptorCount = config.max_textures,
                     .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
                 },
             };
 
+            assert(array_size(bindings) == array_size(binding_flags));
             VkDescriptorSetLayoutBindingFlagsCreateInfo binding_flags_create_info = {};
             binding_flags_create_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO;
             binding_flags_create_info.bindingCount = array_size(bindings);
@@ -86,8 +98,8 @@ RenderState::RenderState(gpu_t &gpu, const RenderStateConfig &config)
     }
 
     m_global_ds.write_buffer(0, 0, m_global_buffer.get(), 0, VK_WHOLE_SIZE);
-    m_global_ds.write_buffer(0, 1, m_material_buffer.get(), 0, VK_WHOLE_SIZE);
-    m_global_ds.write_buffer(0, 2, m_transform_buffer.get(), 0, VK_WHOLE_SIZE);
+    m_global_ds.write_buffer(0, 1, m_mesh_buffer.get(), 0, VK_WHOLE_SIZE);
+    m_global_ds.write_buffer(0, 2, m_material_buffer.get(), 0, VK_WHOLE_SIZE);
 }
 
 VertexDataHandle RenderState::alloc_vertices(slice<byte> vertices) {
@@ -97,20 +109,32 @@ VertexDataHandle RenderState::alloc_vertices(slice<byte> vertices) {
         return { -1U, 0 };
     }
 
-    writeback_buffers.vertices.push_back({ start * vertex_size, {vertices.begin(), vertices.end()} });
+    writeback_buffers.vertices.insert({start * vertex_size, {vertices.begin(), vertices.end()}});
 
     return { start, num_vertices };
 }
 
-IndexDataHandle RenderState::alloc_indices(slice<u32> indices) {
-    u32 start = m_index_alloc.allocate(indices.len);
+IndexDataHandle RenderState::alloc_indices(std::vector<u32> &&indices) {
+    u32 start = m_index_alloc.allocate(indices.size());
     if (start == -1U) {
         return { -1U, 0 };
     }
 
-    writeback_buffers.indices.push_back({ start * index_size, {indices.begin(), indices.end()} });
+    writeback_buffers.indices.insert({start, std::move(indices)});
 
-    return { start, (u32)indices.len };
+    return { start, (u32)indices.size() };
+}
+
+MeshHandle RenderState::alloc_mesh(const MeshData &data) {
+    u32 idx = m_mesh_alloc.allocate();
+    if (idx == -1U) {
+        return {-1U};
+    }
+
+    slice<byte> data_slice((byte *)&data, sizeof(MeshData));
+    writeback_buffers.meshes.insert(idx, data);
+
+    return {idx};
 }
 
 MaterialHandle RenderState::alloc_material(const MaterialData &data) {
@@ -119,7 +143,7 @@ MaterialHandle RenderState::alloc_material(const MaterialData &data) {
         return {-1U};
     }
 
-    writeback_buffers.materials.push_back({ idx * material_size, {0} });
+    writeback_buffers.materials.insert(idx * material_size, data);
 
     return {idx};
 }
@@ -135,18 +159,20 @@ TextureHandle RenderState::alloc_texture(VkImageView view, VkSampler sampler) {
     return {idx};
 }
 
-TransformHandle RenderState::alloc_transform() {
-    u32 idx = m_transform_alloc.allocate();
+ObjectHandle RenderState::alloc_object() {
+    u32 idx = m_object_alloc.allocate();
     if (idx == -1U) {
         return {-1U};
     }
-
     return {idx};
 }
 
-void RenderState::update_transform(TransformHandle handle, const TransformData &transform) {
-    slice<byte> data_slice((byte *)&transform, transform_size);
-    writeback_buffers.transforms.push_back({handle.id * transform_size, {data_slice.begin(), data_slice.end()}});
+void RenderState::update_object(ObjectHandle handle, const ObjectData &object) {
+    m_object_data[handle.id] = object;
+    dirty_objects.insert(handle);
+}
+const ObjectData &RenderState::object_data(ObjectHandle handle) {
+    return m_object_data[handle.id];
 }
 
 void RenderState::update_global(const GlobalData &data) {
@@ -155,25 +181,29 @@ void RenderState::update_global(const GlobalData &data) {
 }
 
 void RenderState::flush(VkCommandBuffer cmd) {
-    m_vertex_buffer.multiwrite_with_barrier(cmd, writeback_buffers.vertices);
-    m_index_buffer.multiwrite_with_barrier(cmd, writeback_buffers.indices);
-    m_material_buffer.multiwrite_with_barrier(cmd, writeback_buffers.materials);
-    m_transform_buffer.multiwrite_with_barrier(cmd, writeback_buffers.transforms);
+    m_vertex_buffer.multiwrite_with_barrier(cmd, writeback_buffers.vertices.write_list());
+    m_index_buffer.multiwrite_with_barrier(cmd, writeback_buffers.indices.write_list());
+    m_material_buffer.multiwrite_with_barrier(cmd, writeback_buffers.materials.write_list());
+    m_mesh_buffer.multiwrite_with_barrier(cmd, writeback_buffers.meshes.write_list());
+
+    {
+        WriteCache<ObjectData> object_changes;
+        for (auto &handle : dirty_objects) {
+            ObjectData &object = m_object_data[handle.id];
+            object_changes.insert(handle.id, object);
+        }
+        m_object_buffer.multiwrite_with_barrier(cmd, object_changes.write_list());
+    }
 
     slice<byte> global_data_slice(writeback_buffers.global_data.data(), writeback_buffers.global_data.size());
     m_global_buffer.write_with_barrier(cmd, global_data_slice);
 
     m_global_ds.flush(*m_gpu);
-}
 
-void RenderState::bind(VkCommandBuffer cmd, VkPipelineLayout layout) const {
-    VkDescriptorSet sets[] = { m_global_ds.get() };
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout,
-        0, array_size(sets), sets, 0, nullptr);
-
-    vkCmdBindIndexBuffer(cmd, m_index_buffer.get(), 0, VK_INDEX_TYPE_UINT32);
-
-    VkBuffer vertex_buffers[] = { m_vertex_buffer.get() };
-    VkDeviceSize offsets[] = { 0 };
-    vkCmdBindVertexBuffers(cmd, 0, array_size(vertex_buffers), vertex_buffers, offsets);
+    dirty_objects.clear();
+    writeback_buffers.global_data.clear();
+    writeback_buffers.vertices.clear();
+    writeback_buffers.indices.clear();
+    writeback_buffers.materials.clear();
+    writeback_buffers.meshes.clear();
 }

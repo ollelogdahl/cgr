@@ -132,7 +132,7 @@ void GpuBuffer::write_with_barrier(VkCommandBuffer cmd, slice<byte> data, u32 of
     }
 }
 
-void GpuBuffer::multiwrite_with_barrier(VkCommandBuffer cmd, WriteList &wl) {
+void GpuBuffer::multiwrite_with_barrier(VkCommandBuffer cmd, WriteList wl) {
     // writing multiple slices to the buffer but with only a single barrier.
     if (m_mapped) {
         for (usize i = 0; i < wl.size(); ++i) {
@@ -141,7 +141,7 @@ void GpuBuffer::multiwrite_with_barrier(VkCommandBuffer cmd, WriteList &wl) {
         VK_CHECK(vmaFlushAllocation(m_gpu->allocator, m_allocation, 0, VK_WHOLE_SIZE));
 
         VkBufferMemoryBarrier2 barrier{};
-        barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2;
+        barrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2;
         barrier.srcStageMask = VK_PIPELINE_STAGE_HOST_BIT;
         barrier.srcAccessMask = VK_ACCESS_HOST_WRITE_BIT;
         barrier.dstStageMask = pipeline_stage_from_usage(m_usage);
@@ -154,7 +154,7 @@ void GpuBuffer::multiwrite_with_barrier(VkCommandBuffer cmd, WriteList &wl) {
         dependency_info.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
         dependency_info.bufferMemoryBarrierCount = 1;
         dependency_info.pBufferMemoryBarriers = &barrier;
-        vkCmdPipelineBarrier2(cmd, &dependency_info);
+        // @todo: defer barrier!vkCmdPipelineBarrier2(cmd, &dependency_info);
     } else {
         auto staging_offsets = std::vector<u32>(wl.size());
         auto req_staging_size = 0;

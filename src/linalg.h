@@ -77,6 +77,7 @@ struct v2f;
 struct v3f;
 struct v4f;
 struct m4f;
+struct m34f;
 
 struct v2f {
     f32 x, y;
@@ -310,6 +311,18 @@ struct m4f {
     m4f static constexpr normalize_unit_range(const m4f &mat);
 
     m4f static constexpr inverse(m4f &mat);
+};
+
+// 3x4 matrix useful to store affine transformations
+struct m34f {
+    f32 m[12];
+
+    m34f() = default;
+    m34f(const m4f &o) : m{
+        o.m[0], o.m[1], o.m[2], o.m[3],
+        o.m[4], o.m[5], o.m[6], o.m[7],
+        o.m[8], o.m[9], o.m[10], o.m[11]
+    } {}
 };
 
 // a 4x4 matrix with an inverse precomputed

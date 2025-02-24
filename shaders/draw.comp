@@ -1,0 +1,55 @@
+#version 460
+
+layout(local_size_x = 256) in;
+
+// Object data from CPU
+struct ObjectData {
+    uint vertex_offset;
+    uint vertex_count;
+    uint index_offset;
+    uint index_count;
+    uint material_id;
+    uint transform_id;
+};
+
+// The draw command we'll write
+struct DrawCommand {
+    uint object_id;
+    uint indexCount;
+    uint instanceCount;
+    uint firstIndex;
+    int vertexOffset;
+    uint firstInstance;
+};
+
+layout(set = 0, binding = 0) readonly buffer ObjectBuffer {
+    ObjectData objects[];
+};
+
+layout(set = 0, binding = 1) buffer DrawBuffer {
+    DrawCommand draws[];
+};
+
+layout(set = 0, binding = 2) buffer DrawCountBuffer {
+    uint draw_count;
+};
+
+void main() {
+    uint idx = gl_GlobalInvocationID.x;
+    if (idx >= objects.length()) return;
+
+    ObjectData obj = objects[idx];
+
+    // Skip invalid objects (those with no geometry)
+    if (obj.index_count == 0) return;
+
+    // Atomic add to get our draw buffer position
+    uint draw_idx = atomicAdd(draw_count, 1);
+
+    // Fill draw command
+    draws[draw_idx].indexCount = obj.index_count;
+    draws[draw_idx].instanceCount = 1;
+    draws[draw_idx].firstIndex = obj.index_offset;
+    draws[draw_idx].vertexOffset = int(obj.vertex_offset);
+    draws[draw_idx].firstInstance = idx; // Use object index as instance ID
+}

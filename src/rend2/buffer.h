@@ -3,6 +3,7 @@
 #include "oc.h"
 #include "gpu.h"
 
+#include <span>
 #include <vulkan/vulkan_core.h>
 #include <vma/vk_mem_alloc.h>
 
@@ -13,10 +14,11 @@ class GpuBuffer {
 public:
     struct Write {
         u32 offset;
-        std::vector<byte> data;
+        std::span<byte> data;
     };
-    typedef std::vector<Write> WriteList;
+    typedef std::span<Write> WriteList;
 
+    GpuBuffer() = default;
     GpuBuffer(gpu_t &gpu, u32 size, VkBufferUsageFlags usage);
 
     // immediate write to the entire buffer.
@@ -45,7 +47,7 @@ public:
     }
     void write_with_barrier(VkCommandBuffer cmd, slice<byte> data, u32 offset);
 
-    void multiwrite_with_barrier(VkCommandBuffer cmd, WriteList &);
+    void multiwrite_with_barrier(VkCommandBuffer cmd, WriteList);
 
     void copy_to(VkCommandBuffer cmd, GpuBuffer &dst);
 
@@ -53,8 +55,8 @@ public:
 private:
     void ensure_staging_buffer_size(u32 size);
 
-    gpu_t *m_gpu;
-    VkBuffer m_buffer;
+    gpu_t *m_gpu = nullptr;
+    VkBuffer m_buffer = VK_NULL_HANDLE;
     VmaAllocation m_allocation;
     VmaAllocationInfo m_allocation_info;
     byte *m_mapped;
