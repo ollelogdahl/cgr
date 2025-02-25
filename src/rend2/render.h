@@ -1,6 +1,7 @@
 #pragma once
 
 #include "oc.h"
+#include "rend2/cull_compute_pass.h"
 #include "rend2/render_handles.h"
 #include "rend2/render_state.h"
 #include "resource.h"
@@ -45,12 +46,7 @@ private:
     GpuBuffer m_draw_buffer;
 
     // @todo: break out!
-    struct {
-        CommandBuffer cmd;
-        VkPipelineLayout pipeline_layout;
-        DescriptorSet descriptor_set;
-        VkFence fence;
-    } cull_lod_compute;
+    CullComputePass cull_pass;
 
     std::unordered_map<LoadShaderProperties, ShaderHandle> shader_cache;
     std::vector<gpu_shader_t> shaders; // @todo: stop using the old gpu_shader_t type!

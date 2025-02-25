@@ -7,6 +7,10 @@ void alloc_command_buffers(gpu_t &gpu, VkCommandPool pool, u32 count, VkCommandB
 struct CommandBuffer {
 public:
     CommandBuffer() = default;
+    CommandBuffer(VkCommandBuffer cmd, TracyVkCtx ctx) {
+        m_cmd = cmd;
+        m_tracy_ctx = ctx;
+    }
     CommandBuffer(gpu_t &gpu, VkQueue queue, VkCommandPool pool, const char *name);
 
     void reset_begin();

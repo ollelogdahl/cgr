@@ -71,7 +71,8 @@ void GpuBuffer::write(slice<byte> data, u32 offset) {
     }
 }
 
-void GpuBuffer::write_with_barrier(VkCommandBuffer cmd, slice<byte> data, u32 offset) {
+WriteDependency GpuBuffer::write_with_barrier(VkCommandBuffer cmd, slice<byte> data, u32 offset) {
+    WriteDependency out_dep;
     if (m_mapped) {
         memcpy(m_mapped + offset, data.data, data.len);
         VK_CHECK(vmaFlushAllocation(m_gpu->allocator, m_allocation, offset, data.len));
@@ -80,17 +81,10 @@ void GpuBuffer::write_with_barrier(VkCommandBuffer cmd, slice<byte> data, u32 of
         barrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2;
         barrier.srcStageMask = VK_PIPELINE_STAGE_HOST_BIT;
         barrier.srcAccessMask = VK_ACCESS_HOST_WRITE_BIT;
-        barrier.dstStageMask = pipeline_stage_from_usage(m_usage);
-        barrier.dstAccessMask = access_flags_from_usage(m_usage);
         barrier.buffer = m_buffer;
         barrier.offset = offset;
         barrier.size = data.len;
-
-        VkDependencyInfo dependency_info{};
-        dependency_info.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
-        dependency_info.bufferMemoryBarrierCount = 1;
-        dependency_info.pBufferMemoryBarriers = &barrier;
-        vkCmdPipelineBarrier2(cmd, &dependency_info);
+        out_dep.barriers.push_back(barrier);
     } else {
         ensure_staging_buffer_size(data.len);
 
@@ -120,22 +114,19 @@ void GpuBuffer::write_with_barrier(VkCommandBuffer cmd, slice<byte> data, u32 of
         barrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2;
         barrier.srcStageMask = VK_PIPELINE_STAGE_TRANSFER_BIT;
         barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-        barrier.dstStageMask = pipeline_stage_from_usage(m_usage);
-        barrier.dstAccessMask = access_flags_from_usage(m_usage);
         barrier.buffer = m_buffer;
         barrier.offset = offset;
         barrier.size = data.len;
-
-        VkDependencyInfo dependency_info{};
-        dependency_info.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
-        dependency_info.bufferMemoryBarrierCount = 1;
-        dependency_info.pBufferMemoryBarriers = &barrier;
-        vkCmdPipelineBarrier2(cmd, &dependency_info);
+        out_dep.barriers.push_back(barrier);
     }
+
+    return out_dep;
 }
 
-void GpuBuffer::multiwrite_with_barrier(VkCommandBuffer cmd, WriteList wl) {
+WriteDependency GpuBuffer::multiwrite_with_barrier(VkCommandBuffer cmd, WriteList wl) {
     // writing multiple slices to the buffer but with only a single barrier.
+    WriteDependency out_dep;
+
     if (m_mapped) {
         for (usize i = 0; i < wl.size(); ++i) {
             memcpy(m_mapped + wl[i].offset, wl[i].data.data(), wl[i].data.size());
@@ -146,17 +137,10 @@ void GpuBuffer::multiwrite_with_barrier(VkCommandBuffer cmd, WriteList wl) {
         barrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2;
         barrier.srcStageMask = VK_PIPELINE_STAGE_HOST_BIT;
         barrier.srcAccessMask = VK_ACCESS_HOST_WRITE_BIT;
-        barrier.dstStageMask = pipeline_stage_from_usage(m_usage);
-        barrier.dstAccessMask = access_flags_from_usage(m_usage);
         barrier.buffer = m_buffer;
         barrier.offset = 0;
         barrier.size = VK_WHOLE_SIZE;
-
-        VkDependencyInfo dependency_info{};
-        dependency_info.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
-        dependency_info.bufferMemoryBarrierCount = 1;
-        dependency_info.pBufferMemoryBarriers = &barrier;
-        // @todo: defer barrier!vkCmdPipelineBarrier2(cmd, &dependency_info);
+        out_dep.barriers.push_back(barrier);
     } else {
         auto staging_offsets = std::vector<u32>(wl.size());
         auto req_staging_size = 0;
@@ -199,18 +183,13 @@ void GpuBuffer::multiwrite_with_barrier(VkCommandBuffer cmd, WriteList wl) {
         barrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2;
         barrier.srcStageMask = VK_PIPELINE_STAGE_TRANSFER_BIT;
         barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-        barrier.dstStageMask = pipeline_stage_from_usage(m_usage);
-        barrier.dstAccessMask = access_flags_from_usage(m_usage);
         barrier.buffer = m_buffer;
         barrier.offset = 0;
         barrier.size = VK_WHOLE_SIZE;
-
-        VkDependencyInfo dependency_info{};
-        dependency_info.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
-        dependency_info.bufferMemoryBarrierCount = 1;
-        dependency_info.pBufferMemoryBarriers = &barrier;
-        vkCmdPipelineBarrier2(cmd, &dependency_info);
+        out_dep.barriers.push_back(barrier);
     }
+
+    return out_dep;
 }
 
 

@@ -7,6 +7,30 @@
 #include <vulkan/vulkan_core.h>
 #include <vma/vk_mem_alloc.h>
 
+// this is very specific. But we will try it out!
+struct WriteDependency {
+    WriteDependency() = default;
+
+    void join(WriteDependency &other) {
+        barriers.insert(barriers.end(), other.barriers.begin(), other.barriers.end());
+    }
+
+    std::vector<VkBufferMemoryBarrier2> barriers = {};
+
+    void pipeline_barrier(VkCommandBuffer cmd, VkPipelineStageFlags2 dst_stage, VkAccessFlags2 dst_access) {
+        VkDependencyInfo dependency{};
+        dependency.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+        dependency.bufferMemoryBarrierCount = barriers.size();
+        dependency.pBufferMemoryBarriers = barriers.data();
+
+        for (auto &barrier : barriers) {
+            barrier.dstStageMask = dst_stage;
+            barrier.dstAccessMask = dst_access;
+        }
+
+        vkCmdPipelineBarrier2(cmd, &dependency);
+    }
+};
 
 // this is a buffer which resides on the GPU.
 // We should be able to provide a simplified usage parameter.
@@ -42,12 +66,12 @@ public:
     }
 
     // write to the buffer with a barrier.
-    void write_with_barrier(VkCommandBuffer cmd, slice<byte> data) {
-        write_with_barrier(cmd, data, 0);
+    WriteDependency write_with_barrier(VkCommandBuffer cmd, slice<byte> data) {
+        return write_with_barrier(cmd, data, 0);
     }
-    void write_with_barrier(VkCommandBuffer cmd, slice<byte> data, u32 offset);
+    WriteDependency write_with_barrier(VkCommandBuffer cmd, slice<byte> data, u32 offset);
 
-    void multiwrite_with_barrier(VkCommandBuffer cmd, WriteList);
+    WriteDependency multiwrite_with_barrier(VkCommandBuffer cmd, WriteList);
 
     void copy_to(VkCommandBuffer cmd, GpuBuffer &dst);
 

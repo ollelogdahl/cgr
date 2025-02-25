@@ -3,6 +3,7 @@
 #include "gpu.h"
 #include "oc.h"
 #include "linalg.h"
+#include "rend2/command_buffer.h"
 #include "rend2/randomalloc.h"
 #include "rend2/slotalloc.h"
 #include "rend2/descriptor_set.h"
@@ -69,16 +70,26 @@ public:
 
     void update_global(const GlobalData &);
 
+    struct FlushDependencies {
+        WriteDependency vertices;
+        WriteDependency indices;
+        WriteDependency materials;
+        WriteDependency meshes;
+        WriteDependency objects;
+        WriteDependency global;
+    };
+
     // flushes changes to the GPU.
-    void flush(VkCommandBuffer cmd);
+    FlushDependencies flush(CommandBuffer &cmd);
 
-    VkBuffer object_buffer() const { return m_object_buffer.get(); }
+    u32 highest_object_id() const { return m_highest_object_id; }
 
-    VkBuffer vertex_buffer() const { return m_vertex_buffer.get(); }
-    VkBuffer index_buffer() const { return m_index_buffer.get(); }
-    VkBuffer material_buffer() const { return m_material_buffer.get(); }
-    VkBuffer mesh_buffer() const { return m_mesh_buffer.get(); }
-    VkBuffer global_buffer() const { return m_global_buffer.get(); }
+    GpuBuffer object_buffer() const { return m_object_buffer; }
+    GpuBuffer vertex_buffer() const { return m_vertex_buffer; }
+    GpuBuffer index_buffer() const { return m_index_buffer; }
+    GpuBuffer material_buffer() const { return m_material_buffer; }
+    GpuBuffer mesh_buffer() const { return m_mesh_buffer; }
+    GpuBuffer global_buffer() const { return m_global_buffer; }
 
     DescriptorSet global_descriptor_set() const { return m_global_ds; }
 private:
@@ -133,6 +144,7 @@ private:
 
         void clear() {
             writes.clear();
+            gpu_writes.clear();
         }
 
         GpuBuffer::WriteList write_list() {
@@ -141,9 +153,9 @@ private:
                 auto &w = writes[i];
                 byte *ptr = (byte *)w.data.data();
                 auto len = w.data.size() * sizeof(T);
-                gpu_writes.push_back(GpuBuffer::Write{
+                gpu_writes[i] = GpuBuffer::Write{
                     w.offset, std::span(ptr, len)
-                });
+                };
             }
             return std::span(gpu_writes.begin(), gpu_writes.end());
         }

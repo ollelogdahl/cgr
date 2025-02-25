@@ -1,4 +1,6 @@
 #include "render.h"
+#include "gpu.h"
+#include "rend2/buffer.h"
 #include "rend2/render_state.h"
 #include "pipeline_layout_builder.h"
 #include "descriptor_set_layout_builder.h"
@@ -18,22 +20,10 @@ static const RenderStateConfig config = {
 static const u32 max_draws = 1024;
 
 struct DrawCommand {
-    u32 object_id;
     VkDrawIndexedIndirectCommand indirect;
 };
 
-VkFence create_fence(gpu_t &gpu, bool signal = true) {
-    VkFence fence;
-    VkFenceCreateInfo fence_info = {};
-    fence_info.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
-    fence_info.flags = signal ? VK_FENCE_CREATE_SIGNALED_BIT : 0;
-    VK_CHECK(vkCreateFence(gpu.device, &fence_info, nullptr, &fence));
-    return fence;
-}
-
-Renderer::Renderer(gpu_t &gpu) : m_gpu(&gpu), m_state(gpu, config), cull_lod_compute({
-    CommandBuffer(gpu, gpu.compute_queue, gpu.compute_command_pool, "cull_lod_compute")
-}) {
+Renderer::Renderer(gpu_t &gpu) : m_gpu(&gpu), m_state(gpu, config), cull_pass(gpu) {
     m_draw_buffer = GpuBuffer(gpu, max_draws * sizeof(DrawCommand) + 1 * sizeof(u32),
         VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
 
@@ -41,50 +31,7 @@ Renderer::Renderer(gpu_t &gpu) : m_gpu(&gpu), m_state(gpu, config), cull_lod_com
         .add_descriptor_set(m_state.global_descriptor_set().layout())
         .build(gpu);
 
-    cull_lod_compute.fence = create_fence(gpu);
-
-    // setup the annoying compute shader
-    VkDescriptorPool pool;
-    {
-        VkDescriptorPoolSize pool_sizes[] = {
-            { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 3 },
-        };
-
-        VkDescriptorPoolCreateInfo pool_info = {};
-        pool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-        pool_info.poolSizeCount = array_size(pool_sizes);
-        pool_info.pPoolSizes = pool_sizes;
-        pool_info.maxSets = 1;
-
-        VK_CHECK(vkCreateDescriptorPool(gpu.device, &pool_info, nullptr, &pool));
-    }
-
-    {
-        //      binding 0: object buffer
-        //      binding 1: draw buffer
-        //      binding 2: mesh buffer
-        VkDescriptorSetLayout ds_layout = DescriptorSetLayoutBuilder()
-            .add_binding(0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT)
-            .add_binding(1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT)
-            .add_binding(2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT)
-            .build(gpu);
-
-        cull_lod_compute.descriptor_set.init(gpu, pool, ds_layout);
-
-        cull_lod_compute.descriptor_set.write_storage_buffer(0, 0, m_state.object_buffer(), 0, VK_WHOLE_SIZE);
-        cull_lod_compute.descriptor_set.write_storage_buffer(1, 0, m_draw_buffer.get(), 0, VK_WHOLE_SIZE);
-        cull_lod_compute.descriptor_set.write_storage_buffer(2, 0, m_state.mesh_buffer(), 0, VK_WHOLE_SIZE);
-        cull_lod_compute.descriptor_set.flush(gpu);
-
-        cull_lod_compute.pipeline_layout = PipelineLayoutBuilder()
-            .add_descriptor_set(ds_layout)
-            .build(gpu);
-    }
-
-    // make the funking pipeline
-    {
-        auto shader_spv = cull_lod_spv;
-    }
+    cull_pass.bind_buffers(m_state.object_buffer(), m_draw_buffer, m_state.mesh_buffer());
 }
 
 MeshHandle Renderer::add_mesh(const Mesh &mesh) {
@@ -126,19 +73,18 @@ MeshHandle Renderer::add_mesh(const Mesh &mesh) {
         );
     }
 
-    assert(mesh.lods.size() >= 4);
-
+    assert(mesh.lods.size() > 0);
     // @note: as MeshData currently works, this makes the vertex-data handle actually dangling.
     // In my current scenario this is fine (as i think we should try automatic resource reclaim),
     // but maybe not in the future.
-    auto mesh_data = MeshData{
-        .lods = {
-            { .index_start = idx_handles[0].idx, .index_count = idx_handles[0].size },
-            { .index_start = idx_handles[1].idx, .index_count = idx_handles[1].size },
-            { .index_start = idx_handles[2].idx, .index_count = idx_handles[2].size },
-            { .index_start = idx_handles[3].idx, .index_count = idx_handles[3].size },
-        }
-    };
+    auto mesh_data = MeshData{};
+    for (size_t i = 0; i < 4; i++) {
+        auto src_idx = std::min(i, mesh.lods.size() - 1);
+        mesh_data.lods[i] = {
+            .index_start = idx_handles[src_idx].idx,
+            .index_count = idx_handles[src_idx].size,
+        };
+    }
 
     auto mesh_handle = m_state.alloc_mesh(mesh_data);
     return mesh_handle;
@@ -180,22 +126,8 @@ void Renderer::update_transform(ObjectHandle handle, const m4f &transform) {
 }
 
 void Renderer::render(gpu_t::frame_t &frame) {
-    m_state.flush(frame.cmds);
-    // @todo: flush currently creates barriers. This is no good; we do not know how
-    // the buffer will be used!!!
-    // Instead, we should make the barrier here.
-
-    // figure out the different shader batches.
-    // for now, only support one shader.
-    VkBuffer vertex_buffers[] = {m_state.vertex_buffer()};
-    VkDeviceSize offsets[] = {0};
-    vkCmdBindVertexBuffers(frame.cmds, 0, 1, vertex_buffers, offsets);
-    vkCmdBindIndexBuffer(frame.cmds, m_state.index_buffer(), 0, VK_INDEX_TYPE_UINT32);
-
-    // bind the global descriptor set
-    VkDescriptorSet descriptor_sets[] = { m_state.global_descriptor_set().get() };
-    vkCmdBindDescriptorSets(frame.cmds, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline_layout, 0,
-        1, descriptor_sets, 0, nullptr);
+    auto cmdb = CommandBuffer(frame.cmds, frame.tracy_ctx);
+    auto state_dependencies = m_state.flush(cmdb);
 
     // @todo: move this!
     // We invoke a compute shader which performs copies from the Object Buffer to
@@ -211,37 +143,51 @@ void Renderer::render(gpu_t::frame_t &frame) {
     // We maybe also should separate the object buffers by shader. This would make things
     // WAAAY easier i think. In that case, the culling and stuff does not need to care about
     // those details.
+    WriteDependency cull_modified;
     {
-        ZoneScopedN("cull-lod-compute");
-        // we would really like to do this on another frame i guess??
-        {
-            ZoneScopedN("wait-ready");
-            VK_CHECK(vkWaitForFences(m_gpu->device, 1, &cull_lod_compute.fence, VK_TRUE, UINT64_MAX));
-            VK_CHECK(vkResetFences(m_gpu->device, 1, &cull_lod_compute.fence));
-        }
+        WriteDependency dependencies;
+        dependencies.join(state_dependencies.objects);
+        dependencies.join(state_dependencies.meshes);
 
-        auto &cmd = cull_lod_compute.cmd;
-        cmd.reset_begin();
-        TracyVkCollect(cmd.tracy_ctx(), cmd.get());
+        cull_pass.run(dependencies, m_state.highest_object_id() + 1);
 
-        {
-            TracyVkZone(cmd.tracy_ctx(), cmd.get(), "cull_lod_compute");
+        VkBufferMemoryBarrier2 barrier = {};
+        barrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2;
+        barrier.srcStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
+        barrier.srcAccessMask = VK_ACCESS_2_SHADER_WRITE_BIT;
+        barrier.buffer = m_draw_buffer.get();
+        barrier.size = VK_WHOLE_SIZE;
+        cull_modified.barriers.push_back(barrier);
+    }
 
+    // now we want to make another barrier. I guess in some way, the cull pass should
+    // also return an array of changes done. We can call it ResourcePoke.
+    {
+        TracyVkZone(frame.tracy_ctx, frame.cmds, "wait-cull-pass");
+        cull_modified.pipeline_barrier(frame.cmds,
+            VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT, VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT);
+    }
 
-        }
+    {
+        TracyVkZone(frame.tracy_ctx, frame.cmds, "draw");
 
-        cmd.end();
+        VkBuffer vertex_buffers[] = {m_state.vertex_buffer().get()};
+        VkDeviceSize offsets[] = {0};
+        vkCmdBindVertexBuffers(frame.cmds, 0, 1, vertex_buffers, offsets);
+        vkCmdBindIndexBuffer(frame.cmds, m_state.index_buffer().get(), 0, VK_INDEX_TYPE_UINT32);
 
-        {
-            // submit the command buffer
-            VkCommandBuffer buffers[] = { cmd.get() };
+        // bind the global descriptor set
+        VkDescriptorSet descriptor_sets[] = { m_state.global_descriptor_set().get() };
+        vkCmdBindDescriptorSets(frame.cmds, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline_layout, 0,
+            1, descriptor_sets, 0, nullptr);
 
-            VkSubmitInfo submit_info{};
-            submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-            submit_info.commandBufferCount = array_size(buffers);
-            submit_info.pCommandBuffers = buffers;
-            vkQueueSubmit(m_gpu->compute_queue, 1, &submit_info, cull_lod_compute.fence);
-        }
+        // begin render pass
+        // bind pipeline
+
+        // the buffer is laid out as:
+        // [num draws][draw 0][draw 1]...[draw n]
+        vkCmdDrawIndexedIndirectCount(frame.cmds, m_draw_buffer.get(), sizeof(u32),
+            m_draw_buffer.get(), 0, max_draws, sizeof(DrawCommand));
     }
 }
 
