@@ -21,4 +21,5 @@ void DescriptorSet::write_buffer(u32 binding, u32 array_index, VkBuffer buffer, 
 
 void DescriptorSet::flush(gpu_t &gpu) {
     m_writer.update_set(gpu, m_set);
+    m_writer.clear();
 }

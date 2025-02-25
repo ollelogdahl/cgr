@@ -1,6 +1,7 @@
 #include "cvar.h"
 #include <deque>
 #include <variant>
+#include <algorithm>
 
 namespace cvar {
 
@@ -32,7 +33,7 @@ Uint declare_uint(const char *name, const char *description, u64 default_value) 
 }
 
 Bool get_bool(const char *name) {
-    auto cvar = std::ranges::find_if(cvars.begin(), cvars.end(), [&](const CVar &cvar) {
+    auto cvar = std::find_if(cvars.begin(), cvars.end(), [&](const CVar &cvar) {
         return cvar.name == name && cvar.type == CVar::Type::Bool;
     });
     if (cvar != cvars.end()) {
@@ -44,7 +45,7 @@ Bool get_bool(const char *name) {
 }
 
 Uint get_uint(const char *name) {
-    auto cvar = std::ranges::find_if(cvars.begin(), cvars.end(), [&](const CVar &cvar) {
+    auto cvar = std::find_if(cvars.begin(), cvars.end(), [&](const CVar &cvar) {
         return cvar.name == name && cvar.type == CVar::Type::Uint;
     });
     if (cvar != cvars.end()) {

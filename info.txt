@@ -1,5 +1,7 @@
 krav kvar!!!
 
+- Byt make till cmake
+
 - X directional light
 - X Kamera som nod!
     - X Kamera kontroller i Update visitor

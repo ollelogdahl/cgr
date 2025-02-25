@@ -1,5 +1,6 @@
 #include "render.h"
 #include "rend2/render_state.h"
+#include "pipeline_layout_builder.h"
 
 #include <algorithm>
 
@@ -23,6 +24,10 @@ Renderer::Renderer(gpu_t &gpu) : m_gpu(&gpu), m_state(gpu, config) {
         VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
     m_draw_count_buffer = GpuBuffer(gpu, max_draws * sizeof(u32),
         VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+
+    m_pipeline_layout = PipelineLayoutBuilder()
+        .add_descriptor_set(m_state.global_descriptor_set().layout())
+        .build(gpu);
 }
 
 MeshHandle Renderer::add_mesh(const Mesh &mesh) {
@@ -130,9 +135,7 @@ void Renderer::render(gpu_t::frame_t &frame) {
     vkCmdBindIndexBuffer(frame.cmds, m_state.index_buffer(), 0, VK_INDEX_TYPE_UINT32);
 
     // bind the global descriptor set
-    VkDescriptorSet descriptor_sets[] = {m_state.global_descriptor_set()};
+    VkDescriptorSet descriptor_sets[] = { m_state.global_descriptor_set().get() };
     vkCmdBindDescriptorSets(frame.cmds, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline_layout, 0,
         1, descriptor_sets, 0, nullptr);
-
-
 }

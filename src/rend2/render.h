@@ -14,6 +14,7 @@ public:
 
     // objects
     ObjectHandle add_object();
+    void delete_object(ObjectHandle handle);
 
     void assign_geometry(ObjectHandle handle, MeshHandle mesh);
     void assign_material(ObjectHandle handle, MaterialHandle material);

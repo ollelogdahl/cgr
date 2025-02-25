@@ -1,5 +1,6 @@
 #include "render_state.h"
 #include "rend2/render_handles.h"
+#include "descriptor_set_layout_builder.h"
 
 const u32 vertex_size = 9 * sizeof(f32);
 const u32 index_size = sizeof(u32);
@@ -43,63 +44,21 @@ RenderState::RenderState(gpu_t &gpu, const RenderStateConfig &config)
         }
 
         // create the layout
-        VkDescriptorSetLayout layout;
-        {
-            VkDescriptorBindingFlags binding_flags[] = {
-                0,
-                0,
-                0,
-                VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT | VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT
-            };
-
-            VkDescriptorSetLayoutBinding bindings[] = {
-                {
-                    .binding = 0,
-                    .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-                    .descriptorCount = 1,
-                    .stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-                },
-                {
-                    .binding = 1,
-                    .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-                    .descriptorCount = 1,
-                    .stageFlags = VK_SHADER_STAGE_VERTEX_BIT,
-                },
-                {
-                    .binding = 2,
-                    .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-                    .descriptorCount = 1,
-                    .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
-                },
-                {
-                    .binding = 3,
-                    .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-                    .descriptorCount = config.max_textures,
-                    .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
-                },
-            };
-
-            assert(array_size(bindings) == array_size(binding_flags));
-            VkDescriptorSetLayoutBindingFlagsCreateInfo binding_flags_create_info = {};
-            binding_flags_create_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO;
-            binding_flags_create_info.bindingCount = array_size(bindings);
-            binding_flags_create_info.pBindingFlags = binding_flags;
-
-            VkDescriptorSetLayoutCreateInfo layout_info = {};
-            layout_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-            layout_info.pNext = &binding_flags_create_info;
-            layout_info.bindingCount = array_size(bindings);
-            layout_info.pBindings = bindings;
-
-            VK_CHECK(vkCreateDescriptorSetLayout(gpu.device, &layout_info, nullptr, &layout));
-        }
+        VkDescriptorSetLayout layout = DescriptorSetLayoutBuilder()
+            .add_binding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)
+            .add_binding(1, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_VERTEX_BIT)
+            .add_binding(2, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_FRAGMENT_BIT)
+            .add_variable_binding(3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 
+                VK_SHADER_STAGE_FRAGMENT_BIT, config.max_textures)
+            .build(gpu);
 
         m_global_ds.init(gpu, m_descriptor_pool, layout);
     }
 
     m_global_ds.write_buffer(0, 0, m_global_buffer.get(), 0, VK_WHOLE_SIZE);
-    m_global_ds.write_buffer(0, 1, m_mesh_buffer.get(), 0, VK_WHOLE_SIZE);
-    m_global_ds.write_buffer(0, 2, m_material_buffer.get(), 0, VK_WHOLE_SIZE);
+    m_global_ds.write_buffer(1, 0, m_mesh_buffer.get(), 0, VK_WHOLE_SIZE);
+    m_global_ds.write_buffer(2, 0, m_material_buffer.get(), 0, VK_WHOLE_SIZE);
+    m_global_ds.flush(*m_gpu);
 }
 
 VertexDataHandle RenderState::alloc_vertices(slice<byte> vertices) {
@@ -109,7 +68,7 @@ VertexDataHandle RenderState::alloc_vertices(slice<byte> vertices) {
         return { -1U, 0 };
     }
 
-    writeback_buffers.vertices.insert({start * vertex_size, {vertices.begin(), vertices.end()}});
+    m_writeback_buffers.vertices.insert({start * vertex_size, {vertices.begin(), vertices.end()}});
 
     return { start, num_vertices };
 }
@@ -120,7 +79,7 @@ IndexDataHandle RenderState::alloc_indices(std::vector<u32> &&indices) {
         return { -1U, 0 };
     }
 
-    writeback_buffers.indices.insert({start, std::move(indices)});
+    m_writeback_buffers.indices.insert({start, std::move(indices)});
 
     return { start, (u32)indices.size() };
 }
@@ -132,7 +91,7 @@ MeshHandle RenderState::alloc_mesh(const MeshData &data) {
     }
 
     slice<byte> data_slice((byte *)&data, sizeof(MeshData));
-    writeback_buffers.meshes.insert(idx, data);
+    m_writeback_buffers.meshes.insert(idx, data);
 
     return {idx};
 }
@@ -143,7 +102,7 @@ MaterialHandle RenderState::alloc_material(const MaterialData &data) {
         return {-1U};
     }
 
-    writeback_buffers.materials.insert(idx * material_size, data);
+    m_writeback_buffers.materials.insert(idx * material_size, data);
 
     return {idx};
 }
@@ -176,15 +135,15 @@ const ObjectData &RenderState::object_data(ObjectHandle handle) {
 }
 
 void RenderState::update_global(const GlobalData &data) {
-    slice<byte> data_slice((byte *)&data, global_size);
-    writeback_buffers.global_data = {data_slice.begin(), data_slice.end()};
+    m_writeback_buffers.global_data = data;
+    m_writeback_buffers.global_data_dirty = true;
 }
 
 void RenderState::flush(VkCommandBuffer cmd) {
-    m_vertex_buffer.multiwrite_with_barrier(cmd, writeback_buffers.vertices.write_list());
-    m_index_buffer.multiwrite_with_barrier(cmd, writeback_buffers.indices.write_list());
-    m_material_buffer.multiwrite_with_barrier(cmd, writeback_buffers.materials.write_list());
-    m_mesh_buffer.multiwrite_with_barrier(cmd, writeback_buffers.meshes.write_list());
+    m_vertex_buffer.multiwrite_with_barrier(cmd, m_writeback_buffers.vertices.write_list());
+    m_index_buffer.multiwrite_with_barrier(cmd, m_writeback_buffers.indices.write_list());
+    m_material_buffer.multiwrite_with_barrier(cmd, m_writeback_buffers.materials.write_list());
+    m_mesh_buffer.multiwrite_with_barrier(cmd, m_writeback_buffers.meshes.write_list());
 
     {
         WriteCache<ObjectData> object_changes;
@@ -195,15 +154,17 @@ void RenderState::flush(VkCommandBuffer cmd) {
         m_object_buffer.multiwrite_with_barrier(cmd, object_changes.write_list());
     }
 
-    slice<byte> global_data_slice(writeback_buffers.global_data.data(), writeback_buffers.global_data.size());
-    m_global_buffer.write_with_barrier(cmd, global_data_slice);
+    if (m_writeback_buffers.global_data_dirty) {
+        slice<byte> global_data_slice((byte *)&m_writeback_buffers.global_data, sizeof(GlobalData));
+        m_global_buffer.write_with_barrier(cmd, global_data_slice);
+        m_writeback_buffers.global_data_dirty = false;
+    }
 
     m_global_ds.flush(*m_gpu);
 
     dirty_objects.clear();
-    writeback_buffers.global_data.clear();
-    writeback_buffers.vertices.clear();
-    writeback_buffers.indices.clear();
-    writeback_buffers.materials.clear();
-    writeback_buffers.meshes.clear();
+    m_writeback_buffers.vertices.clear();
+    m_writeback_buffers.indices.clear();
+    m_writeback_buffers.materials.clear();
+    m_writeback_buffers.meshes.clear();
 }

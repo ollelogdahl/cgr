@@ -79,8 +79,7 @@ public:
     VkBuffer material_buffer() const { return m_material_buffer.get(); }
     VkBuffer global_buffer() const { return m_global_buffer.get(); }
 
-    VkDescriptorSet global_descriptor_set() const { return m_global_ds.get(); }
-    VkDescriptorSetLayout global_descriptor_set_layout() const { return m_global_ds.layout(); }
+    DescriptorSet global_descriptor_set() const { return m_global_ds; }
 private:
     gpu_t *m_gpu;
 
@@ -156,6 +155,7 @@ private:
         WriteCache<MeshData> meshes;
 
         // just for this we could make immediate writes instead.
-        std::vector<byte> global_data;
-    } writeback_buffers;
+        GlobalData global_data;
+        bool global_data_dirty = false;
+    } m_writeback_buffers;
 };

@@ -20,6 +20,8 @@ GpuBuffer::GpuBuffer(gpu_t &gpu, u32 size, VkBufferUsageFlags usage)
     buffer_info.usage = usage | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
     buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
+    // not all buffers are suitable as this... This should really be reserved
+    // for uniform buffers.
     VmaAllocationCreateInfo alloc_info{};
     alloc_info.usage = VMA_MEMORY_USAGE_AUTO;
     alloc_info.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT |
@@ -75,7 +77,7 @@ void GpuBuffer::write_with_barrier(VkCommandBuffer cmd, slice<byte> data, u32 of
         VK_CHECK(vmaFlushAllocation(m_gpu->allocator, m_allocation, offset, data.len));
 
         VkBufferMemoryBarrier2 barrier{};
-        barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2;
+        barrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2;
         barrier.srcStageMask = VK_PIPELINE_STAGE_HOST_BIT;
         barrier.srcAccessMask = VK_ACCESS_HOST_WRITE_BIT;
         barrier.dstStageMask = pipeline_stage_from_usage(m_usage);
@@ -96,7 +98,7 @@ void GpuBuffer::write_with_barrier(VkCommandBuffer cmd, slice<byte> data, u32 of
         VK_CHECK(vmaFlushAllocation(m_gpu->allocator, staging.allocation, 0, VK_WHOLE_SIZE));
 
         VkBufferMemoryBarrier staging_barrier = {};
-        staging_barrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+        staging_barrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2;
         staging_barrier.srcAccessMask = VK_ACCESS_HOST_WRITE_BIT;
         staging_barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
         staging_barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
