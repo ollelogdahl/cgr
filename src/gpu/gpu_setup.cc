@@ -240,16 +240,9 @@ void gpu_t::init(GLFWwindow *window, const gpu_create_options_t &options) {
         createInfo.enabledExtensionCount = required_device_extensions.size();
         createInfo.ppEnabledExtensionNames = required_device_extensions.data();
 
-        VkPhysicalDeviceDescriptorIndexingFeatures descriptor_indexing_feature {};
-        descriptor_indexing_feature.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES;
-        descriptor_indexing_feature.shaderSampledImageArrayNonUniformIndexing = VK_TRUE;
-        descriptor_indexing_feature.runtimeDescriptorArray = VK_TRUE;
-        descriptor_indexing_feature.descriptorBindingVariableDescriptorCount = VK_TRUE;
-        descriptor_indexing_feature.descriptorBindingPartiallyBound = VK_TRUE;
-
         VkPhysicalDeviceSynchronization2Features synchronization2_feature {
             .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES,
-            .pNext = &descriptor_indexing_feature,
+            .pNext = nullptr,
             .synchronization2 = VK_TRUE,
         };
 
@@ -259,7 +252,16 @@ void gpu_t::init(GLFWwindow *window, const gpu_create_options_t &options) {
             .dynamicRendering = VK_TRUE,
         };
 
-        createInfo.pNext = &dynamic_rendering_feature;
+        VkPhysicalDeviceVulkan12Features vulkan12_feature{};
+        vulkan12_feature.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
+        vulkan12_feature.drawIndirectCount = VK_TRUE;
+        vulkan12_feature.shaderSampledImageArrayNonUniformIndexing = VK_TRUE;
+        vulkan12_feature.runtimeDescriptorArray = VK_TRUE;
+        vulkan12_feature.descriptorBindingVariableDescriptorCount = VK_TRUE;
+        vulkan12_feature.descriptorBindingPartiallyBound = VK_TRUE;
+        vulkan12_feature.pNext = &dynamic_rendering_feature;
+
+        createInfo.pNext = &vulkan12_feature;
 
         auto result = vkCreateDevice(pdev, &createInfo, nullptr, &device);
         if (result != VK_SUCCESS) {

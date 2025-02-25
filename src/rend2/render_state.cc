@@ -19,9 +19,9 @@ RenderState::RenderState(gpu_t &gpu, const RenderStateConfig &config)
     m_object_data(new ObjectData[config.max_objects]),
     m_vertex_buffer(gpu, config.max_vertices * vertex_size, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT),
     m_index_buffer(gpu, config.max_indices * index_size, VK_BUFFER_USAGE_INDEX_BUFFER_BIT),
-    m_material_buffer(gpu, config.max_materials * material_size, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT),
+    m_material_buffer(gpu, config.max_materials * material_size, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT),
     m_mesh_buffer(gpu, config.max_meshes * transform_size, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT),
-    m_global_buffer(gpu, global_size, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT),
+    m_global_buffer(gpu, global_size, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT),
     m_vertex_alloc(config.max_vertices),
     m_index_alloc(config.max_indices),
     m_material_alloc(config.max_materials),
@@ -56,9 +56,9 @@ RenderState::RenderState(gpu_t &gpu, const RenderStateConfig &config)
 
         // create the layout
         VkDescriptorSetLayout layout = DescriptorSetLayoutBuilder()
-            .add_binding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)
+            .add_binding(0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)
             .add_binding(1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_VERTEX_BIT)
-            .add_binding(2, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_FRAGMENT_BIT)
+            .add_binding(2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_FRAGMENT_BIT)
             .add_variable_binding(3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
                 VK_SHADER_STAGE_FRAGMENT_BIT, config.max_textures)
             .build(gpu);
@@ -66,9 +66,9 @@ RenderState::RenderState(gpu_t &gpu, const RenderStateConfig &config)
         m_global_ds.init(gpu, m_descriptor_pool, layout);
     }
 
-    m_global_ds.write_uniform_buffer(0, 0, m_global_buffer.get(), 0, VK_WHOLE_SIZE);
-    m_global_ds.write_storage_buffer(1, 0, m_mesh_buffer.get(), 0, VK_WHOLE_SIZE);
-    m_global_ds.write_uniform_buffer(2, 0, m_material_buffer.get(), 0, VK_WHOLE_SIZE);
+    m_global_ds.write_storage_buffer(0, 0, m_global_buffer.get(), 0, VK_WHOLE_SIZE);
+    m_global_ds.write_storage_buffer(1, 0, m_object_buffer.get(), 0, VK_WHOLE_SIZE);
+    m_global_ds.write_storage_buffer(2, 0, m_material_buffer.get(), 0, VK_WHOLE_SIZE);
     m_global_ds.flush(*m_gpu);
 
     // write default values to the object buffer

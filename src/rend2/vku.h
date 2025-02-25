@@ -7,6 +7,7 @@
 #include <vulkan/vulkan_core.h>
 
 VkFence create_fence(gpu_t &gpu, bool signal = true);
+VkSemaphore create_semaphore(gpu_t &gpu);
 
 void set_object_name(gpu_t &gpu, VkObjectType type, void *handle, std::string name);
 

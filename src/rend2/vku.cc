@@ -9,6 +9,14 @@ VkFence create_fence(gpu_t &gpu, bool signal) {
     return fence;
 }
 
+VkSemaphore create_semaphore(gpu_t &gpu) {
+    VkSemaphore semaphore;
+    VkSemaphoreCreateInfo semaphore_info = {};
+    semaphore_info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+    VK_CHECK(vkCreateSemaphore(gpu.device, &semaphore_info, nullptr, &semaphore));
+    return semaphore;
+}
+
 void set_object_name(gpu_t &gpu, VkObjectType type, void *handle, std::string name) {
     /*
     // allocate the name like crazy!

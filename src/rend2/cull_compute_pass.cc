@@ -111,6 +111,13 @@ void CullComputePass::run(WriteDependency &depends_on, u32 object_count) {
         vkCmdDispatch(m_cmd.get(), (object_count + 15) / 16, 1, 1);
     }
 
+    {
+        // signal the semaphore
+        VkSemaphore signal_semaphores[] = { m_done_semaphore };
+        VkPipelineStageFlags2 signal_stages[] = { VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT };
+
+    }
+
     m_cmd.end();
 
     {

@@ -118,7 +118,7 @@ private:
     // the compute pass only needs some of these.
     // Descriptor set 0 (global buffers and textures)
     //     binding 0: global buffer
-    //     binding 1: mesh buffer
+    //     binding 1: object buffer
     //     binding 2: material buffer
     //     binding 3: texture descriptor array
     DescriptorSet m_global_ds;

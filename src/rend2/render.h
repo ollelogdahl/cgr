@@ -42,6 +42,7 @@ private:
     RenderState m_state;
 
     VkPipelineLayout m_pipeline_layout;
+    VkPipeline m_pipeline; // temporary!
 
     GpuBuffer m_draw_buffer;
 
