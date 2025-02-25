@@ -33,7 +33,7 @@ void descriptor_writer_t::write_combined_image_sampler(u32 binding, u32 array_in
     writes.push_back(write);
 }
 
-void descriptor_writer_t::write_buffer(u32 binding, u32 array_index, VkBuffer buffer, VkDeviceSize offset, VkDeviceSize range) {
+void descriptor_writer_t::write_uniform_buffer(u32 binding, u32 array_index, VkBuffer buffer, VkDeviceSize offset, VkDeviceSize range) {
     VkDescriptorBufferInfo &buffer_info = buffer_infos.emplace_back(VkDescriptorBufferInfo{
         .buffer = buffer,
         .offset = offset,
@@ -46,6 +46,25 @@ void descriptor_writer_t::write_buffer(u32 binding, u32 array_index, VkBuffer bu
     write.dstBinding = binding;
     write.dstArrayElement = array_index;
     write.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    write.descriptorCount = 1;
+    write.pBufferInfo = &buffer_info;
+
+    writes.push_back(write);
+}
+
+void descriptor_writer_t::write_storage_buffer(u32 binding, u32 array_index, VkBuffer buffer, VkDeviceSize offset, VkDeviceSize range) {
+    VkDescriptorBufferInfo &buffer_info = buffer_infos.emplace_back(VkDescriptorBufferInfo{
+        .buffer = buffer,
+        .offset = offset,
+        .range = range
+    });
+
+    VkWriteDescriptorSet write = {};
+    write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    write.dstSet = VK_NULL_HANDLE;
+    write.dstBinding = binding;
+    write.dstArrayElement = array_index;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     write.descriptorCount = 1;
     write.pBufferInfo = &buffer_info;
 

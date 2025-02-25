@@ -15,8 +15,11 @@ void DescriptorSet::init(gpu_t &gpu, VkDescriptorPool pool, VkDescriptorSetLayou
 void DescriptorSet::write_combined_image_sampler(u32 binding, u32 array_index, VkImageView view, VkSampler sampler) {
     m_writer.write_combined_image_sampler(binding, array_index, view, sampler);
 }
-void DescriptorSet::write_buffer(u32 binding, u32 array_index, VkBuffer buffer, VkDeviceSize offset, VkDeviceSize range) {
-    m_writer.write_buffer(binding, array_index, buffer, offset, range);
+void DescriptorSet::write_uniform_buffer(u32 binding, u32 array_index, VkBuffer buffer, VkDeviceSize offset, VkDeviceSize range) {
+    m_writer.write_uniform_buffer(binding, array_index, buffer, offset, range);
+}
+void DescriptorSet::write_storage_buffer(u32 binding, u32 array_index, VkBuffer buffer, VkDeviceSize offset, VkDeviceSize range) {
+    m_writer.write_storage_buffer(binding, array_index, buffer, offset, range);
 }
 
 void DescriptorSet::flush(gpu_t &gpu) {

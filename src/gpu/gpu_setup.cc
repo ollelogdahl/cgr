@@ -12,6 +12,8 @@ void dump_available_physical_extensions(VkPhysicalDevice device);
 void dump_available_instance_extensions();
 bool is_device_suitable(VkPhysicalDevice device, slice<const char *> required_extensions);
 
+bool find_queue_families(VkPhysicalDevice device, VkSurfaceKHR surface, u32 &graphics, u32 &present, u32 &compute);
+
 template <usize N>
 bool check_validation_layer_support(const char * (&validation_layers)[N]);
 
@@ -169,50 +171,12 @@ void gpu_t::init(GLFWwindow *window, const gpu_create_options_t &options) {
         gpu_log.info("window surface created");
     }
 
-    bool qfamily_graphics_found = false;
-    bool qfamily_present_found = false;
-
-    u32 qfamily_graphics;
-    u32 qfamily_present;
-    {
-        // find queue families
-        uint32_t queueFamilyCount = 0;
-        vkGetPhysicalDeviceQueueFamilyProperties(pdev, &queueFamilyCount, nullptr);
-
-        std::vector<VkQueueFamilyProperties> queueFamilies(queueFamilyCount);
-        vkGetPhysicalDeviceQueueFamilyProperties(pdev, &queueFamilyCount, queueFamilies.data());
-
-        int i = 0;
-        for (const auto& queueFamily : queueFamilies) {
-            if (qfamily_graphics_found && qfamily_present_found) {
-                break;
-            }
-
-            if (queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT) {
-                qfamily_graphics_found = true;
-                qfamily_graphics = i;
-            }
-
-            if (qfamily_graphics_found) {
-                VkBool32 presentSupport = false;
-                vkGetPhysicalDeviceSurfaceSupportKHR(pdev, i, surface, &presentSupport);
-                if (presentSupport) {
-                    qfamily_present_found = true;
-                    qfamily_present = i;
-                }
-            }
-
-            i++;
-        }
-
-        if (!qfamily_graphics_found || !qfamily_present_found) {
-            gpu_log.error("failed to find required queue families");
-            return;
-        }
-
-        queue_families.graphics = qfamily_graphics;
-        queue_families.present = qfamily_present;
+    bool all_found = find_queue_families(pdev, surface, queue_families.graphics, queue_families.present, queue_families.compute);
+    if (!all_found) {
+        gpu_log.error("failed to find all queue families");
+        return;
     }
+
 
     support.timestamp_queries = true;
     {
@@ -247,10 +211,15 @@ void gpu_t::init(GLFWwindow *window, const gpu_create_options_t &options) {
 
         VkDeviceQueueCreateInfo queueCreateInfos[] = {
             {},
-            {}
+            {},
+            {},
         };
         // sometimes, graphics == present.
-        std::set<u32> uniqueQueueFamilies = {qfamily_graphics, qfamily_present};
+        std::set<u32> uniqueQueueFamilies = {
+            queue_families.graphics,
+            queue_families.present,
+            queue_families.compute
+        };
 
         float queuePriority = 1.0f;
         for (auto qfamily : uniqueQueueFamilies) {
@@ -302,8 +271,9 @@ void gpu_t::init(GLFWwindow *window, const gpu_create_options_t &options) {
 
     {
         // get queues
-        vkGetDeviceQueue(device, qfamily_graphics, 0, &graphics_queue);
-        vkGetDeviceQueue(device, qfamily_present, 0, &present_queue);
+        vkGetDeviceQueue(device, queue_families.graphics, 0, &graphics_queue);
+        vkGetDeviceQueue(device, queue_families.present, 0, &present_queue);
+        vkGetDeviceQueue(device, queue_families.compute, 0, &compute_queue);
     }
 
     // create swapchain initially
@@ -340,6 +310,13 @@ void gpu_t::init(GLFWwindow *window, const gpu_create_options_t &options) {
 
         poolInfo.queueFamilyIndex = queue_families.graphics;
         VK_CHECK(vkCreateCommandPool(device, &poolInfo, nullptr, &transient_command_pool));
+    }
+    {
+        VkCommandPoolCreateInfo pool_info{};
+        pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+        pool_info.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+        pool_info.queueFamilyIndex = queue_families.compute;
+        VK_CHECK(vkCreateCommandPool(device, &pool_info, nullptr, &compute_command_pool));
     }
 
     VmaVulkanFunctions vulkanFunctions = {};
@@ -385,11 +362,13 @@ void gpu_t::init(GLFWwindow *window, const gpu_create_options_t &options) {
         }
 
         frame.tracy_ctx = TracyVkContext(pdev, device, graphics_queue, frame.cmds);
-        //std::string name = fmt::format("frame {}", i);
-        //static char *name_cstr = malloc(name.length() + 1);
-        //memcpy(name_cstr, name.c_str(), name.length() + 1);
+        std::string gfx_name = fmt::format("graphics {}", i);
 
-        //TracyVkContextName(frame.tracy_ctx, name.c_str(), name.length());
+        char *gfx_name_cstr = (char *)malloc(gfx_name.length() + 1);
+
+        memcpy(gfx_name_cstr, gfx_name.c_str(), gfx_name.length());
+
+        TracyVkContextName(frame.tracy_ctx, gfx_name_cstr, gfx_name.length());
     }
 
     // setup depth buffer
@@ -415,6 +394,54 @@ void gpu_t::init(GLFWwindow *window, const gpu_create_options_t &options) {
 
         VK_CHECK(vkCreateImageView(device, &viewInfo, nullptr, &depth_image.view));
     }
+}
+
+bool find_queue_families(VkPhysicalDevice pdev, VkSurfaceKHR surface, u32 &graphics, u32 &present, u32 &compute) {
+    bool graphics_found = false;
+    bool present_found = false;
+    bool compute_found = false;
+
+    auto all_found = [&]() {
+        return graphics_found && present_found && compute_found;
+    };
+
+    // find queue families
+    uint32_t queueFamilyCount = 0;
+    vkGetPhysicalDeviceQueueFamilyProperties(pdev, &queueFamilyCount, nullptr);
+
+    std::vector<VkQueueFamilyProperties> queueFamilies(queueFamilyCount);
+    vkGetPhysicalDeviceQueueFamilyProperties(pdev, &queueFamilyCount, queueFamilies.data());
+
+    int i = 0;
+    for (const auto& queueFamily : queueFamilies) {
+        if (all_found()) {
+            return true;
+        }
+
+        if (queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT) {
+            graphics_found = true;
+            graphics = i;
+        }
+
+        // @todo: preferences. is it better to have a separate compute queue?
+        if (queueFamily.queueFlags & VK_QUEUE_COMPUTE_BIT) {
+            compute_found = true;
+            compute = i;
+        }
+
+        if (graphics_found) {
+            VkBool32 presentSupport = false;
+            vkGetPhysicalDeviceSurfaceSupportKHR(pdev, i, surface, &presentSupport);
+            if (presentSupport) {
+                present_found = true;
+                present = i;
+            }
+        }
+
+        i++;
+    }
+
+    return all_found();
 }
 
 void dump_available_validation_layers() {

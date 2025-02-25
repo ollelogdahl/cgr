@@ -81,6 +81,18 @@ private:
     friend class RenderState;
     friend class Renderer;
 };
+class ShaderHandle {
+public:
+    ShaderHandle() : id(-1) {}
+    bool operator==(const ShaderHandle &rhs) const { return id == rhs.id; }
+    bool operator<(const ShaderHandle &rhs) const { return id < rhs.id; }
+private:
+    ShaderHandle(u32 id) : id(id) {}
+    u32 id;
+
+    friend class RenderState;
+    friend class Renderer;
+};
 
 std::string format_as(VertexDataHandle);
 std::string format_as(IndexDataHandle);

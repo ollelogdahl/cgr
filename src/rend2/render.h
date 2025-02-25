@@ -1,8 +1,21 @@
 #pragma once
 
+#include "oc.h"
 #include "rend2/render_handles.h"
 #include "rend2/render_state.h"
 #include "resource.h"
+
+#include "command_buffer.h"
+
+struct LoadShaderProperties {
+    const char *glsl_vert_path;
+    const char *glsl_frag_path;
+};
+
+bool operator==(const LoadShaderProperties &lhs, const LoadShaderProperties &rhs);
+template <> struct std::hash<LoadShaderProperties> {
+    std::size_t operator()(const LoadShaderProperties &props) const;
+};
 
 class Renderer {
 public:
@@ -11,6 +24,7 @@ public:
     // resources
     MeshHandle add_mesh(const Mesh &);
     MaterialHandle add_material(const MaterialData &data);
+    ShaderHandle load_shader(const LoadShaderProperties &props);
 
     // objects
     ObjectHandle add_object();
@@ -29,5 +43,15 @@ private:
     VkPipelineLayout m_pipeline_layout;
 
     GpuBuffer m_draw_buffer;
-    GpuBuffer m_draw_count_buffer;
+
+    // @todo: break out!
+    struct {
+        CommandBuffer cmd;
+        VkPipelineLayout pipeline_layout;
+        DescriptorSet descriptor_set;
+        VkFence fence;
+    } cull_lod_compute;
+
+    std::unordered_map<LoadShaderProperties, ShaderHandle> shader_cache;
+    std::vector<gpu_shader_t> shaders; // @todo: stop using the old gpu_shader_t type!
 };

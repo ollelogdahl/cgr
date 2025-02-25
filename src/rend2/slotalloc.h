@@ -13,6 +13,7 @@ public:
 
     u32 allocate();
     void deallocate(u32 id);
+    bool is_occupied(u32 id) const;
 
     u32 capacity() const { return m_capacity; }
     u32 size() const { return m_num_used; }

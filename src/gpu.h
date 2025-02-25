@@ -121,7 +121,7 @@ struct gpu_t {
     VkInstance instance;
     VkPhysicalDevice pdev = VK_NULL_HANDLE;
     VkDevice device;
-    VkQueue graphics_queue, present_queue;
+    VkQueue graphics_queue, present_queue, compute_queue;
     VkSurfaceKHR surface;
 
     GLFWwindow *window;
@@ -129,6 +129,7 @@ struct gpu_t {
     VkDebugUtilsMessengerEXT debug_messager;
 
     VkCommandPool command_pool;
+    VkCommandPool compute_command_pool;
     VkCommandPool transient_command_pool;
     VmaAllocator allocator;
 
@@ -143,6 +144,7 @@ struct gpu_t {
     struct {
         u32 graphics;
         u32 present;
+        u32 compute;
     } queue_families;
 
     swapchain_t swapchain;
@@ -208,7 +210,8 @@ public:
     void update_set(gpu_t &gpu, VkDescriptorSet set);
 
     void write_combined_image_sampler(u32 binding, u32 array_index, VkImageView view, VkSampler sampler);
-    void write_buffer(u32 binding, u32 array_index, VkBuffer buffer, VkDeviceSize offset, VkDeviceSize range);
+    void write_uniform_buffer(u32 binding, u32 array_index, VkBuffer buffer, VkDeviceSize offset, VkDeviceSize range);
+    void write_storage_buffer(u32 binding, u32 array_index, VkBuffer buffer, VkDeviceSize offset, VkDeviceSize range);
 private:
     std::deque<VkDescriptorImageInfo> image_infos;
     std::deque<VkDescriptorBufferInfo> buffer_infos;

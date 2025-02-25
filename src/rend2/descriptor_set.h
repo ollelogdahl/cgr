@@ -7,7 +7,8 @@ public:
     void init(gpu_t &gpu, VkDescriptorPool pool, VkDescriptorSetLayout layout);
 
     void write_combined_image_sampler(u32 binding, u32 array_index, VkImageView view, VkSampler sampler);
-    void write_buffer(u32 binding, u32 array_index, VkBuffer buffer, VkDeviceSize offset, VkDeviceSize range);
+    void write_uniform_buffer(u32 binding, u32 array_index, VkBuffer buffer, VkDeviceSize offset, VkDeviceSize range);
+    void write_storage_buffer(u32 binding, u32 array_index, VkBuffer buffer, VkDeviceSize offset, VkDeviceSize range);
 
     void flush(gpu_t &gpu);
 

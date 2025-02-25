@@ -1,8 +1,11 @@
 #include "render.h"
 #include "rend2/render_state.h"
 #include "pipeline_layout_builder.h"
+#include "descriptor_set_layout_builder.h"
 
 #include <algorithm>
+
+#include "cull_lod_spv.h"
 
 static const RenderStateConfig config = {
     .max_objects = 1024,
@@ -19,15 +22,69 @@ struct DrawCommand {
     VkDrawIndexedIndirectCommand indirect;
 };
 
-Renderer::Renderer(gpu_t &gpu) : m_gpu(&gpu), m_state(gpu, config) {
-    m_draw_buffer = GpuBuffer(gpu, max_draws * sizeof(DrawCommand),
-        VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
-    m_draw_count_buffer = GpuBuffer(gpu, max_draws * sizeof(u32),
+VkFence create_fence(gpu_t &gpu, bool signal = true) {
+    VkFence fence;
+    VkFenceCreateInfo fence_info = {};
+    fence_info.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+    fence_info.flags = signal ? VK_FENCE_CREATE_SIGNALED_BIT : 0;
+    VK_CHECK(vkCreateFence(gpu.device, &fence_info, nullptr, &fence));
+    return fence;
+}
+
+Renderer::Renderer(gpu_t &gpu) : m_gpu(&gpu), m_state(gpu, config), cull_lod_compute({
+    CommandBuffer(gpu, gpu.compute_queue, gpu.compute_command_pool, "cull_lod_compute")
+}) {
+    m_draw_buffer = GpuBuffer(gpu, max_draws * sizeof(DrawCommand) + 1 * sizeof(u32),
         VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
 
     m_pipeline_layout = PipelineLayoutBuilder()
         .add_descriptor_set(m_state.global_descriptor_set().layout())
         .build(gpu);
+
+    cull_lod_compute.fence = create_fence(gpu);
+
+    // setup the annoying compute shader
+    VkDescriptorPool pool;
+    {
+        VkDescriptorPoolSize pool_sizes[] = {
+            { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 3 },
+        };
+
+        VkDescriptorPoolCreateInfo pool_info = {};
+        pool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+        pool_info.poolSizeCount = array_size(pool_sizes);
+        pool_info.pPoolSizes = pool_sizes;
+        pool_info.maxSets = 1;
+
+        VK_CHECK(vkCreateDescriptorPool(gpu.device, &pool_info, nullptr, &pool));
+    }
+
+    {
+        //      binding 0: object buffer
+        //      binding 1: draw buffer
+        //      binding 2: mesh buffer
+        VkDescriptorSetLayout ds_layout = DescriptorSetLayoutBuilder()
+            .add_binding(0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT)
+            .add_binding(1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT)
+            .add_binding(2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT)
+            .build(gpu);
+
+        cull_lod_compute.descriptor_set.init(gpu, pool, ds_layout);
+
+        cull_lod_compute.descriptor_set.write_storage_buffer(0, 0, m_state.object_buffer(), 0, VK_WHOLE_SIZE);
+        cull_lod_compute.descriptor_set.write_storage_buffer(1, 0, m_draw_buffer.get(), 0, VK_WHOLE_SIZE);
+        cull_lod_compute.descriptor_set.write_storage_buffer(2, 0, m_state.mesh_buffer(), 0, VK_WHOLE_SIZE);
+        cull_lod_compute.descriptor_set.flush(gpu);
+
+        cull_lod_compute.pipeline_layout = PipelineLayoutBuilder()
+            .add_descriptor_set(ds_layout)
+            .build(gpu);
+    }
+
+    // make the funking pipeline
+    {
+        auto shader_spv = cull_lod_spv;
+    }
 }
 
 MeshHandle Renderer::add_mesh(const Mesh &mesh) {
@@ -124,8 +181,9 @@ void Renderer::update_transform(ObjectHandle handle, const m4f &transform) {
 
 void Renderer::render(gpu_t::frame_t &frame) {
     m_state.flush(frame.cmds);
-
-    // for now, don't do any indirect draws. Just draw as we have done previously.
+    // @todo: flush currently creates barriers. This is no good; we do not know how
+    // the buffer will be used!!!
+    // Instead, we should make the barrier here.
 
     // figure out the different shader batches.
     // for now, only support one shader.
@@ -138,4 +196,59 @@ void Renderer::render(gpu_t::frame_t &frame) {
     VkDescriptorSet descriptor_sets[] = { m_state.global_descriptor_set().get() };
     vkCmdBindDescriptorSets(frame.cmds, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline_layout, 0,
         1, descriptor_sets, 0, nullptr);
+
+    // @todo: move this!
+    // We invoke a compute shader which performs copies from the Object Buffer to
+    // the Draw Buffer. It only copies if the objects are visible.
+    // Therefore, we need to pass some cull information in a ubo or something.
+    // This is actually recording to a different command buffer (and queue potentially)
+
+    // @todo: consider different shaders! This is tricky. We want a DrawIndirect command for
+    // each shader, and we don't want them to wait. Therefore, we need to either
+    //      1. Partition the draw buffer by shader
+    //      2. Have a separate draw buffer for each shader
+    //
+    // We maybe also should separate the object buffers by shader. This would make things
+    // WAAAY easier i think. In that case, the culling and stuff does not need to care about
+    // those details.
+    {
+        ZoneScopedN("cull-lod-compute");
+        // we would really like to do this on another frame i guess??
+        {
+            ZoneScopedN("wait-ready");
+            VK_CHECK(vkWaitForFences(m_gpu->device, 1, &cull_lod_compute.fence, VK_TRUE, UINT64_MAX));
+            VK_CHECK(vkResetFences(m_gpu->device, 1, &cull_lod_compute.fence));
+        }
+
+        auto &cmd = cull_lod_compute.cmd;
+        cmd.reset_begin();
+        TracyVkCollect(cmd.tracy_ctx(), cmd.get());
+
+        {
+            TracyVkZone(cmd.tracy_ctx(), cmd.get(), "cull_lod_compute");
+
+
+        }
+
+        cmd.end();
+
+        {
+            // submit the command buffer
+            VkCommandBuffer buffers[] = { cmd.get() };
+
+            VkSubmitInfo submit_info{};
+            submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+            submit_info.commandBufferCount = array_size(buffers);
+            submit_info.pCommandBuffers = buffers;
+            vkQueueSubmit(m_gpu->compute_queue, 1, &submit_info, cull_lod_compute.fence);
+        }
+    }
+}
+
+bool operator==(const LoadShaderProperties &lhs, const LoadShaderProperties &rhs) {
+    return lhs.glsl_vert_path == rhs.glsl_vert_path && lhs.glsl_frag_path == rhs.glsl_frag_path;
+}
+
+std::size_t std::hash<LoadShaderProperties>::operator()(const LoadShaderProperties &props) const {
+    return std::hash<const char *>()(props.glsl_vert_path) ^ std::hash<const char *>()(props.glsl_frag_path);
 }

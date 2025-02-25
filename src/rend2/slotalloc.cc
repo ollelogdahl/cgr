@@ -1,9 +1,8 @@
 #include "slotalloc.h"
 
 SlotAllocator::SlotAllocator(u32 capacity)
-: m_capacity(capacity) , m_num_used(0) {
+: m_capacity(capacity) , m_num_used(0), m_first_free(0) {
     m_bitmap.resize((capacity + 63) / 64, 0);
-    m_first_free = 0;
 }
 
 u32 SlotAllocator::allocate() {
@@ -36,6 +35,12 @@ u32 SlotAllocator::allocate() {
     }
 
     return UNALLOCATED;
+}
+
+bool SlotAllocator::is_occupied(u32 id) const {
+    u32 block = id / 64;
+    u32 bit = id % 64;
+    return m_bitmap[block] & (1ull << bit);
 }
 
 void SlotAllocator::deallocate(u32 idx) {

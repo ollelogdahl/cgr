@@ -317,7 +317,7 @@ void renderer_t::init(gpu_t &gpu, loader_t &loader) {
     {
         // populate main descriptor set
         auto writer = descriptor_writer_t();
-        writer.write_buffer(0, 0, env_ubo_buffer.handle, 0, sizeof(env_ubo_t));
+        writer.write_uniform_buffer(0, 0, env_ubo_buffer.handle, 0, sizeof(env_ubo_t));
         writer.update_set(gpu, main_descriptor_set);
     }
 }

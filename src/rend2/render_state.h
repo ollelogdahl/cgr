@@ -77,6 +77,7 @@ public:
     VkBuffer vertex_buffer() const { return m_vertex_buffer.get(); }
     VkBuffer index_buffer() const { return m_index_buffer.get(); }
     VkBuffer material_buffer() const { return m_material_buffer.get(); }
+    VkBuffer mesh_buffer() const { return m_mesh_buffer.get(); }
     VkBuffer global_buffer() const { return m_global_buffer.get(); }
 
     DescriptorSet global_descriptor_set() const { return m_global_ds; }
@@ -100,7 +101,10 @@ private:
     SlotAllocator m_texture_alloc;
     SlotAllocator m_object_alloc;
 
+    u32 m_highest_object_id;
+
     // @note: this could be split out into multiple sets.
+    // the compute pass only needs some of these.
     // Descriptor set 0 (global buffers and textures)
     //     binding 0: global buffer
     //     binding 1: mesh buffer
