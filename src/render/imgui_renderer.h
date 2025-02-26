@@ -4,7 +4,7 @@
 
 class ImGuiRenderer {
 public:
-    void init(gpu_t &gpu);
+    ImGuiRenderer(gpu_t &gpu);
 
     void new_frame();
     void draw(gpu_t::frame_t &frame);

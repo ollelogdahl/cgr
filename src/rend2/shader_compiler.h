@@ -24,6 +24,7 @@ public:
     Shader(std::vector<ShaderModule> modules);
 
     void apply_to(VkGraphicsPipelineCreateInfo &info) const;
+    void apply_to(VkComputePipelineCreateInfo &info) const;
 private:
     std::vector<VkPipelineShaderStageCreateInfo> m_stages;
 };

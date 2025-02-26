@@ -350,9 +350,12 @@ void gpu_t::init(GLFWwindow *window, const gpu_create_options_t &options) {
 
             VK_CHECK(vkCreateSemaphore(device, &semaphoreInfo, nullptr, &frame.image_available));
             VK_CHECK(vkCreateSemaphore(device, &semaphoreInfo, nullptr, &frame.render_finished));
+            VK_CHECK(vkCreateSemaphore(device, &semaphoreInfo, nullptr, &frame.compute_finished));
             VK_CHECK(vkCreateFence(device, &fenceInfo, nullptr, &frame.in_flight));
+            VK_CHECK(vkCreateFence(device, &fenceInfo, nullptr, &frame.compute_in_flight));
         }
 
+        VkCommandBuffer cmd, compute_cmd;
         {
             VkCommandBufferAllocateInfo allocInfo{};
             allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
@@ -360,17 +363,29 @@ void gpu_t::init(GLFWwindow *window, const gpu_create_options_t &options) {
             allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
             allocInfo.commandBufferCount = 1;
 
-            VK_CHECK(vkAllocateCommandBuffers(device, &allocInfo, &frame.cmds));
+            VK_CHECK(vkAllocateCommandBuffers(device, &allocInfo, &cmd));
+        }
+        {
+            VkCommandBufferAllocateInfo allocInfo{};
+            allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+            allocInfo.commandPool = compute_command_pool;
+            allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+            allocInfo.commandBufferCount = 1;
+
+            VK_CHECK(vkAllocateCommandBuffers(device, &allocInfo, &compute_cmd));
         }
 
-        frame.tracy_ctx = TracyVkContext(pdev, device, graphics_queue, frame.cmds);
-        std::string gfx_name = fmt::format("graphics {}", i);
+        auto make_perm_name = [](std::string &&name) {
+            char *cstr = (char *)malloc(name.length() + 1);
+            memcpy(cstr, name.c_str(), name.length());
+            return cstr;
+        };
 
-        char *gfx_name_cstr = (char *)malloc(gfx_name.length() + 1);
+        auto gfx_name = make_perm_name(fmt::format("graphics {}", i + 1));
+        auto compute_name = make_perm_name(fmt::format("compute {}", i + 1));
 
-        memcpy(gfx_name_cstr, gfx_name.c_str(), gfx_name.length());
-
-        TracyVkContextName(frame.tracy_ctx, gfx_name_cstr, gfx_name.length());
+        frame.cmd = CommandBuffer(*this, graphics_queue, command_pool, gfx_name);
+        frame.compute_cmd = CommandBuffer(*this, compute_queue, compute_command_pool, compute_name);
     }
 
     // setup depth buffer

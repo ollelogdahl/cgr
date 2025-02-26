@@ -2,6 +2,7 @@
 
 #include "oc.h"
 #include "rend2/cull_compute_pass.h"
+#include "rend2/forward_indirect_pass.h"
 #include "rend2/render_handles.h"
 #include "rend2/render_state.h"
 #include "resource.h"
@@ -23,6 +24,8 @@ public:
     Renderer(gpu_t &gpu);
 
     // resources
+    // @todo: material redesign.
+    // There is actually nothing enforcing us to ue the same struct for all materials. We can probably be smart here.
     MeshHandle add_mesh(const Mesh &);
     MaterialHandle add_material(const MaterialData &data);
     ShaderHandle load_shader(const LoadShaderProperties &props);
@@ -35,19 +38,18 @@ public:
     void assign_material(ObjectHandle handle, MaterialHandle material);
     void update_transform(ObjectHandle handle, const m4f &transform);
 
+    void update_global(const GlobalData &data);
+
     // render
     void render(gpu_t::frame_t &frame);
 private:
     gpu_t *m_gpu;
     RenderState m_state;
 
-    VkPipelineLayout m_pipeline_layout;
-    VkPipeline m_pipeline; // temporary!
-
-    GpuBuffer m_draw_buffer;
-
     // @todo: break out!
     CullComputePass cull_pass;
+    ForwardIndirectPass forward_pass;
+    GpuBuffer m_draw_buffer;
 
     std::unordered_map<LoadShaderProperties, ShaderHandle> shader_cache;
     std::vector<gpu_shader_t> shaders; // @todo: stop using the old gpu_shader_t type!

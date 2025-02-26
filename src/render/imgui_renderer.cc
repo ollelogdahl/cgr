@@ -5,9 +5,7 @@
 #include "imgui/imgui_impl_vulkan.h"
 #include <vulkan/vulkan_core.h>
 
-void ImGuiRenderer::init(gpu_t &gpu) {
-    this->gpu = &gpu;
-
+ImGuiRenderer::ImGuiRenderer(gpu_t &gpu) : gpu(&gpu) {
     // creating the context does not have anything to do with
     // the renderer. Oh well.
     ImGui::CreateContext();
@@ -118,9 +116,9 @@ void ImGuiRenderer::draw(gpu_t::frame_t &frame) {
     rendering_info.pDepthAttachment = &depth_attachment;
 
     {
-        TracyVkZone(frame.tracy_ctx, frame.cmds, "imgui-render");
-        vkCmdBeginRendering(frame.cmds, &rendering_info);
-        ImGui_ImplVulkan_RenderDrawData(draw_data, frame.cmds);
-        vkCmdEndRendering(frame.cmds);
+        TracyVkZone(frame.cmd.tracy_ctx(), frame.cmd.get(), "imgui-render");
+        vkCmdBeginRendering(frame.cmd.get(), &rendering_info);
+        ImGui_ImplVulkan_RenderDrawData(draw_data, frame.cmd.get());
+        vkCmdEndRendering(frame.cmd.get());
     }
 }

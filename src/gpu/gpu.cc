@@ -15,78 +15,82 @@
 
 logger_t gpu_log = logger_t("gpu");
 
+void transition_layout_for_rendering(VkCommandBuffer cmd, VkImage image);
+void transition_layout_for_presenting(VkCommandBuffer cmd, VkImage image);
+
 void gpu_t::frame(std::function<void(frame_t &)> fn) {
     ZoneScopedN("draw");
     auto &current_frame = frames[frame_number];
 
     const auto timeout = 1000000000;
     {
-        ZoneScopedN("wait-ready");
+        ZoneScopedN("graphics-wait-ready");
         VK_CHECK(vkWaitForFences(device, 1, &current_frame.in_flight, VK_TRUE, timeout));
         VK_CHECK(vkResetFences(device, 1, &current_frame.in_flight));
     }
 
     u32 image_idx;
-    auto swapchain_result = vkAcquireNextImageKHR(device, swapchain.handle, timeout,
-        current_frame.image_available, VK_NULL_HANDLE, &image_idx);
     {
-        // @note: we can also do || swapchain_result == VK_SUBOPTIMAL_KHR here,
-        // but I'm not sure it has a big impact. On my machine, this causes swapchain recreation
-        // every time i move ANY window.
-        if (swapchain_result == VK_ERROR_OUT_OF_DATE_KHR) {
-            ZoneScopedN("swapchain-recreate");
-            u32 width, height;
-            glfwGetFramebufferSize(window, (int*)&width, (int*)&height);
+        ZoneScopedN("swapchain-acquire");
 
-            vkDeviceWaitIdle(device);
+        auto swapchain_result = vkAcquireNextImageKHR(device, swapchain.handle, timeout,
+            current_frame.image_available, VK_NULL_HANDLE, &image_idx);
+        {
+            // @note: we can also do || swapchain_result == VK_SUBOPTIMAL_KHR here,
+            // but I'm not sure it has a big impact. On my machine, this causes swapchain recreation
+            // every time i move ANY window.
+            if (swapchain_result == VK_ERROR_OUT_OF_DATE_KHR) {
+                ZoneScopedN("swapchain-recreate");
+                u32 width, height;
+                glfwGetFramebufferSize(window, (int*)&width, (int*)&height);
 
-            swapchain = swapchain_builder_t(pdev, device, surface, queue_families.graphics, queue_families.present)
-                .set_desired_format({.format = VK_FORMAT_B8G8R8A8_UNORM, .colorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR})
-                .set_desired_present_modes({VK_PRESENT_MODE_MAILBOX_KHR, VK_PRESENT_MODE_FIFO_RELAXED_KHR, VK_PRESENT_MODE_FIFO_KHR})
-                .set_desired_extent(width, height)
-                .add_image_usage(VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT)
-                .set_old_swapchain(swapchain)
-                .build().unwrap();
+                vkDeviceWaitIdle(device);
 
-            // signal the fence.
-            vkQueueSubmit(graphics_queue, 0, nullptr, current_frame.in_flight);
-            return;
-        } if (swapchain_result == VK_SUBOPTIMAL_KHR) {
-            // we can do something here, but lets ignore it.
-        } else VK_CHECK(swapchain_result);
+                swapchain = swapchain_builder_t(pdev, device, surface, queue_families.graphics, queue_families.present)
+                    .set_desired_format({.format = VK_FORMAT_B8G8R8A8_UNORM, .colorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR})
+                    .set_desired_present_modes({VK_PRESENT_MODE_MAILBOX_KHR, VK_PRESENT_MODE_FIFO_RELAXED_KHR, VK_PRESENT_MODE_FIFO_KHR})
+                    .set_desired_extent(width, height)
+                    .add_image_usage(VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT)
+                    .set_old_swapchain(swapchain)
+                    .build().unwrap();
+
+                // signal the fence.
+                vkQueueSubmit(graphics_queue, 0, nullptr, current_frame.in_flight);
+                return;
+            } if (swapchain_result == VK_SUBOPTIMAL_KHR) {
+                // we can do something here, but lets ignore it.
+            } else VK_CHECK(swapchain_result);
+        }
     }
 
-    auto &cmds = current_frame.cmds;
-    VK_CHECK(vkResetCommandBuffer(cmds, 0));
-    {
-        VkCommandBufferBeginInfo beginInfo{};
-        beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-
-        VK_CHECK(vkBeginCommandBuffer(cmds, &beginInfo));
-    }
-    TracyVkCollect(current_frame.tracy_ctx, current_frame.cmds);
+    current_frame.cmd.reset_begin();
+    TracyVkCollect(current_frame.cmd.tracy_ctx(), current_frame.cmd.get());
 
     // @todo: please no, we should maybe not draw directly to the swapchain. I think it would
     // be cooler to draw to an image and then copy it to the swapchain. But what do i know?
     {
-        TracyVkZone(current_frame.tracy_ctx, cmds, "frame");
+        ZoneScopedN("frame");
+        TracyVkZone(current_frame.cmd.tracy_ctx(), current_frame.cmd.get(), "frame");
 
-        transition_image(cmds, swapchain.images[image_idx], VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+        auto image = swapchain.images[image_idx];
+
+        transition_layout_for_rendering(current_frame.cmd.get(), image);
 
         current_frame.image_idx = image_idx;
         {
-            TracyVkZone(current_frame.tracy_ctx, cmds, "render");
+            TracyVkZone(current_frame.cmd.tracy_ctx(), current_frame.cmd.get(), "render");
+            ZoneScopedN("render");
             fn(current_frame);
         }
 
-        transition_image(cmds, swapchain.images[image_idx], VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+        transition_layout_for_presenting(current_frame.cmd.get(), image);
     }
 
-    VK_CHECK(vkEndCommandBuffer(cmds));
+    current_frame.cmd.end();
 
     // submit command buffer
     {
-        ZoneScopedN("queue-submit");
+        ZoneScopedN("graphics-queue-submit");
         VkSubmitInfo submitInfo{};
         submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
 
@@ -95,8 +99,9 @@ void gpu_t::frame(std::function<void(frame_t &)> fn) {
         submitInfo.pWaitSemaphores = &current_frame.image_available;
         submitInfo.pWaitDstStageMask = waitStages;
 
-        submitInfo.commandBufferCount = 1;
-        submitInfo.pCommandBuffers = &cmds;
+        VkCommandBuffer cmds[] = {current_frame.cmd.get()};
+        submitInfo.commandBufferCount = array_size(cmds);
+        submitInfo.pCommandBuffers = cmds;
 
         submitInfo.signalSemaphoreCount = 1;
         submitInfo.pSignalSemaphores = &current_frame.render_finished;
@@ -157,6 +162,66 @@ void gpu_t::end_single_use_command_buffer(VkCommandBuffer cmd) {
     vkQueueWaitIdle(graphics_queue);
 
     vkFreeCommandBuffers(device, transient_command_pool, 1, &cmd);
+}
+
+void transition_layout_for_rendering(VkCommandBuffer cmd, VkImage image) {
+    VkImageMemoryBarrier2 imageBarrier{};
+    imageBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
+
+    // Optimized transition from undefined to color attachment
+    imageBarrier.srcStageMask = VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT;
+    imageBarrier.srcAccessMask = 0;
+    imageBarrier.dstStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
+    imageBarrier.dstAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT;
+    imageBarrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    imageBarrier.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+    VkImageSubresourceRange sub_image{};
+    sub_image.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    sub_image.baseMipLevel = 0;
+    sub_image.levelCount = 1;
+    sub_image.baseArrayLayer = 0;
+    sub_image.layerCount = 1;
+
+    imageBarrier.subresourceRange = sub_image;
+    imageBarrier.image = image;
+
+    VkDependencyInfo dep_info{};
+    dep_info.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+    dep_info.imageMemoryBarrierCount = 1;
+    dep_info.pImageMemoryBarriers = &imageBarrier;
+
+    vkCmdPipelineBarrier2(cmd, &dep_info);
+}
+
+void transition_layout_for_presenting(VkCommandBuffer cmd, VkImage image) {
+    VkImageMemoryBarrier2 imageBarrier{};
+    imageBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
+
+    // Optimized transition from color attachment to present
+    imageBarrier.srcStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
+    imageBarrier.srcAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT;
+    imageBarrier.dstStageMask = VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT;
+    imageBarrier.dstAccessMask = 0;
+    imageBarrier.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    imageBarrier.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+
+    VkImageSubresourceRange sub_image{};
+    sub_image.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    sub_image.baseMipLevel = 0;
+    sub_image.levelCount = 1;
+    sub_image.baseArrayLayer = 0;
+    sub_image.layerCount = 1;
+
+    imageBarrier.subresourceRange = sub_image;
+    imageBarrier.image = image;
+
+    VkDependencyInfo dep_info{};
+    dep_info.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+    dep_info.imageMemoryBarrierCount = 1;
+    dep_info.pImageMemoryBarriers = &imageBarrier;
+
+    vkCmdPipelineBarrier2(cmd, &dep_info);
 }
 
 void transition_image(VkCommandBuffer cmd, VkImage image, VkImageLayout old_layout, VkImageLayout new_layout) {

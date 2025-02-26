@@ -1,8 +1,8 @@
 #version 450
 
 struct GlobalData {
-    mat4 cam_proj;
     mat4 cam_view;
+    mat4 cam_proj;
     vec3 cam_pos;
 };
 
@@ -20,8 +20,7 @@ struct MeshData {
 struct ObjectData {
     uint material_id;
     uint mesh_id;
-    uint _pad[2];
-    mat4x3 transform; // it is actually a 4x3 matrix, but in std140 that takes up the same as mat4.
+    mat3x4 transform; // transform transposed.
 };
 
 struct MaterialData {
@@ -50,15 +49,26 @@ layout(location = 1) out vec3 frag_normal_ws;
 layout(location = 2) out vec2 frag_uv;
 layout(location = 3) out vec3 frag_vertex_color;
 
+mat4 unpack_transform(mat3x4 t) {
+    return mat4(
+        vec4(t[0].x, t[1].x, t[2].x, 0.0),
+        vec4(t[0].y, t[1].y, t[2].y, 0.0),
+        vec4(t[0].z, t[1].z, t[2].z, 0.0),
+        vec4(t[0].w, t[1].w, t[2].w, 1.0)
+    );
+}
+
 void main() {
     ObjectData object = objects[gl_InstanceIndex];
 
-    vec3 wp = object.transform * vec4(position, 1.0);
-    gl_Position = global.cam_proj * global.cam_view * vec4(wp, 1.0);
+    mat4 transform = unpack_transform(object.transform);
+    vec4 wp = transform * vec4(position, 1.0);
+
+    gl_Position = global.cam_proj * global.cam_view * wp;
 
 
     frag_pos_ws = vec3(wp);
-    frag_normal_ws = transpose(inverse(mat3(object.transform))) * normal;
+    frag_normal_ws = transpose(inverse(mat3(transform))) * normal;
     frag_uv = vec2(uv.x, -uv.y);
     frag_vertex_color = vertex_color;
 }

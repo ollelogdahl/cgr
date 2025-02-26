@@ -1,4 +1,5 @@
 #include "command_buffer.h"
+#include "gpu.h"
 
 CommandBuffer::CommandBuffer(gpu_t &gpu, VkQueue queue, VkCommandPool pool, const char *name) {
     VkCommandBufferAllocateInfo alloc_info{};

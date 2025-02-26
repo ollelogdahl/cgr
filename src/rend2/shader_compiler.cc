@@ -25,6 +25,9 @@ void Shader::apply_to(VkGraphicsPipelineCreateInfo &info) const {
     info.stageCount = m_stages.size();
     info.pStages = m_stages.data();
 }
+void Shader::apply_to(VkComputePipelineCreateInfo &info) const {
+    info.stage = m_stages[0];
+}
 
 ShaderCompiler::ShaderCompiler(gpu_t &gpu, const char *glslc_path)
 : m_gpu(&gpu) {

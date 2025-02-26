@@ -1,16 +1,16 @@
 #pragma once
 
-#include "gpu.h"
+#include "oc.h"
+#include <vulkan/vulkan_core.h>
+#include <tracy/TracyVulkan.hpp>
+
+struct gpu_t;
 
 void alloc_command_buffers(gpu_t &gpu, VkCommandPool pool, u32 count, VkCommandBuffer *buffers);
 
 struct CommandBuffer {
 public:
     CommandBuffer() = default;
-    CommandBuffer(VkCommandBuffer cmd, TracyVkCtx ctx) {
-        m_cmd = cmd;
-        m_tracy_ctx = ctx;
-    }
     CommandBuffer(gpu_t &gpu, VkQueue queue, VkCommandPool pool, const char *name);
 
     void reset_begin();

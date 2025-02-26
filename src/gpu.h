@@ -14,6 +14,8 @@
 
 #include <tracy/TracyVulkan.hpp>
 
+#include "rend2/command_buffer.h"
+
 #define VK_CHECK(...) do { VkResult result = __VA_ARGS__; if (result != VK_SUCCESS) { \
     auto err_str = vk_result_to_cstr(result); \
     panic("vulkan api error: {}", err_str); } } while(0)
@@ -154,13 +156,15 @@ struct gpu_t {
         VkSemaphore render_finished;
         VkFence in_flight;
 
-        // @todo: do we also need the pool here? idk?
-        VkCommandBuffer cmds;
+        // @todo: we should maybe support multiple compute command buffers?
+        VkSemaphore compute_finished;
+        VkFence compute_in_flight;
+        VkFence compute_fence;
 
-        // @todo: use a draw image instead.
+        CommandBuffer cmd;
+        CommandBuffer compute_cmd;
+
         u32 image_idx;
-
-        TracyVkCtx tracy_ctx;
     };
 
     gpu_image_t depth_image;

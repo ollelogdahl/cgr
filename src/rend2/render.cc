@@ -1,6 +1,8 @@
 #include "render.h"
 #include "gpu.h"
+#include "metrics.h"
 #include "rend2/buffer.h"
+#include "rend2/forward_indirect_pass.h"
 #include "rend2/render_state.h"
 #include "pipeline_layout_builder.h"
 #include "descriptor_set_layout_builder.h"
@@ -10,41 +12,30 @@
 #include "cull_lod_spv.h"
 #include "rend2/shader_compiler.h"
 #include "rend2/vku.h"
+#include "tracy/Tracy.hpp"
 
 static const RenderStateConfig config = {
-    .max_objects = 1024,
+    .max_objects = 1 * 1024 * 1024,
     .max_vertices = 1 * 1024 * 1024,
     .max_indices = 1 * 1024 * 1024,
     .max_meshes = 1024,
     .max_materials = 1024,
     .max_textures = 1024,
 };
-static const u32 max_draws = 1024;
+static const u32 max_draws = 1 * 1024 * 1024;
 
-struct DrawCommand {
-    VkDrawIndexedIndirectCommand indirect;
-};
-
-VkPipeline create_graphics_pipeline(gpu_t &gpu, VkPipelineLayout layout, const Shader &shader);
-
-Renderer::Renderer(gpu_t &gpu) : m_gpu(&gpu), m_state(gpu, config), cull_pass(gpu) {
+Renderer::Renderer(gpu_t &gpu) : m_gpu(&gpu), m_state(gpu, config),
+        cull_pass(gpu), forward_pass(gpu, config.max_textures) {
     m_draw_buffer = GpuBuffer(gpu, max_draws * sizeof(DrawCommand) + 1 * sizeof(u32),
         VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
 
-    m_pipeline_layout = PipelineLayoutBuilder()
-        .add_descriptor_set(m_state.global_descriptor_set().layout())
-        .build(gpu);
-
     cull_pass.bind_buffers(m_state.object_buffer(), m_draw_buffer, m_state.mesh_buffer());
-
-    // create the default graphics pipeline
-    // @todo: tmp. move this.
-    ShaderCompiler compiler(gpu, "glslc");
-    Shader shader = Shader({
-        compiler.compile("shaders/forward.vert"),
-        compiler.compile("shaders/forward.frag")
-    });
-    m_pipeline = create_graphics_pipeline(gpu, m_pipeline_layout, shader);
+    forward_pass.set_resources(
+        m_state.global_buffer().get(),
+        m_state.object_buffer().get(),
+        m_draw_buffer.get(),
+        m_state.material_buffer().get()
+    );
 }
 
 MeshHandle Renderer::add_mesh(const Mesh &mesh) {
@@ -70,7 +61,8 @@ MeshHandle Renderer::add_mesh(const Mesh &mesh) {
 
     auto vertex_handle = m_state.alloc_vertices(slice<byte>(interleaved));
 
-    auto idx_handles = std::vector<IndexDataHandle>(mesh.lods.size());
+    auto idx_handles = std::vector<IndexDataHandle>();
+    idx_handles.reserve(mesh.lods.size());
 
     // offset all indices
     for (auto &lod : mesh.lods) {
@@ -138,9 +130,13 @@ void Renderer::update_transform(ObjectHandle handle, const m4f &transform) {
     m_state.update_object(handle, o);
 }
 
+void Renderer::update_global(const GlobalData &data) {
+    m_state.update_global(data);
+}
+
 void Renderer::render(gpu_t::frame_t &frame) {
-    auto cmdb = CommandBuffer(frame.cmds, frame.tracy_ctx);
-    auto state_dependencies = m_state.flush(cmdb);
+    ZoneScoped;
+    auto state_dependencies = m_state.flush(frame.cmd);
 
     // @todo: move this!
     // We invoke a compute shader which performs copies from the Object Buffer to
@@ -158,11 +154,17 @@ void Renderer::render(gpu_t::frame_t &frame) {
     // those details.
     WriteDependency cull_modified;
     {
+        TracyVkZone(frame.cmd.tracy_ctx(), frame.cmd.get(), "wait-state-change");
         WriteDependency dependencies;
         dependencies.join(state_dependencies.objects);
         dependencies.join(state_dependencies.meshes);
 
-        cull_pass.run(dependencies, m_state.highest_object_id() + 1);
+        dependencies.pipeline_barrier(frame.cmd.get(),
+            VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT);
+    }
+
+    {
+        cull_pass.record(frame.cmd, m_state.highest_object_id() + 1);
 
         VkBufferMemoryBarrier2 barrier = {};
         barrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2;
@@ -176,91 +178,34 @@ void Renderer::render(gpu_t::frame_t &frame) {
     // now we want to make another barrier. I guess in some way, the cull pass should
     // also return an array of changes done. We can call it ResourcePoke.
     {
-        TracyVkZone(frame.tracy_ctx, frame.cmds, "wait-cull-pass");
-        cull_modified.pipeline_barrier(frame.cmds,
+        TracyVkZone(frame.cmd.tracy_ctx(), frame.cmd.get(), "wait-cull-pass");
+        cull_modified.pipeline_barrier(frame.cmd.get(),
             VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT, VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT);
     }
 
-    {
-        TracyVkZone(frame.tracy_ctx, frame.cmds, "draw");
 
-        VkBuffer vertex_buffers[] = {m_state.vertex_buffer().get()};
-        VkDeviceSize offsets[] = {0};
-        vkCmdBindVertexBuffers(frame.cmds, 0, 1, vertex_buffers, offsets);
-        vkCmdBindIndexBuffer(frame.cmds, m_state.index_buffer().get(), 0, VK_INDEX_TYPE_UINT32);
+    RenderTarget target = {
+        .color_view = m_gpu->swapchain.image_views[frame.image_idx],
+        .depth_view = m_gpu->depth_image.view,
+        .extent = m_gpu->swapchain.extent,
+    };
 
-        // bind the global descriptor set
-        VkDescriptorSet descriptor_sets[] = { m_state.global_descriptor_set().get() };
-        vkCmdBindDescriptorSets(frame.cmds, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline_layout, 0,
-            1, descriptor_sets, 0, nullptr);
+    VkBuffer vertex_buffers[] = {m_state.vertex_buffer().get()};
+    VkDeviceSize offsets[] = {0};
+    vkCmdBindVertexBuffers(frame.cmd.get(), 0, 1, vertex_buffers, offsets);
+    vkCmdBindIndexBuffer(frame.cmd.get(), m_state.index_buffer().get(), 0, VK_INDEX_TYPE_UINT32);
 
-        // begin render pass
-        VkRenderingAttachmentInfo color_attachments[] = {
-            {
-                .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-                .pNext = nullptr,
-                .imageView = m_gpu->swapchain.image_views[frame.image_idx],
-                .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                .resolveMode = VK_RESOLVE_MODE_NONE,
-                .resolveImageView = VK_NULL_HANDLE,
-                .resolveImageLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-                .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
-                .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
-                .clearValue = {{{0.0f, 0.0f, 0.0f, 1.0f}}},
-            }
-        };
-        VkRenderingAttachmentInfo depth_attachment = {
-            .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-            .pNext = nullptr,
-            .imageView = m_gpu->depth_image.view,
-            .imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-            .resolveMode = VK_RESOLVE_MODE_NONE,
-            .resolveImageView = VK_NULL_HANDLE,
-            .resolveImageLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-            .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
-            .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
-            .clearValue = {{{1.0f, 0}}},
-        };
+    std::vector<IndirectBatch> batches = {
+        {
+            .pipeline = 0,
+            .index = 0,
+            .count = 1,
+            .max_draws = max_draws,
+        }
+    };
+    metrics::gauge("rend2.batches", (u32)batches.size());
 
-        VkRenderingInfo rendering_info{};
-        rendering_info.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
-        rendering_info.renderArea = {
-            .offset = {0, 0},
-            .extent = m_gpu->swapchain.extent
-        };
-        rendering_info.layerCount = 1;
-        rendering_info.colorAttachmentCount = array_size(color_attachments);
-        rendering_info.pColorAttachments = color_attachments;
-        rendering_info.pDepthAttachment = &depth_attachment;
-
-        vkCmdBeginRendering(frame.cmds, &rendering_info);
-
-        VkViewport viewport{
-            .x = 0.0f,
-            .y = 0.0f,
-            .width = (f32)m_gpu->swapchain.extent.width,
-            .height = (f32)m_gpu->swapchain.extent.height,
-            .minDepth = 0.0f,
-            .maxDepth = 1.0f,
-        };
-        VkRect2D scissor{
-            .offset = {0, 0},
-            .extent = m_gpu->swapchain.extent,
-        };
-
-        vkCmdSetViewport(frame.cmds, 0, 1, &viewport);
-        vkCmdSetScissor(frame.cmds, 0, 1, &scissor);
-
-        // bind pipeline
-        vkCmdBindPipeline(frame.cmds, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline);
-
-        // the buffer is laid out as:
-        // [num draws][draw 0][draw 1]...[draw n]
-        vkCmdDrawIndexedIndirectCount(frame.cmds, m_draw_buffer.get(), sizeof(u32),
-            m_draw_buffer.get(), 0, max_draws, sizeof(DrawCommand));
-
-        vkCmdEndRendering(frame.cmds);
-    }
+    forward_pass.record(frame.cmd, target, batches);
 }
 
 bool operator==(const LoadShaderProperties &lhs, const LoadShaderProperties &rhs) {

@@ -47,7 +47,18 @@ struct alignas(16) MeshData {
 struct alignas(16) ObjectData {
     MaterialHandle material;
     MeshHandle mesh;
+    u32 _pad[2];
     m34f transform;
+};
+
+struct DrawCommand {
+    VkDrawIndexedIndirectCommand indirect;
+};
+
+struct TextureWrite {
+    u32 index;
+    VkImageView view;
+    VkSampler sampler;
 };
 
 // @todo: Make parts of user data opaque to the render state.
@@ -80,6 +91,7 @@ public:
     };
 
     // flushes changes to the GPU.
+    std::span<TextureWrite> texture_writes();
     FlushDependencies flush(CommandBuffer &cmd);
 
     u32 highest_object_id() const { return m_highest_object_id; }
@@ -90,10 +102,10 @@ public:
     GpuBuffer material_buffer() const { return m_material_buffer; }
     GpuBuffer mesh_buffer() const { return m_mesh_buffer; }
     GpuBuffer global_buffer() const { return m_global_buffer; }
-
-    DescriptorSet global_descriptor_set() const { return m_global_ds; }
 private:
     gpu_t *m_gpu;
+
+    std::vector<TextureWrite> m_texture_writes;
 
     // objects are fun! They lie both on the CPU and the GPU.
     GpuBuffer m_object_buffer;
@@ -112,18 +124,7 @@ private:
     SlotAllocator m_texture_alloc;
     SlotAllocator m_object_alloc;
 
-    u32 m_highest_object_id;
-
-    // @note: this could be split out into multiple sets.
-    // the compute pass only needs some of these.
-    // Descriptor set 0 (global buffers and textures)
-    //     binding 0: global buffer
-    //     binding 1: object buffer
-    //     binding 2: material buffer
-    //     binding 3: texture descriptor array
-    DescriptorSet m_global_ds;
-
-    VkDescriptorPool m_descriptor_pool;
+    u32 m_highest_object_id = 0;
 
     std::set<ObjectHandle> dirty_objects;
 

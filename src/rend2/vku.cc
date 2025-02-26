@@ -17,6 +17,19 @@ VkSemaphore create_semaphore(gpu_t &gpu) {
     return semaphore;
 }
 
+VkPipeline create_compute_pipeline(gpu_t &gpu, VkPipelineLayout layout, const Shader &shader) {
+    VkComputePipelineCreateInfo pipeline_info = {};
+
+    pipeline_info.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+    pipeline_info.layout = layout;
+    shader.apply_to(pipeline_info);
+
+    VkPipeline pipeline;
+    VK_CHECK(vkCreateComputePipelines(gpu.device, VK_NULL_HANDLE, 1, &pipeline_info, nullptr, &pipeline));
+
+    return pipeline;
+}
+
 void set_object_name(gpu_t &gpu, VkObjectType type, void *handle, std::string name) {
     /*
     // allocate the name like crazy!

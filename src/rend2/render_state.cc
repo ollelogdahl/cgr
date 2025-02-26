@@ -8,8 +8,6 @@
 const u32 vertex_size = 9 * sizeof(f32);
 const u32 index_size = sizeof(u32);
 const u32 material_size = 32;
-const u32 transform_size = 12;
-const u32 global_size = 64;
 
 RenderState::RenderState(gpu_t &gpu, const RenderStateConfig &config)
 :
@@ -20,8 +18,8 @@ RenderState::RenderState(gpu_t &gpu, const RenderStateConfig &config)
     m_vertex_buffer(gpu, config.max_vertices * vertex_size, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT),
     m_index_buffer(gpu, config.max_indices * index_size, VK_BUFFER_USAGE_INDEX_BUFFER_BIT),
     m_material_buffer(gpu, config.max_materials * material_size, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT),
-    m_mesh_buffer(gpu, config.max_meshes * transform_size, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT),
-    m_global_buffer(gpu, global_size, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT),
+    m_mesh_buffer(gpu, config.max_meshes * sizeof(MeshData), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT),
+    m_global_buffer(gpu, sizeof(GlobalData), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT),
     m_vertex_alloc(config.max_vertices),
     m_index_alloc(config.max_indices),
     m_material_alloc(config.max_materials),
@@ -35,41 +33,6 @@ RenderState::RenderState(gpu_t &gpu, const RenderStateConfig &config)
     set_object_name(gpu, VK_OBJECT_TYPE_BUFFER, m_material_buffer.get(), "material buffer");
     set_object_name(gpu, VK_OBJECT_TYPE_BUFFER, m_mesh_buffer.get(), "mesh buffer");
     set_object_name(gpu, VK_OBJECT_TYPE_BUFFER, m_global_buffer.get(), "global buffer");
-
-    // create the global descriptor set
-    {
-        // create the pool
-        {
-            VkDescriptorPoolSize pool_sizes[] = {
-                { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 3 },
-                { VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, config.max_textures },
-            };
-
-            VkDescriptorPoolCreateInfo pool_info = {};
-            pool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-            pool_info.poolSizeCount = array_size(pool_sizes);
-            pool_info.pPoolSizes = pool_sizes;
-            pool_info.maxSets = 1;
-
-            VK_CHECK(vkCreateDescriptorPool(gpu.device, &pool_info, nullptr, &m_descriptor_pool));
-        }
-
-        // create the layout
-        VkDescriptorSetLayout layout = DescriptorSetLayoutBuilder()
-            .add_binding(0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)
-            .add_binding(1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_VERTEX_BIT)
-            .add_binding(2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_FRAGMENT_BIT)
-            .add_variable_binding(3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-                VK_SHADER_STAGE_FRAGMENT_BIT, config.max_textures)
-            .build(gpu);
-
-        m_global_ds.init(gpu, m_descriptor_pool, layout);
-    }
-
-    m_global_ds.write_storage_buffer(0, 0, m_global_buffer.get(), 0, VK_WHOLE_SIZE);
-    m_global_ds.write_storage_buffer(1, 0, m_object_buffer.get(), 0, VK_WHOLE_SIZE);
-    m_global_ds.write_storage_buffer(2, 0, m_material_buffer.get(), 0, VK_WHOLE_SIZE);
-    m_global_ds.flush(*m_gpu);
 
     // write default values to the object buffer
     {
@@ -107,9 +70,10 @@ IndexDataHandle RenderState::alloc_indices(std::vector<u32> &&indices) {
         return { -1U, 0 };
     }
 
+    u32 written = indices.size();
     m_writeback_buffers.indices.insert({start, std::move(indices)});
 
-    return { start, (u32)indices.size() };
+    return { start, written };
 }
 
 MeshHandle RenderState::alloc_mesh(const MeshData &data) {
@@ -144,7 +108,8 @@ TextureHandle RenderState::alloc_texture(VkImageView view, VkSampler sampler) {
         return {-1U};
     }
 
-    m_global_ds.write_combined_image_sampler(0, idx, view, sampler);
+    // m_global_ds.write_combined_image_sampler(0, idx, view, sampler);
+    m_texture_writes.push_back(TextureWrite{idx, view, sampler});
 
     return {idx};
 }
@@ -196,15 +161,13 @@ RenderState::FlushDependencies RenderState::flush(CommandBuffer &cmd) {
         deps.materials = m_material_buffer.multiwrite_with_barrier(cmd.get(), m_writeback_buffers.materials.write_list());
         deps.meshes = m_mesh_buffer.multiwrite_with_barrier(cmd.get(), m_writeback_buffers.meshes.write_list());
         deps.objects = m_object_buffer.multiwrite_with_barrier(cmd.get(), object_changes.write_list());
-    }
 
-    if (m_writeback_buffers.global_data_dirty) {
-        slice<byte> global_data_slice((byte *)&m_writeback_buffers.global_data, sizeof(GlobalData));
-        deps.global = m_global_buffer.write_with_barrier(cmd.get(), global_data_slice);
-        m_writeback_buffers.global_data_dirty = false;
+        if (m_writeback_buffers.global_data_dirty) {
+            slice<byte> global_data_slice((byte *)&m_writeback_buffers.global_data, sizeof(GlobalData));
+            deps.global = m_global_buffer.write_with_barrier(cmd.get(), global_data_slice);
+            m_writeback_buffers.global_data_dirty = false;
+        }
     }
-
-    m_global_ds.flush(*m_gpu);
 
     dirty_objects.clear();
     m_writeback_buffers.vertices.clear();
@@ -212,5 +175,11 @@ RenderState::FlushDependencies RenderState::flush(CommandBuffer &cmd) {
     m_writeback_buffers.materials.clear();
     m_writeback_buffers.meshes.clear();
 
+    m_texture_writes.clear();
+
     return deps;
+}
+
+std::span<TextureWrite> RenderState::texture_writes() {
+    return m_texture_writes;
 }

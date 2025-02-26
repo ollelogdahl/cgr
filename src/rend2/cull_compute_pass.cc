@@ -4,15 +4,14 @@
 #include "rend2/command_buffer.h"
 #include "rend2/descriptor_set_layout_builder.h"
 #include "rend2/pipeline_layout_builder.h"
+#include "rend2/shader_compiler.h"
 #include "rend2/vku.h"
 #include <vulkan/vulkan_core.h>
 
 #include <tracy/Tracy.hpp>
 
 CullComputePass::CullComputePass(gpu_t &gpu)
-: m_gpu(&gpu), m_cmd(gpu, gpu.compute_queue, gpu.compute_command_pool, "cull_lod_compute") {
-    m_fence = create_fence(gpu);
-
+: m_gpu(&gpu) {
     // @todo: remove this?
     VkDescriptorPool descriptor_pool;
     {
@@ -44,90 +43,54 @@ CullComputePass::CullComputePass(gpu_t &gpu)
         .add_descriptor_set(ds_layout)
         .build(gpu);
 
-    // make the funking pipeline
-    {
-        VkShaderModule shader_module;
-        {
-            VkShaderModuleCreateInfo create_info = {};
-            create_info.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
-            create_info.codeSize = sizeof(cull_lod_spv);
-            create_info.pCode = (u32 *)cull_lod_spv;
-
-            VK_CHECK(vkCreateShaderModule(gpu.device, &create_info, nullptr, &shader_module));
-        }
-
-        VkPipelineShaderStageCreateInfo shader_stage_info = {};
-        shader_stage_info.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-        shader_stage_info.stage = VK_SHADER_STAGE_COMPUTE_BIT;
-        shader_stage_info.module = shader_module;
-        shader_stage_info.pName = "main";
-
-        VkComputePipelineCreateInfo pipeline_info = {};
-        pipeline_info.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
-        pipeline_info.stage = shader_stage_info;
-        pipeline_info.layout = m_pipeline_layout;
-
-        VK_CHECK(vkCreateComputePipelines(gpu.device, VK_NULL_HANDLE, 1, &pipeline_info, nullptr, &m_pipeline));
-    }
+    // @todo: move this.
+    ShaderCompiler compiler(gpu, "glslc");
+    Shader shader = Shader({
+        compiler.compile("shaders/cull-lod.comp")
+    });
+    m_pipeline = create_compute_pipeline(gpu, m_pipeline_layout, shader);
 }
+
 void CullComputePass::bind_buffers(const GpuBuffer &object_buffer, const GpuBuffer &draw_buffer, const GpuBuffer &mesh_buffer) {
     m_descriptor_set.write_storage_buffer(0, 0, object_buffer.get(), 0, VK_WHOLE_SIZE);
     m_descriptor_set.write_storage_buffer(1, 0, draw_buffer.get(), 0, VK_WHOLE_SIZE);
     m_descriptor_set.write_storage_buffer(2, 0, mesh_buffer.get(), 0, VK_WHOLE_SIZE);
     m_descriptor_set.flush(*m_gpu);
+
+    m_draw_buffer = &draw_buffer;
 }
 
-void CullComputePass::run(WriteDependency &depends_on, u32 object_count) {
-    // @todo: WAH! It feels really wrong for 2 reasons:
-    //      1. waiting for the fence here is not good. I would want to do it someplace
-    //         else.
-    //      2. Dependencies should be handled outside of this function.
-    ZoneScopedN("cull-lod-compute");
-    {
-        ZoneScopedN("wait-ready");
-        VK_CHECK(vkWaitForFences(m_gpu->device, 1, &m_fence, VK_TRUE, UINT64_MAX));
-        VK_CHECK(vkResetFences(m_gpu->device, 1, &m_fence));
-    }
+void CullComputePass::record(CommandBuffer &cmd, u32 object_count) {
+    ZoneScoped;
+    TracyVkZone(cmd.tracy_ctx(), cmd.get(), "cull_lod_compute");
 
-    m_cmd.reset_begin();
-    TracyVkCollect(m_cmd.tracy_ctx(), m_cmd.get());
+    vkCmdFillBuffer(cmd.get(), m_draw_buffer->get(), 0, sizeof(u32), 0);
 
-    {
-        TracyVkZone(m_cmd.tracy_ctx(), m_cmd.get(), "wait-host-write");
-        depends_on.pipeline_barrier(m_cmd.get(),
-            VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-            VK_ACCESS_2_SHADER_READ_BIT);
-    }
+    // barrier before starting dispatch
 
-    {
-        TracyVkZone(m_cmd.tracy_ctx(), m_cmd.get(), "cull_lod_compute");
+    VkBufferMemoryBarrier2 barrier = {};
+    barrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2;
+    barrier.srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT;
+    barrier.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+    barrier.dstStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
+    barrier.dstAccessMask = VK_ACCESS_2_SHADER_READ_BIT;
+    barrier.buffer = m_draw_buffer->get();
+    barrier.size = sizeof(u32);
 
-        VkDescriptorSet descriptor_sets[] = { m_descriptor_set.get() };
+    VkDependencyInfo dep_info = {};
+    dep_info.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+    dep_info.pNext = nullptr;
+    dep_info.bufferMemoryBarrierCount = 1;
+    dep_info.pBufferMemoryBarriers = &barrier;
+    vkCmdPipelineBarrier2(cmd.get(), &dep_info);
 
-        vkCmdBindPipeline(m_cmd.get(), VK_PIPELINE_BIND_POINT_COMPUTE, m_pipeline);
-        vkCmdBindDescriptorSets(m_cmd.get(), VK_PIPELINE_BIND_POINT_COMPUTE, m_pipeline_layout, 0,
-            array_size(descriptor_sets), descriptor_sets, 0, nullptr);
 
-        vkCmdDispatch(m_cmd.get(), (object_count + 15) / 16, 1, 1);
-    }
+    VkDescriptorSet descriptor_sets[] = { m_descriptor_set.get() };
 
-    {
-        // signal the semaphore
-        VkSemaphore signal_semaphores[] = { m_done_semaphore };
-        VkPipelineStageFlags2 signal_stages[] = { VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT };
+    vkCmdBindPipeline(cmd.get(), VK_PIPELINE_BIND_POINT_COMPUTE, m_pipeline);
+    vkCmdBindDescriptorSets(cmd.get(), VK_PIPELINE_BIND_POINT_COMPUTE, m_pipeline_layout, 0,
+        array_size(descriptor_sets), descriptor_sets, 0, nullptr);
 
-    }
-
-    m_cmd.end();
-
-    {
-        // submit the command buffer
-        VkCommandBuffer buffers[] = { m_cmd.get() };
-
-        VkSubmitInfo submit_info{};
-        submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-        submit_info.commandBufferCount = array_size(buffers);
-        submit_info.pCommandBuffers = buffers;
-        vkQueueSubmit(m_gpu->compute_queue, 1, &submit_info, m_fence);
-    }
+    u32 count = 1 + (object_count / 16);
+    vkCmdDispatch(cmd.get(), count, 1, 1);
 }
