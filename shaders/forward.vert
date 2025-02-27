@@ -18,9 +18,10 @@ struct MeshData {
 
 // Object data from CPU
 struct ObjectData {
+    float transform[12];
     uint material_id;
     uint mesh_id;
-    mat3x4 transform; // transform transposed.
+    uint _pad[2];
 };
 
 struct MaterialData {
@@ -35,7 +36,7 @@ layout(set = 0, binding = 1) readonly buffer ObjectBuffer {
     ObjectData objects[];
 };
 
-layout(set = 0, binding = 2) buffer MaterialBuffer {
+layout(set = 0, binding = 2) readonly buffer MaterialBuffer {
     MaterialData materials[];
 };
 
@@ -49,23 +50,21 @@ layout(location = 1) out vec3 frag_normal_ws;
 layout(location = 2) out vec2 frag_uv;
 layout(location = 3) out vec3 frag_vertex_color;
 
-mat4 unpack_transform(mat3x4 t) {
+mat4 unpack_affine_transform(uint object_id) {
+    float[12] transform = objects[object_id].transform;
     return mat4(
-        vec4(t[0].x, t[1].x, t[2].x, 0.0),
-        vec4(t[0].y, t[1].y, t[2].y, 0.0),
-        vec4(t[0].z, t[1].z, t[2].z, 0.0),
-        vec4(t[0].w, t[1].w, t[2].w, 1.0)
+        vec4(transform[0], transform[1], transform[2], 0.0),
+        vec4(transform[3], transform[4], transform[5], 0.0),
+        vec4(transform[6], transform[7], transform[8], 0.0),
+        vec4(transform[9], transform[10], transform[11], 1.0)
     );
 }
 
 void main() {
-    ObjectData object = objects[gl_InstanceIndex];
-
-    mat4 transform = unpack_transform(object.transform);
+    uint object_id = gl_InstanceIndex;
+    mat4 transform = unpack_affine_transform(object_id);
     vec4 wp = transform * vec4(position, 1.0);
-
     gl_Position = global.cam_proj * global.cam_view * wp;
-
 
     frag_pos_ws = vec3(wp);
     frag_normal_ws = transpose(inverse(mat3(transform))) * normal;

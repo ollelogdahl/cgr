@@ -2,6 +2,7 @@
 
 #include "gpu.h"
 
+// @todo: C++ semantics.
 class DescriptorSet {
 public:
     void init(gpu_t &gpu, VkDescriptorPool pool, VkDescriptorSetLayout layout);

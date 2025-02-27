@@ -44,4 +44,10 @@ private:
 
     VkPipelineLayout m_pipeline_layout;
     VkPipeline m_pipeline;
+
+    // pipeline query
+    bool m_has_query_in_flight = false;
+    VkQueryPool m_query_pool;
+    std::vector<u64> m_pipeline_stats;
+    std::vector<const char *> m_pipeline_stat_names;
 };

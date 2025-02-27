@@ -9,11 +9,8 @@
 // This is not a big deal, but it could be nicer for the reader to separate the
 // `DynamicBuffer` and `StaticBuffer` into two different classes.
 
-VkAccessFlags2 access_flags_from_usage(VkBufferUsageFlags usage);
-VkPipelineStageFlags2 pipeline_stage_from_usage(VkBufferUsageFlags usage);
-
-GpuBuffer::GpuBuffer(gpu_t &gpu, u32 size, VkBufferUsageFlags usage)
-: m_gpu(&gpu), m_mapped(nullptr), m_usage(usage) {
+GpuBuffer::GpuBuffer(gpu_t &gpu, u32 size, VkBufferUsageFlags usage, BufferType type, const char *name)
+: m_gpu(&gpu), m_mapped(nullptr), m_usage(usage), m_type(type) {
     VkBufferCreateInfo buffer_info{};
     buffer_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
     buffer_info.size = size;
@@ -24,6 +21,19 @@ GpuBuffer::GpuBuffer(gpu_t &gpu, u32 size, VkBufferUsageFlags usage)
     // for uniform buffers.
     VmaAllocationCreateInfo alloc_info{};
     alloc_info.usage = VMA_MEMORY_USAGE_AUTO;
+
+    switch(type) {
+    case BufferType::Common:
+        alloc_info.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT |
+            VMA_ALLOCATION_CREATE_HOST_ACCESS_ALLOW_TRANSFER_INSTEAD_BIT |
+            VMA_ALLOCATION_CREATE_MAPPED_BIT;
+        break;
+    case BufferType::Readback:
+        alloc_info.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT |
+            VMA_ALLOCATION_CREATE_MAPPED_BIT;
+        break;
+    }
+
     alloc_info.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT |
         VMA_ALLOCATION_CREATE_HOST_ACCESS_ALLOW_TRANSFER_INSTEAD_BIT |
         VMA_ALLOCATION_CREATE_MAPPED_BIT;
@@ -35,6 +45,13 @@ GpuBuffer::GpuBuffer(gpu_t &gpu, u32 size, VkBufferUsageFlags usage)
 
     if (mem_props & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) {
         m_mapped = (byte *)m_allocation_info.pMappedData;
+    }
+}
+
+GpuBuffer::~GpuBuffer() {
+    if (m_buffer != VK_NULL_HANDLE) {
+        // @todo: this is not really safe. We need to know that the buffer is not in use.
+        vmaDestroyBuffer(m_gpu->allocator, m_buffer, m_allocation);
     }
 }
 
@@ -213,35 +230,4 @@ void GpuBuffer::ensure_staging_buffer_size(u32 size) {
         | VMA_ALLOCATION_CREATE_MAPPED_BIT;
 
     VK_CHECK(vmaCreateBuffer(m_gpu->allocator, &buffer_info, &alloc_info, &staging.buffer, &staging.allocation, &staging.allocation_info));
-}
-
-VkAccessFlags2 access_flags_from_usage(VkBufferUsageFlags usage) {
-    VkAccessFlags2 flags = 0;
-    if (usage & VK_BUFFER_USAGE_VERTEX_BUFFER_BIT) {
-        flags |= VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT;
-    }
-    if (usage & VK_BUFFER_USAGE_INDEX_BUFFER_BIT) {
-        flags |= VK_ACCESS_2_INDEX_READ_BIT;
-    }
-    if (usage & VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT) {
-        flags |= VK_ACCESS_2_UNIFORM_READ_BIT;
-    }
-    if (usage & VK_BUFFER_USAGE_STORAGE_BUFFER_BIT) {
-        flags |= VK_ACCESS_2_SHADER_READ_BIT | VK_ACCESS_2_SHADER_WRITE_BIT;
-    }
-    return flags;
-}
-
-VkPipelineStageFlags2 pipeline_stage_from_usage(VkBufferUsageFlags usage) {
-    VkPipelineStageFlags2 flags = 0;
-    if (usage & VK_BUFFER_USAGE_VERTEX_BUFFER_BIT) {
-        flags |= VK_PIPELINE_STAGE_2_VERTEX_INPUT_BIT;
-    }
-    if (usage & VK_BUFFER_USAGE_INDEX_BUFFER_BIT) {
-        flags |= VK_PIPELINE_STAGE_2_VERTEX_INPUT_BIT;
-    }
-    if (usage & VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT) {
-        flags |= VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
-    }
-    return flags;
 }

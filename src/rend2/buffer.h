@@ -11,6 +11,19 @@
 struct WriteDependency {
     WriteDependency() = default;
 
+    void add(VkPipelineStageFlags2 src_stage, VkAccessFlags2 src_access, VkBuffer buffer, VkDeviceSize size = VK_WHOLE_SIZE, VkDeviceSize offset = 0) {
+        barriers.push_back({
+            .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
+            .srcStageMask = src_stage,
+            .srcAccessMask = src_access,
+            .dstStageMask = 0,
+            .dstAccessMask = 0,
+            .buffer = buffer,
+            .offset = offset,
+            .size = size,
+        });
+    }
+
     void join(WriteDependency &other) {
         barriers.insert(barriers.end(), other.barriers.begin(), other.barriers.end());
     }
@@ -32,6 +45,11 @@ struct WriteDependency {
     }
 };
 
+enum class BufferType {
+    Common, // Most buffers, i.e. uniform (device local but writable trough either staging or host mapping)
+    Readback, // Must be host visible for read.
+};
+
 // this is a buffer which resides on the GPU.
 // We should be able to provide a simplified usage parameter.
 class GpuBuffer {
@@ -43,7 +61,12 @@ public:
     typedef std::span<Write> WriteList;
 
     GpuBuffer() = default;
-    GpuBuffer(gpu_t &gpu, u32 size, VkBufferUsageFlags usage);
+    GpuBuffer(gpu_t &gpu, u32 size, VkBufferUsageFlags usage, BufferType type = BufferType::Common, const char *name = "");
+    ~GpuBuffer();
+
+    // no move
+    GpuBuffer(GpuBuffer &&) = delete;
+    GpuBuffer &operator=(GpuBuffer &&) = delete;
 
     // immediate write to the entire buffer.
     // precond: data.len = size
@@ -75,9 +98,18 @@ public:
 
     void copy_to(VkCommandBuffer cmd, GpuBuffer &dst);
 
+    template <typename T>
+    T *read(u32 offset) {
+        assert(m_type == BufferType::Readback);
+        return (T *)(m_mapped + offset);
+    }
+
+    usize size() const { return m_allocation_info.size; }
+
     VkBuffer get() const { return m_buffer; }
 private:
     void ensure_staging_buffer_size(u32 size);
+
 
     gpu_t *m_gpu = nullptr;
     VkBuffer m_buffer = VK_NULL_HANDLE;
@@ -85,6 +117,7 @@ private:
     VmaAllocationInfo m_allocation_info;
     byte *m_mapped;
     VkBufferUsageFlags m_usage;
+    BufferType m_type;
 
     struct {
         VkBuffer buffer = VK_NULL_HANDLE;

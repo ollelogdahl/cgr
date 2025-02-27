@@ -54,6 +54,7 @@ struct Mesh {
     std::vector<v2f> uvs;
     std::vector<u32> colors;
     std::vector<MeshLOD> lods;
+    aabb_t bounds;
 };
 
 struct mesh_description_t {

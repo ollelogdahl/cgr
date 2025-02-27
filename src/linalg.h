@@ -304,6 +304,8 @@ struct m4f {
     m4f static constexpr orthographic(f32 left, f32 right, f32 bottom, f32 top, f32 near, f32 far);
     m4f static constexpr look_at(v3f eye, v3f center, v3f up);
 
+    void static constexpr extract_planes(const m4f &vp, v4f planes[6]);
+
     // reverse z: [0, 1] to [1, 0]
     m4f static constexpr reverse_z(const m4f &mat);
 
@@ -314,14 +316,16 @@ struct m4f {
 };
 
 // 3x4 matrix useful to store affine transformations
+// also column-major
 struct m34f {
     f32 m[12];
 
     m34f() = default;
     m34f(const m4f &o) : m{
-        o.m[0], o.m[1], o.m[2], o.m[3],
-        o.m[4], o.m[5], o.m[6], o.m[7],
-        o.m[8], o.m[9], o.m[10], o.m[11]
+        o.m[0], o.m[1], o.m[2],
+        o.m[4], o.m[5], o.m[6],
+        o.m[8], o.m[9], o.m[10],
+        o.m[12], o.m[13], o.m[14]
     } {}
 };
 
@@ -387,6 +391,40 @@ struct aabb_t {
         return max - min;
     }
 };
+
+void constexpr m4f::extract_planes(const m4f &vp, v4f planes[6]) {
+    // extract planes from a view-projection matrix
+    // Gribb/Hartmann method
+    f32 l[4];
+    f32 r[4];
+    f32 b[4];
+    f32 t[4];
+    f32 n[4];
+    f32 f[4];
+
+    for (auto i = 4; i--; ) {l[i] = vp.m[4 * i + 3] + vp.m[4 * i]; }
+    for (auto i = 4; i--; ) {r[i] = vp.m[4 * i + 3] - vp.m[4 * i]; }
+    for (auto i = 4; i--; ) {b[i] = vp.m[4 * i + 3] + vp.m[4 * i + 1]; }
+    for (auto i = 4; i--; ) {t[i] = vp.m[4 * i + 3] - vp.m[4 * i + 1]; }
+    for (auto i = 4; i--; ) {n[i] = vp.m[4 * i + 3] + vp.m[4 * i + 2]; }
+    for (auto i = 4; i--; ) {f[i] = vp.m[4 * i + 3] - vp.m[4 * i + 2]; }
+
+    planes[0] = {l[0], l[1], l[2], l[3]};
+    planes[1] = {r[0], r[1], r[2], r[3]};
+    planes[2] = {b[0], b[1], b[2], b[3]};
+    planes[3] = {t[0], t[1], t[2], t[3]};
+    planes[4] = {n[0], n[1], n[2], n[3]};
+    planes[5] = {f[0], f[1], f[2], f[3]};
+
+    // normalize pls.
+    for (auto i = 0; i < 6; ++i) {
+        f32 length = sqrt(planes[i].x * planes[i].x + planes[i].y * planes[i].y + planes[i].z * planes[i].z);
+        planes[i].x /= length;
+        planes[i].y /= length;
+        planes[i].z /= length;
+        planes[i].w /= length;
+    }
+}
 
 m4f constexpr m4f::operator*(const m4f &o) const {
     // This usually gets auto-vectorized by the compiler.
@@ -673,10 +711,24 @@ struct fmt::formatter<m4f> {
     }
 
     auto format(const m4f& m, auto& ctx) const {
-        return format_to(ctx.out(), "[[{}, {}, {}, {}], [{}, {}, {}, {}], [{}, {}, {}, {}], [{}, {}, {}, {}]]",
-                         m.m[0], m.m[1], m.m[2], m.m[3],
-                         m.m[4], m.m[5], m.m[6], m.m[7],
-                         m.m[8], m.m[9], m.m[10], m.m[11],
-                         m.m[12], m.m[13], m.m[14], m.m[15]);
+        return format_to(ctx.out(), "[\n\t[{}, {}, {}, {}],\n\t[{}, {}, {}, {}],\n\t[{}, {}, {}, {}],\n\t[{}, {}, {}, {}]\n]",
+                         m.m[0], m.m[4], m.m[8], m.m[12],
+                         m.m[1], m.m[5], m.m[9], m.m[13],
+                         m.m[2], m.m[6], m.m[10], m.m[14],
+                         m.m[3], m.m[7], m.m[11], m.m[15]);
+    }
+};
+
+template <>
+struct fmt::formatter<m34f> {
+    constexpr auto parse(format_parse_context& ctx) {
+        return ctx.begin();
+    }
+
+    auto format(const m34f& m, auto& ctx) const {
+        return format_to(ctx.out(), "[\n\t[{}, {}, {}, {}],\n\t[{}, {}, {}, {}],\n\t[{}, {}, {}, {}]\n]",
+                         m.m[0], m.m[3], m.m[6], m.m[9],
+                         m.m[1], m.m[4], m.m[7], m.m[10],
+                         m.m[2], m.m[5], m.m[8], m.m[11]);
     }
 };

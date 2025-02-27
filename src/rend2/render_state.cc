@@ -1,4 +1,5 @@
 #include "render_state.h"
+#include "metrics.h"
 #include "rend2/render_handles.h"
 #include "descriptor_set_layout_builder.h"
 #include "rend2/vku.h"
@@ -27,20 +28,24 @@ RenderState::RenderState(gpu_t &gpu, const RenderStateConfig &config)
     m_texture_alloc(config.max_textures),
     m_object_alloc(config.max_objects) {
 
-    set_object_name(gpu, VK_OBJECT_TYPE_BUFFER, m_object_buffer.get(), "object buffer");
-    set_object_name(gpu, VK_OBJECT_TYPE_BUFFER, m_vertex_buffer.get(), "vertex buffer");
-    set_object_name(gpu, VK_OBJECT_TYPE_BUFFER, m_index_buffer.get(), "index buffer");
-    set_object_name(gpu, VK_OBJECT_TYPE_BUFFER, m_material_buffer.get(), "material buffer");
-    set_object_name(gpu, VK_OBJECT_TYPE_BUFFER, m_mesh_buffer.get(), "mesh buffer");
-    set_object_name(gpu, VK_OBJECT_TYPE_BUFFER, m_global_buffer.get(), "global buffer");
+    u64 gpu_total_size_bytes = m_object_buffer.size() + m_vertex_buffer.size() + m_index_buffer.size() +
+        m_material_buffer.size() + m_mesh_buffer.size() + m_global_buffer.size();
+    metrics::gauge_u64("rend2.state.gpu_size", gpu_total_size_bytes, "b");
 
     // write default values to the object buffer
     {
+        // column-major m34f identity matrix
         ObjectData default_object = {
+            .transform = {
+                1, 0, 0,
+                0, 1, 0,
+                0, 0, 1,
+                0, 0, 0,
+            },
             .material = -1,
             .mesh = -1,
-            .transform = m4f::identity(),
         };
+
 
         for (u32 i = 0; i < config.max_objects; ++i) {
             m_object_data[i] = default_object;
@@ -58,6 +63,8 @@ VertexDataHandle RenderState::alloc_vertices(slice<byte> vertices) {
         return { -1U, 0 };
     }
 
+    counts.vertices += num_vertices;
+
     m_writeback_buffers.vertices.insert({start * vertex_size, {vertices.begin(), vertices.end()}});
 
     return { start, num_vertices };
@@ -70,8 +77,10 @@ IndexDataHandle RenderState::alloc_indices(std::vector<u32> &&indices) {
         return { -1U, 0 };
     }
 
+    counts.indices += indices.size();
+
     u32 written = indices.size();
-    m_writeback_buffers.indices.insert({start, std::move(indices)});
+    m_writeback_buffers.indices.insert({start * (u32)sizeof(u32), std::move(indices)});
 
     return { start, written };
 }
@@ -83,8 +92,10 @@ MeshHandle RenderState::alloc_mesh(const MeshData &data) {
         return {-1U};
     }
 
+    counts.meshes += 1;
+
     slice<byte> data_slice((byte *)&data, sizeof(MeshData));
-    m_writeback_buffers.meshes.insert(idx, data);
+    m_writeback_buffers.meshes.insert(idx * sizeof(MeshData), data);
 
     return {idx};
 }
@@ -95,6 +106,8 @@ MaterialHandle RenderState::alloc_material(const MaterialData &data) {
     if (idx == -1U) {
         return {-1U};
     }
+
+    counts.materials += 1;
 
     m_writeback_buffers.materials.insert(idx * material_size, data);
 
@@ -107,6 +120,8 @@ TextureHandle RenderState::alloc_texture(VkImageView view, VkSampler sampler) {
     if (idx == -1U) {
         return {-1U};
     }
+
+    counts.textures += 1;
 
     // m_global_ds.write_combined_image_sampler(0, idx, view, sampler);
     m_texture_writes.push_back(TextureWrite{idx, view, sampler});
@@ -121,11 +136,19 @@ ObjectHandle RenderState::alloc_object() {
         return {-1U};
     }
 
-    m_object_data[idx] = {
+    m_object_data[idx] = ObjectData{
+        .transform = {
+            1, 0, 0,
+            0, 1, 0,
+            0, 0, 1,
+            0, 0, 0,
+        },
         .material = -1,
         .mesh = -1,
-        .transform = m4f::identity(),
     };
+    dirty_objects.insert({idx});
+
+    counts.objects += 1;
 
     m_highest_object_id = std::max(m_highest_object_id, idx);
     return {idx};
@@ -150,8 +173,9 @@ RenderState::FlushDependencies RenderState::flush(CommandBuffer &cmd) {
     WriteCache<ObjectData> object_changes;
     for (auto &handle : dirty_objects) {
         ObjectData &object = m_object_data[handle.id];
-        object_changes.insert(handle.id, object);
+        object_changes.insert(handle.id * sizeof(ObjectData), object);
     }
+    dirty_objects.clear();
 
     FlushDependencies deps;
     {
@@ -169,13 +193,20 @@ RenderState::FlushDependencies RenderState::flush(CommandBuffer &cmd) {
         }
     }
 
-    dirty_objects.clear();
     m_writeback_buffers.vertices.clear();
     m_writeback_buffers.indices.clear();
     m_writeback_buffers.materials.clear();
     m_writeback_buffers.meshes.clear();
 
     m_texture_writes.clear();
+
+    // update metrics
+    metrics::gauge_u32("rend2.state.vertices", counts.vertices);
+    metrics::gauge_u32("rend2.state.indices", counts.indices);
+    metrics::gauge_u32("rend2.state.materials", counts.materials);
+    metrics::gauge_u32("rend2.state.meshes", counts.meshes);
+    metrics::gauge_u32("rend2.state.textures", counts.textures);
+    metrics::gauge_u32("rend2.state.objects", counts.objects);
 
     return deps;
 }

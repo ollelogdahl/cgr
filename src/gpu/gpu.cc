@@ -20,7 +20,9 @@ void transition_layout_for_presenting(VkCommandBuffer cmd, VkImage image);
 
 void gpu_t::frame(std::function<void(frame_t &)> fn) {
     ZoneScopedN("draw");
-    auto &current_frame = frames[frame_number];
+    auto &current_frame = frames[frame_index % MAX_FRAMES_IN_FLIGHT];
+
+    vmaSetCurrentFrameIndex(allocator, frame_index);
 
     const auto timeout = 1000000000;
     {
@@ -126,7 +128,7 @@ void gpu_t::frame(std::function<void(frame_t &)> fn) {
         vkQueuePresentKHR(present_queue, &presentInfo);
     }
 
-    frame_number = (frame_number + 1) % MAX_FRAMES_IN_FLIGHT;
+    frame_index++;
 
     FrameMarkNamed("gpu");
 }

@@ -1,10 +1,13 @@
 #include "forward_indirect_pass.h"
+#include "metrics.h"
 #include "rend2/descriptor_set_layout_builder.h"
 #include "rend2/pipeline_layout_builder.h"
 #include "rend2/render.h"
 #include "rend2/render_state.h"
 #include "rend2/shader_compiler.h"
 #include <vulkan/vulkan_core.h>
+
+#include <tracy/Tracy.hpp>
 
 VkPipeline tmp_create_graphics_pipeline(gpu_t &gpu, VkPipelineLayout layout, const Shader &shader);
 
@@ -54,6 +57,33 @@ ForwardIndirectPass::ForwardIndirectPass(gpu_t &gpu, u32 max_textures) : m_gpu(&
     });
 
     m_pipeline = tmp_create_graphics_pipeline(gpu, m_pipeline_layout, shader);
+
+    // pipeline query
+    {
+        VkQueryPoolCreateInfo query_pool_info = {};
+		query_pool_info.sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;
+		query_pool_info.queryType = VK_QUERY_TYPE_PIPELINE_STATISTICS;
+		query_pool_info.pipelineStatistics =
+			VK_QUERY_PIPELINE_STATISTIC_INPUT_ASSEMBLY_VERTICES_BIT |
+			VK_QUERY_PIPELINE_STATISTIC_INPUT_ASSEMBLY_PRIMITIVES_BIT |
+			VK_QUERY_PIPELINE_STATISTIC_VERTEX_SHADER_INVOCATIONS_BIT |
+			VK_QUERY_PIPELINE_STATISTIC_CLIPPING_INVOCATIONS_BIT |
+			VK_QUERY_PIPELINE_STATISTIC_CLIPPING_PRIMITIVES_BIT |
+			VK_QUERY_PIPELINE_STATISTIC_FRAGMENT_SHADER_INVOCATIONS_BIT;
+		query_pool_info.queryCount = 1;
+
+		m_pipeline_stats.resize(6);
+		m_pipeline_stat_names = {
+            "rend2.forward.input_assembly_vertices",
+            "rend2.forward.input_assembly_primitives",
+            "rend2.forward.vertex_shader_invocations",
+            "rend2.forward.clipping_invocations",
+            "rend2.forward.clipping_primitives",
+            "rend2.forward.fragment_shader_invocations"
+        };
+
+		VK_CHECK(vkCreateQueryPool(gpu.device, &query_pool_info, nullptr, &m_query_pool));
+    }
 }
 
 void ForwardIndirectPass::update_textures(std::span<TextureWrite> writes) {
@@ -78,6 +108,28 @@ void ForwardIndirectPass::set_resources(VkBuffer global_buffer, VkBuffer object_
 void ForwardIndirectPass::record(CommandBuffer &cmd, const RenderTarget &target, std::span<IndirectBatch> batches) {
     ZoneScoped;
     TracyVkZone(cmd.tracy_ctx(), cmd.get(), "forward_indirect");
+
+    if (m_has_query_in_flight) {
+        // get metrics of last frame and wait!
+        u32 size = m_pipeline_stats.size() * sizeof(u64);
+
+        vkGetQueryPoolResults(m_gpu->device, m_query_pool, 0, 1, size,
+            m_pipeline_stats.data(), size, VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT);
+
+        // report them.
+        for (u32 i = 0; i < m_pipeline_stats.size(); i++) {
+            metrics::gauge_u64(m_pipeline_stat_names[i], m_pipeline_stats[i]);
+        }
+
+        // overdraw guesstimation.
+        usize total_resolution = target.extent.width * target.extent.height;
+        f32 overdraw = (f32)m_pipeline_stats[5] / total_resolution;
+        metrics::gauge_f32("rend2.forward.overdraw_est", overdraw, "p");
+
+    }
+    vkCmdResetQueryPool(cmd.get(), m_query_pool, 0, 1);
+    m_has_query_in_flight = true;
+    vkCmdBeginQuery(cmd.get(), m_query_pool, 0, 0);
 
     // bind the global descriptor set
     VkDescriptorSet descriptor_sets[] = { m_descriptor_set.get() };
@@ -145,6 +197,7 @@ void ForwardIndirectPass::record(CommandBuffer &cmd, const RenderTarget &target,
     // @todo: bind pipelines 4 real
     vkCmdBindPipeline(cmd.get(), VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline);
 
+    metrics::gauge_u64("rend2.forward.batches", batches.size());
     // for each batch, perform a bindless
     for (auto &batch : batches) {
         // remember that the draw-buffer is laid out like
@@ -156,6 +209,8 @@ void ForwardIndirectPass::record(CommandBuffer &cmd, const RenderTarget &target,
     }
 
     vkCmdEndRendering(cmd.get());
+
+    vkCmdEndQuery(cmd.get(), m_query_pool, 0);
 }
 
 

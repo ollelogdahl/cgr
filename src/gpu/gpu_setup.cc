@@ -6,6 +6,8 @@
 #include <set>
 #include <vulkan/vulkan_core.h>
 
+#include <tracy/Tracy.hpp>
+
 void dump_available_validation_layers();
 void dump_available_physical_devices(VkInstance instance);
 void dump_available_physical_extensions(VkPhysicalDevice device);
@@ -35,6 +37,11 @@ void gpu_t::init(GLFWwindow *window, const gpu_create_options_t &options) {
         VK_KHR_SWAPCHAIN_EXTENSION_NAME,
         VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME,
         VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME,
+    };
+
+    // @todo: we should probably do better.
+    std::vector<const char *> optional_device_extensions = {
+        VK_EXT_MEMORY_BUDGET_EXTENSION_NAME, // used by vma for memory stats.
     };
 
     bool validation_layers_available = false;
@@ -87,6 +94,9 @@ void gpu_t::init(GLFWwindow *window, const gpu_create_options_t &options) {
             if (validation_layers_available) {
                 extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
             }
+
+            // optional
+            extensions.push_back(VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME);
 
             createInfo.enabledExtensionCount = extensions.size();
             createInfo.ppEnabledExtensionNames = extensions.data();
@@ -145,21 +155,18 @@ void gpu_t::init(GLFWwindow *window, const gpu_create_options_t &options) {
             return;
         }
 
-        const char *device_name = "\0";
-        const char *api_version = "unknown";
         {
             VkPhysicalDeviceProperties device_properties;
             vkGetPhysicalDeviceProperties(pdev, &device_properties);
-            device_name = device_properties.deviceName;
-            api_version = fmt::format("{}.{}.{}",
+            auto device_name = device_properties.deviceName;
+            auto api_version = fmt::format("{}.{}.{}",
                 VK_VERSION_MAJOR(device_properties.apiVersion),
                 VK_VERSION_MINOR(device_properties.apiVersion),
-                VK_VERSION_PATCH(device_properties.apiVersion)).c_str();
+                VK_VERSION_PATCH(device_properties.apiVersion));
+
+            gpu_log.info("selected physical device: {}", device_name);
+            gpu_log.info("vukan version: {}", api_version);
         }
-        (void)device_name;
-        (void)api_version;
-        // gpu_log.info("selected physical device: {}", device_name);
-        // gpu_log.info("vukan version: {}", api_version);
     }
 
     {
@@ -204,6 +211,13 @@ void gpu_t::init(GLFWwindow *window, const gpu_create_options_t &options) {
                 gpu_log.warn("timestamp queries not supported on graphics queue");
             }
         }
+
+        // query available features
+        VkPhysicalDeviceFeatures2 features2{};
+        features2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+        vkGetPhysicalDeviceFeatures2(pdev, &features2);
+
+        support.pipeline_statistics = features2.features.pipelineStatisticsQuery;
     }
 
     {
@@ -230,15 +244,25 @@ void gpu_t::init(GLFWwindow *window, const gpu_create_options_t &options) {
             queueCreateInfos[qfamily].pQueuePriorities = &queuePriority;
         }
 
-        VkPhysicalDeviceFeatures deviceFeatures{};
+        // @todo: try to use optional, else retry without.
+        auto enabled_extensions = std::vector<const char *>(required_device_extensions);
+        enabled_extensions.insert(enabled_extensions.end(), optional_device_extensions.begin(), optional_device_extensions.end());
 
         VkDeviceCreateInfo createInfo{};
         createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
         createInfo.pQueueCreateInfos = queueCreateInfos;
         createInfo.queueCreateInfoCount = uniqueQueueFamilies.size();
-        createInfo.pEnabledFeatures = &deviceFeatures;
-        createInfo.enabledExtensionCount = required_device_extensions.size();
-        createInfo.ppEnabledExtensionNames = required_device_extensions.data();
+        createInfo.enabledExtensionCount = enabled_extensions.size();
+        createInfo.ppEnabledExtensionNames = enabled_extensions.data();
+
+        VkPhysicalDeviceFeatures enabled_features{};
+
+        if (support.pipeline_statistics) {
+            gpu_log.info("pipeline statistics supported");
+            enabled_features.pipelineStatisticsQuery = VK_TRUE;
+        }
+
+        createInfo.pEnabledFeatures = &enabled_features;
 
         VkPhysicalDeviceSynchronization2Features synchronization2_feature {
             .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES,
@@ -265,7 +289,7 @@ void gpu_t::init(GLFWwindow *window, const gpu_create_options_t &options) {
 
         auto result = vkCreateDevice(pdev, &createInfo, nullptr, &device);
         if (result != VK_SUCCESS) {
-            gpu_log.error("failed to create logical device");
+            gpu_log.error("failed to create logical device: {}", vk_result_to_cstr(result));
             return;
         }
         gpu_log.info("logical device created");
@@ -325,15 +349,26 @@ void gpu_t::init(GLFWwindow *window, const gpu_create_options_t &options) {
     vulkanFunctions.vkGetInstanceProcAddr = &vkGetInstanceProcAddr;
     vulkanFunctions.vkGetDeviceProcAddr = &vkGetDeviceProcAddr;
 
+    static const char *tracy_mempool_name = "vma";
+
+    auto cbs = new VmaDeviceMemoryCallbacks;
+    cbs->pfnAllocate = [](VmaAllocator allocator, u32 memory_type, VkDeviceMemory memory, VkDeviceSize size, void *) {
+        TracyAllocN(memory, size, tracy_mempool_name);
+    };
+    cbs->pfnFree = [](VmaAllocator allocator, u32 memory_type, VkDeviceMemory memory, VkDeviceSize size, void *) {
+        TracyFreeN(memory, tracy_mempool_name);
+    };
+
     // setup the allocator
     VmaAllocatorCreateInfo allocatorInfo = {};
     allocatorInfo.physicalDevice = pdev;
     allocatorInfo.device = device;
     allocatorInfo.instance = instance;
-    allocatorInfo.flags = 0;
+    allocatorInfo.flags = VMA_ALLOCATOR_CREATE_EXT_MEMORY_BUDGET_BIT;
     allocatorInfo.pAllocationCallbacks = nullptr;
-    allocatorInfo.pDeviceMemoryCallbacks = nullptr;
+    allocatorInfo.pDeviceMemoryCallbacks = cbs;
     allocatorInfo.pVulkanFunctions = &vulkanFunctions;
+
 
     vmaCreateAllocator(&allocatorInfo, &allocator);
 

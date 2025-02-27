@@ -21,7 +21,7 @@
     panic("vulkan api error: {}", err_str); } } while(0)
 const char * vk_result_to_cstr(VkResult result);
 
-#define MAX_FRAMES_IN_FLIGHT 3
+#define MAX_FRAMES_IN_FLIGHT 2
 
 struct gpu_t;
 
@@ -141,6 +141,7 @@ struct gpu_t {
 
     struct {
         bool timestamp_queries;
+        bool pipeline_statistics;
     } support;
 
     struct {
@@ -170,7 +171,7 @@ struct gpu_t {
     gpu_image_t depth_image;
 
     frame_t frames[MAX_FRAMES_IN_FLIGHT];
-    u32 frame_number = 0;
+    u64 frame_index = 0;
 
     void init(GLFWwindow *window, const gpu_create_options_t &options);
     void recreate_swapchain(u32 width, u32 height);

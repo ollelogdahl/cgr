@@ -4,10 +4,10 @@ layout(local_size_x = 16) in;
 
 // Object data from CPU
 struct ObjectData {
+    float transform[12];
     uint material_id;
     uint mesh_id;
     uint _pad[2];
-    mat3x4 transform; // it is actually a 4x3 matrix, but in std140 that takes up the same as mat4.
 };
 
 // The draw command we'll write
@@ -23,23 +23,87 @@ struct LODData {
     uint index_start;
     uint index_count;
     float distance;
+    float _pad;
 };
 struct MeshData {
     LODData lods[4];
+    vec4 bounds_min;
+    vec4 bounds_max;
+};
+
+struct CullStatistics {
+    uint draw_count;
+    uint draw_count_lod[4];
+};
+
+struct CullData {
+    vec4 frustum_planes[6];
+    vec3 eye;
 };
 
 layout(set = 0, binding = 0) readonly buffer ObjectBuffer {
     ObjectData objects[];
 };
 
-layout(set = 0, binding = 1) buffer DrawBuffer {
+layout(set = 0, binding = 1) writeonly buffer DrawBuffer {
     uint draw_count;
     DrawCommand draws[];
 };
 
-layout(set = 0, binding = 2) buffer MeshBuffer {
+layout(set = 0, binding = 2) readonly buffer MeshBuffer {
     MeshData meshes[];
 };
+
+layout(set = 0, binding = 3) readonly buffer CullDataBuffer {
+    CullData cull_data;
+};
+
+layout(set = 0, binding = 4) buffer CullStatisticsBuffer {
+    CullStatistics stats;
+};
+
+vec3 unpack_affine_position(uint object_id) {
+    return vec3(
+        objects[object_id].transform[2],
+        objects[object_id].transform[5],
+        objects[object_id].transform[8]
+    );
+}
+
+bool is_visible(uint object_id) {
+    // get the aabb
+    bool visible = true;
+    for (int i = 0; i < 6; ++i) {
+        vec3 normal = cull_data.frustum_planes[i].xyz;
+        float dist = cull_data.frustum_planes[i].w;
+
+        // get furthest point in the direction of the normal
+        vec3 p = vec3(
+            normal.x > 0.0 ? meshes[objects[object_id].mesh_id].bounds_max.x : meshes[objects[object_id].mesh_id].bounds_min.x,
+            normal.y > 0.0 ? meshes[objects[object_id].mesh_id].bounds_max.y : meshes[objects[object_id].mesh_id].bounds_min.y,
+            normal.z > 0.0 ? meshes[objects[object_id].mesh_id].bounds_max.z : meshes[objects[object_id].mesh_id].bounds_min.z
+        );
+
+        bool is_outside = dot(p, normal) + dist < 0.0;
+        visible = visible && !is_outside;
+    }
+
+    return visible;
+}
+
+uint get_lod(uint object_id) {
+    vec3 object_pos = unpack_affine_position(object_id);
+    float distance = distance(object_pos, cull_data.eye);
+
+    uint lod = 0;
+    for (uint i = 1; i < 4; ++i) {
+        if (distance > meshes[objects[object_id].mesh_id].lods[i].distance) {
+            lod = i;
+        }
+    }
+
+    return lod;
+}
 
 void main() {
     uint idx = gl_GlobalInvocationID.x;
@@ -49,13 +113,21 @@ void main() {
     // Skip invalid objects (those with no geometry)
     if (mesh_id == -1) return;
 
-    // Atomic add to get our draw buffer position
-    uint draw_idx = atomicAdd(draw_count, 1);
+    if (is_visible(object_id)) {
+        // @todo: compaction
+        // Atomic add to get our draw buffer position
+        uint draw_idx = atomicAdd(draw_count, 1);
 
-    // Fill draw command
-    draws[draw_idx].indexCount = meshes[mesh_id].lods[0].index_count;
-    draws[draw_idx].instanceCount = 1;
-    draws[draw_idx].firstIndex = meshes[mesh_id].lods[0].index_start;
-    draws[draw_idx].vertexOffset = 0;
-    draws[draw_idx].firstInstance = object_id;
+        uint lod = get_lod(object_id);
+
+        // Fill draw command
+        draws[draw_idx].indexCount = meshes[mesh_id].lods[lod].index_count;
+        draws[draw_idx].instanceCount = 1;
+        draws[draw_idx].firstIndex = meshes[mesh_id].lods[lod].index_start;
+        draws[draw_idx].vertexOffset = 0;
+        draws[draw_idx].firstInstance = object_id;
+
+        atomicAdd(stats.draw_count, 1);
+        atomicAdd(stats.draw_count_lod[lod], 1);
+    }
 }

@@ -42,13 +42,14 @@ struct alignas(16) LODData {
 };
 struct alignas(16) MeshData {
     LODData lods[MAX_LODS];
-    // @todo: add bounding shape
+    v4f bounds_min;
+    v4f bounds_max;
 };
 struct alignas(16) ObjectData {
+    f32 transform[12]; // column-major affine transform 3x4 matrix
     MaterialHandle material;
     MeshHandle mesh;
     u32 _pad[2];
-    m34f transform;
 };
 
 struct DrawCommand {
@@ -66,6 +67,10 @@ struct TextureWrite {
 class RenderState {
 public:
     RenderState(gpu_t &gpu, const RenderStateConfig &config);
+
+    // no move
+    RenderState(RenderState &&) = delete;
+    RenderState &operator=(RenderState &&) = delete;
 
     VertexDataHandle alloc_vertices(slice<byte> vertices);
     IndexDataHandle alloc_indices(std::vector<u32> &&indices);
@@ -96,12 +101,12 @@ public:
 
     u32 highest_object_id() const { return m_highest_object_id; }
 
-    GpuBuffer object_buffer() const { return m_object_buffer; }
-    GpuBuffer vertex_buffer() const { return m_vertex_buffer; }
-    GpuBuffer index_buffer() const { return m_index_buffer; }
-    GpuBuffer material_buffer() const { return m_material_buffer; }
-    GpuBuffer mesh_buffer() const { return m_mesh_buffer; }
-    GpuBuffer global_buffer() const { return m_global_buffer; }
+    const GpuBuffer &object_buffer() const { return m_object_buffer; }
+    const GpuBuffer &vertex_buffer() const { return m_vertex_buffer; }
+    const GpuBuffer &index_buffer() const { return m_index_buffer; }
+    const GpuBuffer &material_buffer() const { return m_material_buffer; }
+    const GpuBuffer &mesh_buffer() const { return m_mesh_buffer; }
+    const GpuBuffer &global_buffer() const { return m_global_buffer; }
 private:
     gpu_t *m_gpu;
 
@@ -125,6 +130,15 @@ private:
     SlotAllocator m_object_alloc;
 
     u32 m_highest_object_id = 0;
+
+    struct {
+        u32 vertices = 0;
+        u32 indices = 0;
+        u32 materials = 0;
+        u32 meshes = 0;
+        u32 objects = 0;
+        u32 textures = 0;
+    } counts;
 
     std::set<ObjectHandle> dirty_objects;
 
