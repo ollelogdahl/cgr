@@ -1,6 +1,7 @@
 #include "render.h"
 #include "gpu.h"
 #include "metrics.h"
+#include "model.h"
 #include "rend2/buffer.h"
 #include "rend2/forward_indirect_pass.h"
 #include "rend2/render_state.h"

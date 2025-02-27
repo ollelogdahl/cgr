@@ -1,0 +1,42 @@
+{
+  "version": 8,
+  "$schema": "https://cmake.org/cmake/help/latest/_downloads/3e2d73bff478d88a7de0de736ba5e361/schema.json",
+  "configurePresets": [
+    {
+      "name": "dev",
+      "displayName": "Build in dev mode",
+      "generator": "Ninja",
+      "binaryDir": ".target/dev",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "ENABLE_TRACY": "ON"
+      }
+    },
+    {
+      "name": "memcheck",
+      "displayName": "Build in memcheck mode",
+      "generator": "Ninja",
+      "binaryDir": ".target/memcheck",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "ENABLE_TRACY": "OFF",
+        "ENABLE_SANITIZERS": "ON"
+      }
+    }
+  ],
+
+  "buildPresets": [
+    {
+      "name": "dev",
+      "displayName": "Build in dev mode",
+      "configurePreset": "dev",
+      "jobs": 12
+    },
+    {
+      "name": "memcheck",
+      "displayName": "Build in memcheck mode",
+      "configurePreset": "memcheck",
+      "jobs": 12
+    }
+  ]
+}

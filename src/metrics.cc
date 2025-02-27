@@ -9,7 +9,7 @@ static std::unordered_map<std::string, u32> g_lookup;
 static std::deque<Metric> g_metrics;
 static TreeNode g_root;
 
-inline constexpr Metric &get_of_type(const char *name, Metric::Type type, const char *unit, bool &created) {
+inline Metric &get_of_type(const char *name, Metric::Type type, const char *unit, bool &created) {
     const char *type_as_str;
     switch (type) {
     case Metric::Type::Counter: type_as_str = "c:"; break;

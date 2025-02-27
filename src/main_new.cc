@@ -1,4 +1,6 @@
 
+#include "control/freefly_controller.h"
+#include "control/input_system.h"
 #include "gpu.h"
 #include "imgui/imgui.h"
 #include "log.h"
@@ -6,6 +8,8 @@
 #include "oc.h"
 #include "rend2/render.h"
 #include <GLFW/glfw3.h>
+
+#include "model.h"
 
 #include <tracy/Tracy.hpp>
 #include <variant>
@@ -29,7 +33,7 @@ void add_many_objects(Renderer &renderer, MeshHandle mesh, usize count) {
         float z = cos(0.1 * i) * 8;
 
         m4f rot = m4f::rotate(anglef::from_deg(((f32)i / count) * 360), {0, 1, 0});
-        m4f position = m4f::translate({x, 0, z});
+        m4f position = m4f::translate({0, 0, 0});
 
         auto obj = renderer.add_object();
         renderer.assign_geometry(obj, mesh);
@@ -46,6 +50,8 @@ int main(void) {
     glfwWindowHint(GLFW_SRGB_CAPABLE, GLFW_FALSE);
     auto m_window = glfwCreateWindow(1200, 900, "cgr", nullptr, nullptr);
 
+    InputSystem input(m_window);
+
     gpu_t m_gpu;
     m_gpu.init(m_window, {
         .request_validation_layers = true,
@@ -55,12 +61,30 @@ int main(void) {
     Renderer m_renderer(m_gpu);
     ImGuiRenderer gui(m_gpu);
 
-    Mesh m = simple_mesh();
+    Mesh m = load_model("assets/dragon.obj", {
+        LODSetting{.distance = 0, .keep_ratio = 1.0},
+    });
     auto mesh_handle = m_renderer.add_mesh(m);
 
-    add_many_objects(m_renderer, mesh_handle, 100000);
+    add_many_objects(m_renderer, mesh_handle, 1);
 
-    v3f camera_pos = {0, 2, 4};
+    class Camera {
+    public:
+        v3f position() const { return m_position; }
+        v3f forward() const { return m_forward; }
+        v3f up() const { return {0, 1, 0}; }
+
+        void set_position(v3f pos) { m_position = pos; }
+        void set_forward(v3f forward) { m_forward = v3f::normalize(forward); }
+    private:
+        v3f m_position;
+        v3f m_forward;
+    };
+    Camera camera;
+    camera.set_position({0, 0, 0});
+    camera.set_forward({0, 0, 1});
+
+    FreeflyController camera_controller(camera, input);
 
     while (!glfwWindowShouldClose(m_window)) {
         gui.new_frame();
@@ -70,13 +94,12 @@ int main(void) {
 
         gui_metric();
 
-        camera_pos.x = sin(glfwGetTime()) * 4;
-        camera_pos.z = cos(glfwGetTime()) * 4;
+        camera_controller.update(1.0f / 30.0f);
 
         m_renderer.update_global(GlobalData{
-            .view = m4f::look_at(camera_pos, {0, 0, 0}, {0, 1, 0}),
+            .view = m4f::look_at(camera.position(), camera.position() + camera.forward(), camera.up()),
             .proj = m4f::perspective(anglef::from_deg(90.0), 1200.0f / 900.0f, 0.1f, 100.0f),
-            .view_pos = camera_pos,
+            .view_pos = camera.position(),
         });
 
         m_gpu.frame([&](gpu_t::frame_t &frame) {

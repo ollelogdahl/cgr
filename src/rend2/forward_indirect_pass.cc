@@ -114,7 +114,7 @@ void ForwardIndirectPass::record(CommandBuffer &cmd, const RenderTarget &target,
         u32 size = m_pipeline_stats.size() * sizeof(u64);
 
         vkGetQueryPoolResults(m_gpu->device, m_query_pool, 0, 1, size,
-            m_pipeline_stats.data(), size, VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT);
+            m_pipeline_stats.data(), size, VK_QUERY_RESULT_64_BIT);
 
         // report them.
         for (u32 i = 0; i < m_pipeline_stats.size(); i++) {

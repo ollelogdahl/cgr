@@ -44,19 +44,6 @@ struct texture_t {
     gpu_image_t image;
 };
 
-struct MeshLOD {
-    std::vector<u32> indices;
-};
-
-struct Mesh {
-    std::vector<v3f> vertices;
-    std::vector<v3f> normals;
-    std::vector<v2f> uvs;
-    std::vector<u32> colors;
-    std::vector<MeshLOD> lods;
-    aabb_t bounds;
-};
-
 struct mesh_description_t {
     ref_t<gpu_buffer_t> vertex_buffer;
     struct lod_t {

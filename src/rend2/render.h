@@ -1,11 +1,11 @@
 #pragma once
 
+#include "model.h"
 #include "oc.h"
 #include "rend2/cull_compute_pass.h"
 #include "rend2/forward_indirect_pass.h"
 #include "rend2/render_handles.h"
 #include "rend2/render_state.h"
-#include "resource.h"
 
 #include "command_buffer.h"
 
