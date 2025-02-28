@@ -1,6 +1,5 @@
 #include "imgui_renderer.h"
 
-#include "implot/implot.h"
 #include "imgui/imgui_impl_glfw.h"
 #include "imgui/imgui_impl_vulkan.h"
 #include <vulkan/vulkan_core.h>
@@ -9,7 +8,6 @@ ImGuiRenderer::ImGuiRenderer(gpu_t &gpu) : gpu(&gpu) {
     // creating the context does not have anything to do with
     // the renderer. Oh well.
     ImGui::CreateContext();
-    ImPlot::CreateContext();
 
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;     // Enable Keyboard Controls
@@ -18,9 +16,6 @@ ImGuiRenderer::ImGuiRenderer(gpu_t &gpu) : gpu(&gpu) {
 
     // Setup Dear ImGui style
     ImGui::StyleColorsDark();
-
-    // setup implot style
-    ImPlot::PushStyleColor(ImPlotCol_FrameBg, {0.15,0.15,0.15,0.0});
 
     VkDescriptorPool descriptor_pool;
     {

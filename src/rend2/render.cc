@@ -17,16 +17,16 @@
 
 static const RenderStateConfig config = {
     .max_objects = 1024 * 1024,
-    .max_vertices = 50 * 1024,
-    .max_indices = 50 * 1024,
+    .max_vertices = 1024 * 1024,
+    .max_indices = 10 * 1024 * 1024,
     .max_meshes = 1024,
     .max_materials = 1024,
     .max_textures = 1024,
 };
 static const u32 max_draws = 1024 * 1024;
 
-Renderer::Renderer(gpu_t &gpu) : m_gpu(&gpu), m_state(gpu, config),
-        cull_pass(gpu), forward_pass(gpu, config.max_textures),
+Renderer::Renderer(gpu_t &gpu, ShaderCompiler &sc) : m_gpu(&gpu), m_state(gpu, config),
+        cull_pass(gpu, sc), forward_pass(gpu, sc, config.max_textures),
     m_draw_buffer(gpu, max_draws * sizeof(DrawCommand) + 1 * sizeof(u32),
         VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT)
     {
@@ -48,17 +48,26 @@ MeshHandle Renderer::add_mesh(const Mesh &mesh) {
     // types of vertex data. This could be really nice, as we could save memory.
     // According to some sources, manual fetching is not too slow.
 
+    bool uv_present = mesh.uvs.size() > 0;
+    bool color_present = mesh.colors.size() > 0;
     auto interleaved = std::vector<byte>(mesh.vertices.size() * 9 * sizeof(f32));
     for (size_t i = 0; i < mesh.vertices.size(); i++) {
         auto &v = mesh.vertices[i];
         auto &n = mesh.normals[i];
-        auto &t = mesh.uvs[i];
-        auto &c = mesh.colors[i];
+
 
         memcpy(&interleaved[i * 9 * sizeof(f32)], &v, sizeof(v));
         memcpy(&interleaved[i * 9 * sizeof(f32) + 3 * sizeof(f32)], &n, sizeof(n));
-        memcpy(&interleaved[i * 9 * sizeof(f32) + 6 * sizeof(f32)], &t, sizeof(t));
-        memcpy(&interleaved[i * 9 * sizeof(f32) + 8 * sizeof(f32)], &c, sizeof(c));
+
+        if (uv_present) {
+            auto &t = mesh.uvs[i];
+            memcpy(&interleaved[i * 9 * sizeof(f32) + 6 * sizeof(f32)], &t, sizeof(t));
+        }
+
+        if (color_present) {
+            auto &c = mesh.colors[i];
+            memcpy(&interleaved[i * 9 * sizeof(f32) + 8 * sizeof(f32)], &c, sizeof(c));
+        }
     }
 
     auto vertex_handle = m_state.alloc_vertices(slice<byte>(interleaved));
@@ -90,6 +99,7 @@ MeshHandle Renderer::add_mesh(const Mesh &mesh) {
         mesh_data.lods[i] = {
             .index_start = idx_handles[src_idx].idx,
             .index_count = idx_handles[src_idx].size,
+            .distance = mesh.lods[src_idx].min_distance,
         };
     }
 

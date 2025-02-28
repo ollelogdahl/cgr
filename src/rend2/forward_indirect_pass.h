@@ -5,6 +5,8 @@
 #include "rend2/descriptor_set.h"
 #include "rend2/render_state.h"
 
+#include "shader_compiler.h"
+
 struct IndirectBatch {
     VkPipeline pipeline;
     u32 index;
@@ -25,7 +27,7 @@ public:
     // one can apply the teture-writes to ones own descriptor set.
     //
     // well well.
-    ForwardIndirectPass(gpu_t &gpu, u32 max_textures);
+    ForwardIndirectPass(gpu_t &gpu, ShaderCompiler &sc, u32 max_textures);
 
     void update_textures(std::span<TextureWrite> writes);
     void set_resources(VkBuffer global_buffer, VkBuffer object_buffer,

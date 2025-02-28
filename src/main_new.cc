@@ -20,6 +20,8 @@ Mesh simple_mesh();
 
 template<class... Ts>
 struct overloaded : Ts... { using Ts::operator()...; };
+template<class... Ts>
+overloaded(Ts...) -> overloaded<Ts...>;
 
 std::string num_to_human(usize num);
 std::string num_to_human_bytes(usize num);
@@ -27,17 +29,29 @@ std::string num_to_human_bytes(usize num);
 void gui_metric();
 void vma_query_metrics(gpu_t &gpu);
 
-void add_many_objects(Renderer &renderer, MeshHandle mesh, usize count) {
-    for (usize i = 0; i < count; ++i) {
-        float x = sin(0.1 * i) * 8;
-        float z = cos(0.1 * i) * 8;
+void dragons_in_grid(Renderer &renderer, f32 spacing, usize size) {
+    std::vector<LODSetting> lods = {
+        LODSetting{.min_distance = 10, .keep_ratio = 0.5},
+        LODSetting{.min_distance = 20, .keep_ratio = 0.25},
+    };
+    Model mod = load_model("assets/dragon.obj", lods);
+    Mesh m = mod.meshes[0];
 
-        m4f rot = m4f::rotate(anglef::from_deg(((f32)i / count) * 360), {0, 1, 0});
-        m4f position = m4f::translate({0, 0, 0});
+    MeshHandle mesh_handle = renderer.add_mesh(m);
 
-        auto obj = renderer.add_object();
-        renderer.assign_geometry(obj, mesh);
-        renderer.update_transform(obj, position * rot);
+    for (usize i = 0; i < size; ++i) {
+        f32 halfx = (f32)(size - 1) * spacing / 2;
+        for (usize j = 0; j < size; ++j) {
+            f32 halfz = (f32)(size - 1) * spacing / 2;
+
+            v3f translate = {(f32)i * spacing - halfx, 0, (f32)j * spacing - halfz};
+            m4f scale = m4f::scale({0.02, 0.02, 0.02});
+            m4f transform = scale * m4f::translate(translate);
+
+            auto obj = renderer.add_object();
+            renderer.assign_geometry(obj, mesh_handle);
+            renderer.update_transform(obj, transform);
+        }
     }
 }
 
@@ -58,15 +72,17 @@ int main(void) {
     });
     g_log.info("gpu initialized");
 
-    Renderer m_renderer(m_gpu);
+    const char *glslc_path = "glslc";
+    if (const char *env = getenv("GLSLC_PATH")) {
+        glslc_path = env;
+    }
+
+    ShaderCompiler shader_compiler(m_gpu, glslc_path);
+
+    Renderer m_renderer(m_gpu, shader_compiler);
     ImGuiRenderer gui(m_gpu);
 
-    Mesh m = load_model("assets/dragon.obj", {
-        LODSetting{.distance = 0, .keep_ratio = 1.0},
-    });
-    auto mesh_handle = m_renderer.add_mesh(m);
-
-    add_many_objects(m_renderer, mesh_handle, 1);
+    dragons_in_grid(m_renderer, 6.0f, 4);
 
     class Camera {
     public:

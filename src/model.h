@@ -5,7 +5,7 @@
 
 struct MeshLOD {
     std::vector<u32> indices;
-    f32 distance;
+    f32 min_distance;
 };
 
 struct Mesh {
@@ -23,7 +23,7 @@ struct Model {
 };
 
 struct LODSetting {
-    f32 distance;
+    f32 min_distance;
     f32 keep_ratio;
 };
 

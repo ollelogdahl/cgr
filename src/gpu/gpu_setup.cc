@@ -413,6 +413,7 @@ void gpu_t::init(GLFWwindow *window, const gpu_create_options_t &options) {
         auto make_perm_name = [](std::string &&name) {
             char *cstr = (char *)malloc(name.length() + 1);
             memcpy(cstr, name.c_str(), name.length());
+            cstr[name.length()] = '\0';
             return cstr;
         };
 

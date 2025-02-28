@@ -7,6 +7,8 @@
 #include "rend2/render_handles.h"
 #include "rend2/render_state.h"
 
+#include "shader_compiler.h"
+
 #include "command_buffer.h"
 
 struct LoadShaderProperties {
@@ -21,7 +23,7 @@ template <> struct std::hash<LoadShaderProperties> {
 
 class Renderer {
 public:
-    Renderer(gpu_t &gpu);
+    Renderer(gpu_t &gpu, ShaderCompiler &sc);
 
     // resources
     // @todo: material redesign.

@@ -22,6 +22,11 @@ Model load_model(const std::string &path, std::span<LODSetting> lod_settings) {
         mesh.colors = std::vector<u32>(m.colors.begin(), m.colors.end());
         mesh.bounds = m.bounds;
 
+        // generate base model (keep = 1.0, min_distance = 0.0)
+        {
+            mesh.lods.push_back(MeshLOD{.indices = std::vector<u32>(m.indices.begin(), m.indices.end()), .min_distance = 0.0});
+        }
+
         // generate lods.
         for (auto &lod_setting : lod_settings) {
             std::vector<u32> lod_indices;
@@ -37,7 +42,7 @@ Model load_model(const std::string &path, std::span<LODSetting> lod_settings) {
             lod_indices.resize(new_len);
             lod_indices.shrink_to_fit();
 
-            mesh.lods.push_back({.indices = std::move(lod_indices), .distance = lod_setting.distance});
+            mesh.lods.push_back({.indices = std::move(lod_indices), .min_distance = lod_setting.min_distance});
         }
 
         model.meshes.push_back(mesh);

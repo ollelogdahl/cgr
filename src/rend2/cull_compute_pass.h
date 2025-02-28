@@ -6,9 +6,11 @@
 #include "rend2/descriptor_set.h"
 #include <vulkan/vulkan_core.h>
 
+#include "shader_compiler.h"
+
 class CullComputePass {
 public:
-    CullComputePass(gpu_t &gpu);
+    CullComputePass(gpu_t &gpu, ShaderCompiler &sc);
 
     void bind_buffers(const GpuBuffer &object_buffer, const GpuBuffer &draw_buffer, const GpuBuffer &mesh_buffer);
 

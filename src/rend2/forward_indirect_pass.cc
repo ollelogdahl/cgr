@@ -11,7 +11,7 @@
 
 VkPipeline tmp_create_graphics_pipeline(gpu_t &gpu, VkPipelineLayout layout, const Shader &shader);
 
-ForwardIndirectPass::ForwardIndirectPass(gpu_t &gpu, u32 max_textures) : m_gpu(&gpu) {
+ForwardIndirectPass::ForwardIndirectPass(gpu_t &gpu, ShaderCompiler &sc, u32 max_textures) : m_gpu(&gpu) {
 
     // create a descriptor pool
     VkDescriptorPool descriptor_pool;
@@ -50,10 +50,9 @@ ForwardIndirectPass::ForwardIndirectPass(gpu_t &gpu, u32 max_textures) : m_gpu(&
         .add_descriptor_set(ds_layout)
         .build(gpu);
 
-    ShaderCompiler compiler(gpu, "glslc");
     Shader shader = Shader({
-        compiler.compile("shaders/forward.vert"),
-        compiler.compile("shaders/forward.frag")
+        sc.compile("shaders/forward.vert"),
+        sc.compile("shaders/forward.frag")
     });
 
     m_pipeline = tmp_create_graphics_pipeline(gpu, m_pipeline_layout, shader);

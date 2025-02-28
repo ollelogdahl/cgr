@@ -4,11 +4,15 @@
 #include "descriptor_set_layout_builder.h"
 #include "rend2/vku.h"
 
+#include "log.h"
+
 #include <tracy/Tracy.hpp>
 
 const u32 vertex_size = 9 * sizeof(f32);
 const u32 index_size = sizeof(u32);
 const u32 material_size = 32;
+
+logger_t logger = logger_t("renderstate");
 
 RenderState::RenderState(gpu_t &gpu, const RenderStateConfig &config)
 :
@@ -60,6 +64,7 @@ VertexDataHandle RenderState::alloc_vertices(slice<byte> vertices) {
     u32 num_vertices = vertices.len / vertex_size;
     u32 start = m_vertex_alloc.allocate(num_vertices);
     if (start == -1U) {
+        logger.error("failed to allocate {} vertices", num_vertices);
         return { -1U, 0 };
     }
 
@@ -74,6 +79,7 @@ IndexDataHandle RenderState::alloc_indices(std::vector<u32> &&indices) {
     ZoneScoped;
     u32 start = m_index_alloc.allocate(indices.size());
     if (start == -1U) {
+        logger.error("failed to allocate {} indices", indices.size());
         return { -1U, 0 };
     }
 
@@ -89,6 +95,7 @@ MeshHandle RenderState::alloc_mesh(const MeshData &data) {
     ZoneScoped;
     u32 idx = m_mesh_alloc.allocate();
     if (idx == -1U) {
+        logger.error("failed to allocate mesh");
         return {-1U};
     }
 
@@ -104,6 +111,7 @@ MaterialHandle RenderState::alloc_material(const MaterialData &data) {
     ZoneScoped;
     u32 idx = m_material_alloc.allocate();
     if (idx == -1U) {
+        logger.error("failed to allocate material");
         return {-1U};
     }
 
@@ -118,6 +126,7 @@ TextureHandle RenderState::alloc_texture(VkImageView view, VkSampler sampler) {
     ZoneScoped;
     u32 idx = m_texture_alloc.allocate();
     if (idx == -1U) {
+        logger.error("failed to allocate texture");
         return {-1U};
     }
 
@@ -133,6 +142,7 @@ ObjectHandle RenderState::alloc_object() {
     ZoneScoped;
     u32 idx = m_object_alloc.allocate();
     if (idx == -1U) {
+        logger.error("failed to allocate object");
         return {-1U};
     }
 

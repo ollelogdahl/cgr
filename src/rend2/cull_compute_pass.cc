@@ -17,7 +17,7 @@ struct CullStatistics {
     u32 draw_count_lod[4];
 };
 
-CullComputePass::CullComputePass(gpu_t &gpu)
+CullComputePass::CullComputePass(gpu_t &gpu, ShaderCompiler &sc)
 : m_gpu(&gpu),
     m_cull_buffer(gpu, sizeof(CullData), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT),
     m_stats_buffer(gpu, sizeof(CullStatistics), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, BufferType::Readback)
@@ -60,9 +60,8 @@ CullComputePass::CullComputePass(gpu_t &gpu)
         .build(gpu);
 
     // @todo: move this.
-    ShaderCompiler compiler(gpu, "glslc");
     Shader shader = Shader({
-        compiler.compile("shaders/cull-lod.comp")
+        sc.compile("shaders/cull-lod.comp")
     });
     m_pipeline = create_compute_pipeline(gpu, m_pipeline_layout, shader);
 }
