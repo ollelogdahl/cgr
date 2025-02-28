@@ -31,10 +31,10 @@ void vma_query_metrics(gpu_t &gpu);
 
 void dragons_in_grid(Renderer &renderer, f32 spacing, usize size) {
     std::vector<LODSetting> lods = {
-        LODSetting{.min_distance = 10, .keep_ratio = 0.5},
-        LODSetting{.min_distance = 20, .keep_ratio = 0.25},
+        LODSetting{.min_distance = 10, .keep_ratio = 0.8},
+        LODSetting{.min_distance = 20, .keep_ratio = 0.3},
     };
-    Model mod = load_model("assets/dragon.obj", lods);
+    Model mod = load_model("assets/gobby.obj", lods);
     Mesh m = mod.meshes[0];
 
     MeshHandle mesh_handle = renderer.add_mesh(m);
@@ -45,7 +45,7 @@ void dragons_in_grid(Renderer &renderer, f32 spacing, usize size) {
             f32 halfz = (f32)(size - 1) * spacing / 2;
 
             v3f translate = {(f32)i * spacing - halfx, 0, (f32)j * spacing - halfz};
-            m4f scale = m4f::scale({0.02, 0.02, 0.02});
+            m4f scale = m4f::scale({0.5, 0.5, 0.5});
             m4f transform = scale * m4f::translate(translate);
 
             auto obj = renderer.add_object();
@@ -82,7 +82,7 @@ int main(void) {
     Renderer m_renderer(m_gpu, shader_compiler);
     ImGuiRenderer gui(m_gpu);
 
-    dragons_in_grid(m_renderer, 6.0f, 4);
+    dragons_in_grid(m_renderer, 6.0f, 1);
 
     class Camera {
     public:
@@ -268,7 +268,7 @@ void vma_query_metrics(gpu_t &gpu) {
     u64 sum_usage = 0;
     u64 sum_budget = 0;
 
-    for (u32 i = 0; i < VK_MAX_MEMORY_HEAPS; ++i) {
+    for (u32 i = 0; i < 1; ++i) {
         sum_alloc_count += budgets[i].statistics.allocationCount;
         sum_alloc_bytes += budgets[i].statistics.allocationBytes;
         sum_block_bytes += budgets[i].statistics.blockBytes;

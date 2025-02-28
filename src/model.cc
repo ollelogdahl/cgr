@@ -37,12 +37,14 @@ Model load_model(const std::string &path, std::span<LODSetting> lod_settings) {
             usize new_len = meshopt_simplify(
                 lod_indices.data(), m.indices.data, m.indices.len,
                 (f32 *)m.vertices.data, m.vertices.len, sizeof(v3f),
-                target_count, 0, 0, &error);
+                target_count, FLT_MAX, 0, &error);
 
             lod_indices.resize(new_len);
             lod_indices.shrink_to_fit();
 
-            mesh.lods.push_back({.indices = std::move(lod_indices), .min_distance = lod_setting.min_distance});
+            mesh.lods.push_back(
+                {.indices = std::move(lod_indices), .min_distance = lod_setting.min_distance}
+            );
         }
 
         model.meshes.push_back(mesh);

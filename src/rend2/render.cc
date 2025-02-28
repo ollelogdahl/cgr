@@ -10,20 +10,19 @@
 
 #include <algorithm>
 
-#include "cull_lod_spv.h"
 #include "rend2/shader_compiler.h"
 #include "rend2/vku.h"
 #include "tracy/Tracy.hpp"
 
 static const RenderStateConfig config = {
-    .max_objects = 1024 * 1024,
-    .max_vertices = 1024 * 1024,
-    .max_indices = 10 * 1024 * 1024,
+    .max_objects = 100 * 1024,
+    .max_vertices = 100 * 1024,
+    .max_indices = 100 * 1024,
     .max_meshes = 1024,
     .max_materials = 1024,
     .max_textures = 1024,
 };
-static const u32 max_draws = 1024 * 1024;
+static const u32 max_draws = config.max_objects;
 
 Renderer::Renderer(gpu_t &gpu, ShaderCompiler &sc) : m_gpu(&gpu), m_state(gpu, config),
         cull_pass(gpu, sc), forward_pass(gpu, sc, config.max_textures),
@@ -157,6 +156,9 @@ void Renderer::update_transform(ObjectHandle handle, const m4f &t) {
 
 void Renderer::update_global(const GlobalData &data) {
     m_state.update_global(data);
+
+    m4f vp = data.view * data.proj;
+    cull_pass.update_view(data.view_pos, vp);
 }
 
 void Renderer::render(gpu_t::frame_t &frame) {

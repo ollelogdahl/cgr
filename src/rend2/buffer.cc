@@ -143,6 +143,9 @@ WriteDependency GpuBuffer::write_with_barrier(VkCommandBuffer cmd, slice<byte> d
 WriteDependency GpuBuffer::multiwrite_with_barrier(VkCommandBuffer cmd, WriteList wl) {
     // writing multiple slices to the buffer but with only a single barrier.
     WriteDependency out_dep;
+    if (wl.empty()) {
+        return out_dep;
+    }
 
     if (m_mapped) {
         for (usize i = 0; i < wl.size(); ++i) {
