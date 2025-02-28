@@ -29,12 +29,48 @@ std::string num_to_human_bytes(usize num);
 void gui_metric();
 void vma_query_metrics(gpu_t &gpu);
 
+v4f color_from_hsv(f32 h, f32 s, f32 v) {
+    f32 c = v * s;
+    f32 x = c * (1 - std::abs(fmod(h / 60.0, 2) - 1));
+    f32 m = v - c;
+
+    f32 r, g, b;
+    if (h < 60) {
+        r = c;
+        g = x;
+        b = 0;
+    } else if (h < 120) {
+        r = x;
+        g = c;
+        b = 0;
+    } else if (h < 180) {
+        r = 0;
+        g = c;
+        b = x;
+    } else if (h < 240) {
+        r = 0;
+        g = x;
+        b = c;
+    } else if (h < 300) {
+        r = x;
+        g = 0;
+        b = c;
+    } else {
+        r = c;
+        g = 0;
+        b = x;
+    }
+
+    return {r + m, g + m, b + m, 1};
+}
+
 void dragons_in_grid(Renderer &renderer, f32 spacing, usize size) {
     std::vector<LODSetting> lods = {
-        LODSetting{.min_distance = 10, .keep_ratio = 0.8},
-        LODSetting{.min_distance = 20, .keep_ratio = 0.3},
+        LODSetting{.min_distance = 10, .target_error = 1e-3},
+        LODSetting{.min_distance = 20, .target_error = 4e-3},
+        LODSetting{.min_distance = 40, .target_error = 2e-2},
     };
-    Model mod = load_model("assets/gobby.obj", lods);
+    Model mod = load_model("assets/dragon.obj", lods);
     Mesh m = mod.meshes[0];
 
     MeshHandle mesh_handle = renderer.add_mesh(m);
@@ -43,14 +79,26 @@ void dragons_in_grid(Renderer &renderer, f32 spacing, usize size) {
         f32 halfx = (f32)(size - 1) * spacing / 2;
         for (usize j = 0; j < size; ++j) {
             f32 halfz = (f32)(size - 1) * spacing / 2;
+            for (usize k = 0; k < size; ++k) {
+                f32 halfy = (f32)(size - 1) * spacing / 2;
 
-            v3f translate = {(f32)i * spacing - halfx, 0, (f32)j * spacing - halfz};
-            m4f scale = m4f::scale({0.5, 0.5, 0.5});
-            m4f transform = scale * m4f::translate(translate);
+                v3f translate = {(f32)i * spacing - halfx, (f32)k * spacing - halfy, (f32)j * spacing - halfz};
+                m4f scale = m4f::scale({0.02, 0.02, 0.02});
+                m4f transform = scale * m4f::translate(translate);
 
-            auto obj = renderer.add_object();
-            renderer.assign_geometry(obj, mesh_handle);
-            renderer.update_transform(obj, transform);
+                f32 random_hue = (f32)rand() / (f32)RAND_MAX * 360;
+                v4f color = color_from_hsv(random_hue, 0.8, 0.8);
+
+                auto obj = renderer.add_object();
+
+                auto mat = renderer.add_material(MaterialData{
+                    .color = color,
+                });
+
+                renderer.assign_geometry(obj, mesh_handle);
+                renderer.assign_material(obj, mat);
+                renderer.update_transform(obj, transform);
+            }
         }
     }
 }
@@ -82,7 +130,7 @@ int main(void) {
     Renderer m_renderer(m_gpu, shader_compiler);
     ImGuiRenderer gui(m_gpu);
 
-    dragons_in_grid(m_renderer, 6.0f, 1);
+    dragons_in_grid(m_renderer, 5.0f, 50);
 
     class Camera {
     public:
@@ -102,6 +150,8 @@ int main(void) {
 
     FreeflyController camera_controller(camera, input);
 
+    m4f persp = m4f::perspective(anglef::from_deg(90.0), 1200.0f / 900.0f, 0.1f, 400.0f);
+
     while (!glfwWindowShouldClose(m_window)) {
         gui.new_frame();
 
@@ -114,7 +164,7 @@ int main(void) {
 
         m_renderer.update_global(GlobalData{
             .view = m4f::look_at(camera.position(), camera.position() + camera.forward(), camera.up()),
-            .proj = m4f::perspective(anglef::from_deg(90.0), 1200.0f / 900.0f, 0.1f, 100.0f),
+            .proj = persp,
             .view_pos = camera.position(),
         });
 

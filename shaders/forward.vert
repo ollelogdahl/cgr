@@ -24,20 +24,12 @@ struct ObjectData {
     uint _pad[2];
 };
 
-struct MaterialData {
-    vec4 color;
-};
-
 layout(set = 0, binding = 0) readonly buffer GlobalBuffer {
     GlobalData global;
 };
 
 layout(set = 0, binding = 1) readonly buffer ObjectBuffer {
     ObjectData objects[];
-};
-
-layout(set = 0, binding = 2) readonly buffer MaterialBuffer {
-    MaterialData materials[];
 };
 
 layout(location = 0) in vec3 position;
@@ -49,6 +41,7 @@ layout(location = 0) out vec3 frag_pos_ws;
 layout(location = 1) out vec3 frag_normal_ws;
 layout(location = 2) out vec2 frag_uv;
 layout(location = 3) out vec3 frag_vertex_color;
+layout(location = 4) out flat uint material_id;
 
 mat4 unpack_affine_transform(uint object_id) {
     float[12] transform = objects[object_id].transform;
@@ -70,4 +63,6 @@ void main() {
     frag_normal_ws = transpose(inverse(mat3(transform))) * normal;
     frag_uv = vec2(uv.x, -uv.y);
     frag_vertex_color = vertex_color;
+
+    material_id = objects[object_id].material_id;
 }

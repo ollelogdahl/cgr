@@ -15,11 +15,11 @@
 #include "tracy/Tracy.hpp"
 
 static const RenderStateConfig config = {
-    .max_objects = 100 * 1024,
-    .max_vertices = 100 * 1024,
-    .max_indices = 100 * 1024,
+    .max_objects = 200 * 1024,
+    .max_vertices = 4 * 1024 * 1024,
+    .max_indices = 4 * 1024 * 1024,
     .max_meshes = 1024,
-    .max_materials = 1024,
+    .max_materials = 200 * 1024,
     .max_textures = 1024,
 };
 static const u32 max_draws = config.max_objects;

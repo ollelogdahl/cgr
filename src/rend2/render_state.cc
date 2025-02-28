@@ -70,7 +70,7 @@ VertexDataHandle RenderState::alloc_vertices(slice<byte> vertices) {
 
     counts.vertices += num_vertices;
 
-    m_writeback_buffers.vertices.insert({start * vertex_size, {vertices.begin(), vertices.end()}});
+    m_writes.vertices.insert({start * vertex_size, {vertices.begin(), vertices.end()}});
 
     return { start, num_vertices };
 }
@@ -86,7 +86,7 @@ IndexDataHandle RenderState::alloc_indices(std::vector<u32> &&indices) {
     counts.indices += indices.size();
 
     u32 written = indices.size();
-    m_writeback_buffers.indices.insert({start * (u32)sizeof(u32), std::move(indices)});
+    m_writes.indices.insert({start * (u32)sizeof(u32), std::move(indices)});
 
     return { start, written };
 }
@@ -102,7 +102,7 @@ MeshHandle RenderState::alloc_mesh(const MeshData &data) {
     counts.meshes += 1;
 
     slice<byte> data_slice((byte *)&data, sizeof(MeshData));
-    m_writeback_buffers.meshes.insert(idx * sizeof(MeshData), data);
+    m_writes.meshes.insert(idx * sizeof(MeshData), data);
 
     return {idx};
 }
@@ -117,7 +117,7 @@ MaterialHandle RenderState::alloc_material(const MaterialData &data) {
 
     counts.materials += 1;
 
-    m_writeback_buffers.materials.insert(idx * material_size, data);
+    m_writes.materials.insert(idx * material_size, data);
 
     return {idx};
 }
@@ -173,8 +173,8 @@ const ObjectData &RenderState::object_data(ObjectHandle handle) {
 }
 
 void RenderState::update_global(const GlobalData &data) {
-    m_writeback_buffers.global_data = data;
-    m_writeback_buffers.global_data_dirty = true;
+    m_writes.global_data = data;
+    m_writes.global_data_dirty = true;
 }
 
 RenderState::FlushDependencies RenderState::flush(CommandBuffer &cmd) {
@@ -190,23 +190,36 @@ RenderState::FlushDependencies RenderState::flush(CommandBuffer &cmd) {
     FlushDependencies deps;
     {
         TracyVkZone(cmd.tracy_ctx(), cmd.get(), "render-state-write");
-        deps.vertices = m_vertex_buffer.multiwrite_with_barrier(cmd.get(), m_writeback_buffers.vertices.write_list());
-        deps.indices = m_index_buffer.multiwrite_with_barrier(cmd.get(), m_writeback_buffers.indices.write_list());
-        deps.materials = m_material_buffer.multiwrite_with_barrier(cmd.get(), m_writeback_buffers.materials.write_list());
-        deps.meshes = m_mesh_buffer.multiwrite_with_barrier(cmd.get(), m_writeback_buffers.meshes.write_list());
-        deps.objects = m_object_buffer.multiwrite_with_barrier(cmd.get(), object_changes.write_list());
 
-        if (m_writeback_buffers.global_data_dirty) {
-            slice<byte> global_data_slice((byte *)&m_writeback_buffers.global_data, sizeof(GlobalData));
+        if (!m_writes.vertices.empty()) {
+            logger.info("flushing {} writes of vertices (tot: {} bytes)", m_writes.vertices.num_writes(), m_writes.vertices.total_bytes());
+            deps.vertices = m_vertex_buffer.multiwrite_with_barrier(cmd.get(), m_writes.vertices.write_list());
+            m_writes.vertices.clear();
+        }
+        if (!m_writes.indices.empty()) {
+            logger.info("flushing {} writes of indices (tot: {} bytes)", m_writes.indices.num_writes(), m_writes.indices.total_bytes());
+            deps.indices = m_index_buffer.multiwrite_with_barrier(cmd.get(), m_writes.indices.write_list());
+            m_writes.indices.clear();
+        }
+        if (!m_writes.materials.empty()) {
+            deps.materials = m_material_buffer.multiwrite_with_barrier(cmd.get(), m_writes.materials.write_list());
+            m_writes.materials.clear();
+        }
+        if (!m_writes.meshes.empty()) {
+            deps.meshes = m_mesh_buffer.multiwrite_with_barrier(cmd.get(), m_writes.meshes.write_list());
+            m_writes.meshes.clear();
+        }
+        if (!object_changes.empty()) {
+            deps.objects = m_object_buffer.multiwrite_with_barrier(cmd.get(), object_changes.write_list());
+        }
+
+        if (m_writes.global_data_dirty) {
+            slice<byte> global_data_slice((byte *)&m_writes.global_data, sizeof(GlobalData));
             deps.global = m_global_buffer.write_with_barrier(cmd.get(), global_data_slice);
-            m_writeback_buffers.global_data_dirty = false;
+            m_writes.global_data_dirty = false;
         }
     }
 
-    m_writeback_buffers.vertices.clear();
-    m_writeback_buffers.indices.clear();
-    m_writeback_buffers.materials.clear();
-    m_writeback_buffers.meshes.clear();
 
     m_texture_writes.clear();
 

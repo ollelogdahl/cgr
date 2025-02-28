@@ -24,7 +24,7 @@ struct Model {
 
 struct LODSetting {
     f32 min_distance;
-    f32 keep_ratio;
+    f32 target_error;
 };
 
 Model load_model(const std::string &path, std::span<LODSetting> lod_settings);

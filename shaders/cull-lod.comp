@@ -104,10 +104,10 @@ bool is_visible(uint object_id, mat4 affine_transform) {
 
         // get furthest point in the direction of the normal
         vec3 p = vec3(
-                normal.x > 0.0 ? meshes[objects[object_id].mesh_id].bounds_max.x : meshes[objects[object_id].mesh_id].bounds_min.x,
-                normal.y > 0.0 ? meshes[objects[object_id].mesh_id].bounds_max.y : meshes[objects[object_id].mesh_id].bounds_min.y,
-                normal.z > 0.0 ? meshes[objects[object_id].mesh_id].bounds_max.z : meshes[objects[object_id].mesh_id].bounds_min.z
-            );
+            normal.x > 0.0 ? aabb[1].x : aabb[0].x,
+            normal.y > 0.0 ? aabb[1].y : aabb[0].y,
+            normal.z > 0.0 ? aabb[1].z : aabb[0].z
+        );
 
         bool is_outside = dot(p, normal) + dist < 0.0;
         visible = visible && !is_outside;
@@ -138,13 +138,10 @@ void main() {
     // Skip invalid objects (those with no geometry)
     if (mesh_id == -1) return;
 
+    uint draw_idx = atomicAdd(draw_count, 1);
     mat4 affine_transform = unpack_affine_transform(object_id);
 
     if (is_visible(object_id, affine_transform)) {
-        // @todo: compaction
-        // Atomic add to get our draw buffer position
-        uint draw_idx = atomicAdd(draw_count, 1);
-
         uint lod = get_lod(object_id, affine_transform);
 
         // Fill draw command
@@ -156,5 +153,7 @@ void main() {
 
         atomicAdd(stats.draw_count, 1);
         atomicAdd(stats.draw_count_lod[lod], 1);
+    } else {
+        draws[draw_idx].instanceCount = 0;
     }
 }

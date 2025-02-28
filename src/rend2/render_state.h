@@ -28,6 +28,7 @@ class RenderState;
 #define MAX_LODS 4
 struct alignas(16) MaterialData {
     v4f color;
+    v4f emission;
 };
 struct alignas(16) GlobalData {
     m4f view;
@@ -150,6 +151,16 @@ private:
             std::vector<T> data;
         };
 
+        bool empty() const { return writes.empty(); }
+        usize num_writes() const { return writes.size(); }
+        usize total_bytes() const {
+            usize total = 0;
+            for (auto &w : writes) {
+                total += w.data.size() * sizeof(T);
+            }
+            return total;
+        }
+
         void insert(u32 offset, const T &data) {
             writes.push_back({offset, {data}});
         }
@@ -188,5 +199,5 @@ private:
         // just for this we could make immediate writes instead.
         GlobalData global_data;
         bool global_data_dirty = false;
-    } m_writeback_buffers;
+    } m_writes;
 };
