@@ -1,9 +1,11 @@
 #version 460
+#extension GL_KHR_shader_subgroup_ballot : require
+#extension GL_KHR_shader_subgroup_arithmetic : require
 
 #define FLT_MAX 3.402823466e+38
 #define FLT_MIN 1.175494351e-38
 
-layout(local_size_x = 16) in;
+layout(local_size_x = 64) in;
 
 // Object data from CPU
 struct ObjectData {
@@ -132,17 +134,32 @@ uint get_lod(uint object_id, mat4 affine_transform) {
 
 void main() {
     uint idx = gl_GlobalInvocationID.x;
+    uint local_id = gl_LocalInvocationID.x;
+
     uint object_id = idx;
     uint mesh_id = objects[object_id].mesh_id;
 
     // Skip invalid objects (those with no geometry)
     if (mesh_id == -1) return;
 
-    uint draw_idx = atomicAdd(draw_count, 1);
     mat4 affine_transform = unpack_affine_transform(object_id);
 
-    if (is_visible(object_id, affine_transform)) {
+    bool visible = is_visible(object_id, affine_transform);
+
+    uvec4 valid_mask = subgroupBallot(visible);
+    uint local_offset = subgroupBallotExclusiveBitCount(valid_mask);
+    uint local_count = subgroupBallotBitCount(valid_mask);
+
+    uint base_offset = 0;
+    if (subgroupElect()) {
+        base_offset = atomicAdd(draw_count, local_count);
+    }
+    base_offset = subgroupBroadcastFirst(base_offset);
+
+    if (visible) {
         uint lod = get_lod(object_id, affine_transform);
+
+        uint draw_idx = base_offset + local_offset;
 
         // Fill draw command
         draws[draw_idx].indexCount = meshes[mesh_id].lods[lod].index_count;
@@ -153,7 +170,5 @@ void main() {
 
         atomicAdd(stats.draw_count, 1);
         atomicAdd(stats.draw_count_lod[lod], 1);
-    } else {
-        draws[draw_idx].instanceCount = 0;
     }
 }

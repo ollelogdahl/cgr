@@ -42,7 +42,9 @@ ShaderModule ShaderCompiler::compile(const char *glsl_path) {
 
     const char *debug_info = m_emit_debug_info ? "-g" : "";
 
-    auto cmd = fmt::format("{} {} -o {} {}", m_glslc_path,
+    // @todo: make it easy to set flags and stuff
+
+    auto cmd = fmt::format("{} {} --target-env=vulkan1.1 -O -o {} {}", m_glslc_path,
         debug_info, tmp_path, glsl_path);
 
     // @todo: use exec instead of system.

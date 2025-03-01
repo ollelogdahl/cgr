@@ -36,6 +36,35 @@ a directional shadow pass, etc. A mesh pass is first an invocation of the cullin
 elements in the _draw buffer_. The draw buffer is later consumed by the _forward indirect_ pass, which performs
 one _VkDrawIndexedIndirect_ per batch.
 
+== Culling Compute
+
+#figure(
+    image(width: 60%, "figures/cull.svg"),
+    caption: "Culling Compute Shader",
+)
+
+== Compacting the Draw Buffer
+
+After culling, some objects will be removed and cause holes in the draw buffer. These are not drawn,
+as their instance count is set to zero. But as the buffer is consumed as draw calls, they will still
+create overhead. On a GTX 1070, the overhead of drawing 125k objects all being culled is around
+2.97ms (average 23ns per object).
+
+Compaction needs to be handled when inserting the objects into the draw buffer. The solution is inspired by @wihlidal2016 and utilizes workgroup ballot operations and parallel prefix sum.
+The algorithm works on subgroups. Firstly, each invocation checks if the object is visible or not.
+This value is stored in a ballot for this subgroup. Then a local offset is calculated by counting
+the number of bits set in the subgroup ballot up to this invocation. The total number of bits set in
+the ballot is calculated. The first invocation is elected and performs a atomic add to the draw buffers
+count field, and then broadcast the returned offset (base offset) to the subgroup. Each invocation now
+sums the base offset with the local offset to retrieve the final offset in the draw buffer. All visible
+objects can now write to their correct position in the draw buffer.
+The algorithm is presented in @fig:compaction.
+
+#figure(
+  image(width: 80%, "figures/compaction.svg"),
+  caption: "Compaction Algorithm",
+) <fig:compaction>
+
 == Manual Vertex Pulling
 
 A problem with the current design is that a batch requires all object to use the same vertex layout.
@@ -60,3 +89,5 @@ efficient. We wouldn't need the current draw buffer. Culling could be implemente
 meshlet level instead of objects, meaning that the geometry would be more evenly distributed.
 
 Overall, mesh shading would be really interesting to try out.
+
+#bibliography(style: "ieee", "uni.bib")

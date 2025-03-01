@@ -28,6 +28,10 @@ private:
 
     const GpuBuffer *m_draw_buffer;
 
+    // @todo: do we want to get this from the gpu?
+    // can we specialize the shader for a specific workgroup size?
+    u32 m_workgroup_size = 64;
+
     CullData m_cull_data;
     bool m_cull_data_dirty = false;
     GpuBuffer m_cull_buffer;

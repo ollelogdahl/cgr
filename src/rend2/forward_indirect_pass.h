@@ -3,6 +3,7 @@
 #include "rend2/buffer.h"
 #include "rend2/command_buffer.h"
 #include "rend2/descriptor_set.h"
+#include "rend2/pipeline_query.h"
 #include "rend2/render_state.h"
 
 #include "shader_compiler.h"
@@ -11,7 +12,7 @@ struct IndirectBatch {
     VkPipeline pipeline;
     u32 index;
     u32 count;
-    u32 max_draws; //
+    u32 max_draws;
 };
 
 struct RenderTarget {
@@ -47,8 +48,5 @@ private:
     VkPipelineLayout m_pipeline_layout;
     VkPipeline m_pipeline;
 
-    // pipeline query
-    bool m_has_query_in_flight = false;
-    bool m_started_query = false;
-    VkQueryPool m_query_pool;
+    PipelineQuery m_query;
 };

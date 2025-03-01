@@ -20,7 +20,7 @@ const char *pipeline_stat_names[] = {
     "rend2.forward.fragment_shader_invocations",
 };
 
-ForwardIndirectPass::ForwardIndirectPass(gpu_t &gpu, ShaderCompiler &sc, u32 max_textures) : m_gpu(&gpu) {
+ForwardIndirectPass::ForwardIndirectPass(gpu_t &gpu, ShaderCompiler &sc, u32 max_textures) : m_gpu(&gpu), m_query(gpu) {
 
     // create a descriptor pool
     VkDescriptorPool descriptor_pool;
@@ -65,23 +65,6 @@ ForwardIndirectPass::ForwardIndirectPass(gpu_t &gpu, ShaderCompiler &sc, u32 max
     });
 
     m_pipeline = tmp_create_graphics_pipeline(gpu, m_pipeline_layout, shader);
-
-    // pipeline query
-    {
-        VkQueryPoolCreateInfo query_pool_info = {};
-		query_pool_info.sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;
-		query_pool_info.queryType = VK_QUERY_TYPE_PIPELINE_STATISTICS;
-		query_pool_info.pipelineStatistics =
-			VK_QUERY_PIPELINE_STATISTIC_INPUT_ASSEMBLY_VERTICES_BIT |
-			VK_QUERY_PIPELINE_STATISTIC_INPUT_ASSEMBLY_PRIMITIVES_BIT |
-			VK_QUERY_PIPELINE_STATISTIC_VERTEX_SHADER_INVOCATIONS_BIT |
-			VK_QUERY_PIPELINE_STATISTIC_CLIPPING_INVOCATIONS_BIT |
-			VK_QUERY_PIPELINE_STATISTIC_CLIPPING_PRIMITIVES_BIT |
-			VK_QUERY_PIPELINE_STATISTIC_FRAGMENT_SHADER_INVOCATIONS_BIT;
-		query_pool_info.queryCount = 1;
-
-		VK_CHECK(vkCreateQueryPool(gpu.device, &query_pool_info, nullptr, &m_query_pool));
-    }
 }
 
 void ForwardIndirectPass::update_textures(std::span<TextureWrite> writes) {
@@ -107,32 +90,12 @@ void ForwardIndirectPass::record(CommandBuffer &cmd, const RenderTarget &target,
     ZoneScoped;
     TracyVkZone(cmd.tracy_ctx(), cmd.get(), "forward_indirect");
 
-    if (m_has_query_in_flight) {
-        // get metrics of last frame and wait!
-        // this is no good! We should not start a new query until the old one is done.
-        u32 size = 7 * sizeof(u64);
-        u64 stats[7];
-        vkGetQueryPoolResults(m_gpu->device, m_query_pool, 0, 1, size,
-            stats, size, VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WITH_AVAILABILITY_BIT);
-
-        bool available = stats[6] != 0;
-        if (available) {
-            m_has_query_in_flight = false;
-
-            for (u32 i = 0; i < 6; i++) {
-                metrics::gauge_u64(pipeline_stat_names[i], stats[i]);
-            }
-        }
+    auto q_results = m_query.get_results();
+    for (u32 i = 0; i < array_size(pipeline_stat_names); ++i) {
+        metrics::gauge_u64(pipeline_stat_names[i], q_results[i]);
     }
 
-    if (!m_has_query_in_flight) {
-        m_has_query_in_flight = true;
-        vkCmdResetQueryPool(cmd.get(), m_query_pool, 0, 1);
-        vkCmdBeginQuery(cmd.get(), m_query_pool, 0, 0);
-        m_started_query = true;
-    } else {
-        m_started_query = false;
-    }
+    m_query.begin(cmd);
 
     // bind the global descriptor set
     VkDescriptorSet descriptor_sets[] = { m_descriptor_set.get() };
@@ -213,10 +176,7 @@ void ForwardIndirectPass::record(CommandBuffer &cmd, const RenderTarget &target,
 
     vkCmdEndRendering(cmd.get());
 
-    if (m_started_query) {
-        vkCmdEndQuery(cmd.get(), m_query_pool, 0);
-        m_started_query = false;
-    }
+    m_query.end(cmd);
 }
 
 

@@ -112,7 +112,7 @@ void CullComputePass::record(CommandBuffer &cmd, u32 object_count) {
         m_cull_data_dirty = false;
     }
 
-    vkCmdFillBuffer(cmd.get(), m_draw_buffer->get(), 0, sizeof(u32), 0);
+    vkCmdFillBuffer(cmd.get(), m_draw_buffer->get(), 0, VK_WHOLE_SIZE, 0);
     dependencies.add(
         VK_PIPELINE_STAGE_2_TRANSFER_BIT,
         VK_ACCESS_2_TRANSFER_WRITE_BIT,
@@ -127,7 +127,7 @@ void CullComputePass::record(CommandBuffer &cmd, u32 object_count) {
     vkCmdBindDescriptorSets(cmd.get(), VK_PIPELINE_BIND_POINT_COMPUTE, m_pipeline_layout, 0,
         array_size(descriptor_sets), descriptor_sets, 0, nullptr);
 
-    u32 count = 1 + (object_count / 16);
+    u32 count = (object_count + m_workgroup_size - 1) / m_workgroup_size;
     vkCmdDispatch(cmd.get(), count, 1, 1);
 
     metrics::gauge_u32("rend2.cull.objects", object_count);

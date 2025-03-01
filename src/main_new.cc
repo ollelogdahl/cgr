@@ -83,6 +83,7 @@ void dragons_in_grid(Renderer &renderer, f32 spacing, usize size) {
                 f32 halfy = (f32)(size - 1) * spacing / 2;
 
                 v3f translate = {(f32)i * spacing - halfx, (f32)k * spacing - halfy, (f32)j * spacing - halfz};
+                translate.y += 300.0f;
                 m4f scale = m4f::scale({0.02, 0.02, 0.02});
                 m4f transform = scale * m4f::translate(translate);
 
