@@ -1,4 +1,5 @@
 #set heading(numbering: "1.1.1")
+#set par(justify: true)
 
 = Renderer 2
 
@@ -8,38 +9,45 @@ In the new renderer, the main passes have been structured around gpu-driven rend
 The current design uses the traditional geometry rasterization pipeline (see @sec:mesh-render),
 but dispatches draw-calls from the GPU instead. This allows for more flexible rendering and
 controlling draws from GPU.
-
-The biggest goal in this design was to support culling and LOD selection on the GPU, reducing
-CPU overhead.
+The purpose of this design was to support culling and LOD selection on the GPU, which would reduce
+CPU overhead. 
 
 Pipeline changes and state changes are conventionally not supported directly on the GPU. But draw
-calls can be produced by using `VkDrawIndexedIndirect`. This reads draw calls from a GPU buffer,
-meaning that only a single `VkDrawIndexedIndirect` command from the CPU needs to be submitted.
-
-To support this, the renderer needs to reduce state changes and pipeline changes. This is done by
-- Using a single vertex and index buffer
-- Splitting objects into batches (a batch is a group of objects that share the same pipeline)
-
-To support this, a mirror of the scene state needs to be present at all times on the GPU. We call
-this the _object buffer_. An object keeps reference to its mesh, its material and its transformation.
-When the scene changes on the CPU, the neccessary updates need to happen on the GPU as well.
+calls can be produced by using `VkDrawIndexedIndirect`. When submitted, this command reads draw calls
+from a GPU buffer, meaning that multiple draw calls can be produced by a single CPU call.
+To be able to render all geometry in as few indirect calls as possible, the renderer needs to reduce
+state changes between objects. The following strategies were used:
+- Using a single vertex and index buffer.
+- Using descriptor arrays for textures.
+- Partitioning objects into batches with same shader pipeline.
 
 #figure(
-  image(width: 60%, "figures/gpu-driven.svg"),
-  caption: "Indirect Rendering",
-)
+  placement: top,
+  image(width: 50%, "figures/gpu-driven.svg"),
+  caption: "Memory Layout Diagram for the GPU scene representation.",
+) <fig:gpu-storage>
 
-== The Mesh Pass
+The only thing requiring a state change between objects is a change in shader program or pipeline layout.
+This means that:
+- An entire shadow pass can be done in 1 indirect draw call.
+- A forward pass can be done in $N$ calls, where $N$ is the number of unique shaders.
 
-We call a full draw of the scene a _mesh pass_. There can be multiple mesh passes, like the main forward pass,
-a directional shadow pass, etc. A mesh pass is first an invocation of the culling compute shader, generating
-elements in the _draw buffer_. The draw buffer is later consumed by the _forward indirect_ pass, which performs
-one _VkDrawIndexedIndirect_ per batch.
+To use this system, the drawable instances (plainly called _objects_ going forward) need to be stored on the
+gpu. We call this the _object buffer_. Objects are instances which refer to a mesh, a material and carry instance
+data like transformation. When the scene changes on the CPU, the neccessary updates need to happen on the GPU as
+well.
+
+See figure <fig:gpu-storage> for a diagram of the memory layout.
+
+== Object Ordering
+
+
 
 == Culling Compute
 
 #figure(
-    image(width: 60%, "figures/cull.svg"),
+    placement: top,
+    image(width: 40%, "figures/cull.svg"),
     caption: "Culling Compute Shader",
 )
 
@@ -48,7 +56,7 @@ one _VkDrawIndexedIndirect_ per batch.
 After culling, some objects will be removed and cause holes in the draw buffer. These are not drawn,
 as their instance count is set to zero. But as the buffer is consumed as draw calls, they will still
 create overhead. On a GTX 1070, the overhead of drawing 125k objects all being culled is around
-2.97ms (average 23ns per object).
+2.97ms (average 23ns per object). This cost grows with the number of objects.
 
 Compaction needs to be handled when inserting the objects into the draw buffer. The solution is inspired by @wihlidal2016 and utilizes workgroup ballot operations and parallel prefix sum.
 The algorithm works on subgroups. Firstly, each invocation checks if the object is visible or not.
@@ -61,9 +69,13 @@ objects can now write to their correct position in the draw buffer.
 The algorithm is presented in @fig:compaction.
 
 #figure(
+  placement: top,
   image(width: 80%, "figures/compaction.svg"),
   caption: "Compaction Algorithm",
 ) <fig:compaction>
+
+Using this algorithm, the overhead of drawing 125k culled objects is reduced to a static cost of 0.9ms
+for an empty draw call.
 
 == Manual Vertex Pulling
 
@@ -79,13 +91,13 @@ This should be trivial to implement, and would allow for more flexible rendering
 
 Mesh rendering replaces the old rasterization pipeline, and replaces Input Assembler and Vertex
 stage with a compute-like shader. This shader can directly output to the rasterizer.
-A feature of mesh shading is that the mesh shader directly works in workgroups, meaning that
+A feature of mesh shading is that the workgroups emit primitives, meaning that
 it is critical for the application to split meshes into smaller parts (64/128 triangles) called
 _meshlets_.
 Culling can be done cheaper than an AABB frustum test if the meshlets are constructed convexly.
 
 Using mesh rendering instead of the current system would have been simpler and likely more
-efficient. We wouldn't need the current draw buffer. Culling could be implemented on a
+efficient. We wouldn't need the draw buffer at all. Culling could be implemented on a
 meshlet level instead of objects, meaning that the geometry would be more evenly distributed.
 
 Overall, mesh shading would be really interesting to try out.
