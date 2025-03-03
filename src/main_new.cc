@@ -104,7 +104,7 @@ void dragons_in_grid(Renderer &renderer, f32 spacing, usize size) {
     }
 }
 
-int main(void) {
+int main(int argc, char **argv) {
     oc_init();
 
     glfwInit();
@@ -115,9 +115,16 @@ int main(void) {
 
     InputSystem input(m_window);
 
+    bool validation_layers = false;
+    for (int i = 1; i < argc; ++i) {
+        if (strcmp(argv[i], "--validate") == 0) {
+            validation_layers = true;
+        }
+    }
+
     gpu_t m_gpu;
     m_gpu.init(m_window, {
-        .request_validation_layers = true,
+        .request_validation_layers = validation_layers,
     });
     g_log.info("gpu initialized");
 

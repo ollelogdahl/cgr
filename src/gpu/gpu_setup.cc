@@ -25,18 +25,21 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL vk_debug_callback(
     const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData,
     void* pUserData);
 
+static const char *VK_LAYER_KHRONOS_validation = "VK_LAYER_KHRONOS_validation";
+
 void gpu_t::init(GLFWwindow *window, const gpu_create_options_t &options) {
     this->window = window;
 
+
     const char *validation_layers[] = {
-        "VK_LAYER_KHRONOS_validation"
+        VK_LAYER_KHRONOS_validation
     };
 
 
     std::vector<const char *> required_device_extensions = {
         VK_KHR_SWAPCHAIN_EXTENSION_NAME,
-        VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME,
-        VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME,
+        // VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME, @note: core in 1.3
+        // VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME, @note: core in 1.3
     };
 
     // @todo: we should probably do better.
@@ -70,8 +73,26 @@ void gpu_t::init(GLFWwindow *window, const gpu_create_options_t &options) {
         appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
         appInfo.apiVersion = VK_API_VERSION_1_3;
 
+        bool validate_best_practices = true;
+        bool validate_synchronization = true;
+
+        std::vector<VkLayerSettingEXT> validation_settings;
+        validation_settings.push_back(
+            {VK_LAYER_KHRONOS_validation, "validate_sync", VK_LAYER_SETTING_TYPE_BOOL32_EXT, 1, &validate_synchronization}
+        );
+        validation_settings.push_back(
+            {VK_LAYER_KHRONOS_validation, "validate_best_practices", VK_LAYER_SETTING_TYPE_BOOL32_EXT, 1, &validate_best_practices}
+        );
+
+        VkLayerSettingsCreateInfoEXT layer_settings{};
+        layer_settings.sType = VK_STRUCTURE_TYPE_LAYER_SETTINGS_CREATE_INFO_EXT;
+        layer_settings.pNext = nullptr;
+        layer_settings.pSettings = validation_settings.data();
+        layer_settings.settingCount = validation_settings.size();
+
         VkInstanceCreateInfo createInfo{};
         createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
+        createInfo.pNext = &layer_settings;
         createInfo.pApplicationInfo = &appInfo;
 
         if (validation_layers_available) {
@@ -165,7 +186,7 @@ void gpu_t::init(GLFWwindow *window, const gpu_create_options_t &options) {
                 VK_VERSION_PATCH(device_properties.apiVersion));
 
             gpu_log.info("selected physical device: {}", device_name);
-            gpu_log.info("vukan version: {}", api_version);
+            gpu_log.info("vulkan version: {}", api_version);
         }
     }
 
@@ -310,7 +331,7 @@ void gpu_t::init(GLFWwindow *window, const gpu_create_options_t &options) {
         .set_desired_format({.format = VK_FORMAT_B8G8R8A8_UNORM, .colorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR})
         .set_desired_present_modes({VK_PRESENT_MODE_MAILBOX_KHR, VK_PRESENT_MODE_FIFO_RELAXED_KHR, VK_PRESENT_MODE_FIFO_KHR})
         .set_desired_extent(width, height)
-        .add_image_usage(VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT)
+        .add_image_usage(VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT)
         .build().unwrap();
 
     gpu_log.info("swapchain created");
@@ -631,7 +652,7 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL vk_debug_callback(
     if (messageSeverity == VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT) {
         gpu_log.warn("validation warning: {}", pCallbackData->pMessage);
 
-        panic("aborting on validation warning!");
+        // panic("aborting on validation warning!");
     }
     else if (messageSeverity == VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT) {
         gpu_log.error("validation error: {}", pCallbackData->pMessage);

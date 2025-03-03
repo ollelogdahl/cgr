@@ -104,7 +104,36 @@ void CullComputePass::record(CommandBuffer &cmd, u32 object_count) {
         memset(stats, 0, sizeof(CullStatistics));
     }
 
+
+    // clear the draw buffer
+    {
+        TracyVkZone(cmd.tracy_ctx(), cmd.get(), "wait_last_frame");
+
+        VkMemoryBarrier2 memory_barrier{};
+        memory_barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2;
+        memory_barrier.srcStageMask = VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT;
+        memory_barrier.srcAccessMask = VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT;
+        memory_barrier.dstStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT;
+        memory_barrier.dstAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+
+        VkDependencyInfo dependency{};
+        dependency.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+        dependency.memoryBarrierCount = 1;
+        dependency.pMemoryBarriers = &memory_barrier;
+
+        vkCmdPipelineBarrier2(cmd.get(), &dependency);
+    }
+
     WriteDependency dependencies;
+    {
+        TracyVkZone(cmd.tracy_ctx(), cmd.get(), "clear");
+        vkCmdFillBuffer(cmd.get(), m_draw_buffer->get(), 0, VK_WHOLE_SIZE, 0);
+        dependencies.add(
+            VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+            VK_ACCESS_2_TRANSFER_WRITE_BIT,
+            m_draw_buffer->get());
+    }
+
     // write new cull data
     if (m_cull_data_dirty) {
         auto b = m_cull_buffer.write_with_barrier(cmd.get(), slice<byte>((byte *)&m_cull_data, sizeof(CullData)));
@@ -112,25 +141,25 @@ void CullComputePass::record(CommandBuffer &cmd, u32 object_count) {
         m_cull_data_dirty = false;
     }
 
-    vkCmdFillBuffer(cmd.get(), m_draw_buffer->get(), 0, VK_WHOLE_SIZE, 0);
-    dependencies.add(
-        VK_PIPELINE_STAGE_2_TRANSFER_BIT,
-        VK_ACCESS_2_TRANSFER_WRITE_BIT,
-        m_draw_buffer->get());
-
-    dependencies.pipeline_barrier(cmd.get(),
-        VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT);
+    {
+        TracyVkZone(cmd.tracy_ctx(), cmd.get(), "wait_cull_pass");
+        dependencies.pipeline_barrier(cmd.get(),
+            VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+            VK_ACCESS_2_SHADER_READ_BIT | VK_ACCESS_2_SHADER_WRITE_BIT);
+    }
 
     VkDescriptorSet descriptor_sets[] = { m_descriptor_set.get() };
 
-    vkCmdBindPipeline(cmd.get(), VK_PIPELINE_BIND_POINT_COMPUTE, m_pipeline);
-    vkCmdBindDescriptorSets(cmd.get(), VK_PIPELINE_BIND_POINT_COMPUTE, m_pipeline_layout, 0,
-        array_size(descriptor_sets), descriptor_sets, 0, nullptr);
+    {
+        TracyVkZone(cmd.tracy_ctx(), cmd.get(), "dispatch");
 
-    u32 count = (object_count + m_workgroup_size - 1) / m_workgroup_size;
-    vkCmdDispatch(cmd.get(), count, 1, 1);
+        vkCmdBindPipeline(cmd.get(), VK_PIPELINE_BIND_POINT_COMPUTE, m_pipeline);
+        vkCmdBindDescriptorSets(cmd.get(), VK_PIPELINE_BIND_POINT_COMPUTE, m_pipeline_layout, 0,
+            array_size(descriptor_sets), descriptor_sets, 0, nullptr);
+
+        u32 count = (object_count + m_workgroup_size - 1) / m_workgroup_size;
+        vkCmdDispatch(cmd.get(), count, 1, 1);
+    }
 
     metrics::gauge_u32("rend2.cull.objects", object_count);
-
-    // @todo: @note: this is a good example
 }
