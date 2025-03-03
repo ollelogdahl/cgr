@@ -73,26 +73,9 @@ void gpu_t::init(GLFWwindow *window, const gpu_create_options_t &options) {
         appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
         appInfo.apiVersion = VK_API_VERSION_1_3;
 
-        bool validate_best_practices = true;
-        bool validate_synchronization = true;
-
-        std::vector<VkLayerSettingEXT> validation_settings;
-        validation_settings.push_back(
-            {VK_LAYER_KHRONOS_validation, "validate_sync", VK_LAYER_SETTING_TYPE_BOOL32_EXT, 1, &validate_synchronization}
-        );
-        validation_settings.push_back(
-            {VK_LAYER_KHRONOS_validation, "validate_best_practices", VK_LAYER_SETTING_TYPE_BOOL32_EXT, 1, &validate_best_practices}
-        );
-
-        VkLayerSettingsCreateInfoEXT layer_settings{};
-        layer_settings.sType = VK_STRUCTURE_TYPE_LAYER_SETTINGS_CREATE_INFO_EXT;
-        layer_settings.pNext = nullptr;
-        layer_settings.pSettings = validation_settings.data();
-        layer_settings.settingCount = validation_settings.size();
 
         VkInstanceCreateInfo createInfo{};
         createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
-        createInfo.pNext = &layer_settings;
         createInfo.pApplicationInfo = &appInfo;
 
         if (validation_layers_available) {
@@ -282,6 +265,8 @@ void gpu_t::init(GLFWwindow *window, const gpu_create_options_t &options) {
             gpu_log.info("pipeline statistics supported");
             enabled_features.pipelineStatisticsQuery = VK_TRUE;
         }
+
+        enabled_features.drawIndirectFirstInstance = VK_TRUE;
 
         createInfo.pEnabledFeatures = &enabled_features;
 
