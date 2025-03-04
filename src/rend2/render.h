@@ -23,6 +23,7 @@ template <> struct std::hash<LoadShaderProperties> {
 
 class Renderer {
 public:
+
     Renderer(gpu_t &gpu, ShaderCompiler &sc);
 
     // resources
@@ -38,6 +39,7 @@ public:
 
     void assign_geometry(ObjectHandle handle, MeshHandle mesh);
     void assign_material(ObjectHandle handle, MaterialHandle material);
+    void assign_shader(ObjectHandle handle, ShaderHandle shader);
     void update_transform(ObjectHandle handle, const m4f &transform);
 
     void update_global(const GlobalData &data);
@@ -45,6 +47,11 @@ public:
     // render
     void render(gpu_t::frame_t &frame);
 private:
+    BatchId get_batch_id(ShaderHandle shader);
+
+    std::span<CullComputePass::Batch> cull_batches();
+    std::span<IndirectBatch> forward_batches;
+
     gpu_t *m_gpu;
     RenderState m_state;
 

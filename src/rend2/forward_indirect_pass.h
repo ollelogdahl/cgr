@@ -10,7 +10,7 @@
 
 struct IndirectBatch {
     VkPipeline pipeline;
-    u32 index;
+    u32 offset;
     u32 count;
     u32 max_draws;
 };

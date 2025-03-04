@@ -50,7 +50,8 @@ struct alignas(16) ObjectData {
     f32 transform[12]; // column-major affine transform 3x4 matrix
     MaterialHandle material;
     MeshHandle mesh;
-    u32 _pad[2];
+    u32 batch_id;
+    u32 _pad;
 };
 
 struct DrawCommand {

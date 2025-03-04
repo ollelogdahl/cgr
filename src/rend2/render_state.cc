@@ -37,6 +37,7 @@ RenderState::RenderState(gpu_t &gpu, const RenderStateConfig &config)
     metrics::gauge_u64("rend2.state.gpu_size", gpu_total_size_bytes, "b");
 
     // write default values to the object buffer
+    // @todo: make some default batch with default shader.
     {
         // column-major m34f identity matrix
         ObjectData default_object = {
@@ -48,6 +49,7 @@ RenderState::RenderState(gpu_t &gpu, const RenderStateConfig &config)
             },
             .material = -1,
             .mesh = -1,
+            .batch_id = -1,
         };
 
 
@@ -146,6 +148,7 @@ ObjectHandle RenderState::alloc_object() {
         return {-1U};
     }
 
+    // @todo: we should be able to create the object with some data.
     m_object_data[idx] = ObjectData{
         .transform = {
             1, 0, 0,
@@ -166,6 +169,7 @@ ObjectHandle RenderState::alloc_object() {
 
 void RenderState::update_object(ObjectHandle handle, const ObjectData &object) {
     m_object_data[handle.id] = object;
+
     dirty_objects.insert(handle);
 }
 const ObjectData &RenderState::object_data(ObjectHandle handle) {

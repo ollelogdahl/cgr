@@ -54,7 +54,6 @@ MeshHandle Renderer::add_mesh(const Mesh &mesh) {
         auto &v = mesh.vertices[i];
         auto &n = mesh.normals[i];
 
-
         memcpy(&interleaved[i * 9 * sizeof(f32)], &v, sizeof(v));
         memcpy(&interleaved[i * 9 * sizeof(f32) + 3 * sizeof(f32)], &n, sizeof(n));
 
@@ -129,6 +128,24 @@ void Renderer::assign_geometry(ObjectHandle handle, MeshHandle mesh) {
 void Renderer::assign_material(ObjectHandle handle, MaterialHandle material) {
     auto old = m_state.object_data(handle);
     old.material = material;
+    m_state.update_object(handle, old);
+}
+
+BatchId Renderer::get_batch_id(ShaderHandle shader) {
+    // see if this has a batch already
+    auto it = m_shader_to_batch.find(shader);
+    if (it != m_shader_to_batch.end()) {
+        return it->second;
+    }
+
+    return batch;
+}
+
+void Renderer::assign_shader(ObjectHandle handle, ShaderHandle shader) {
+    auto batch = get_batch_id(shader);
+    auto old = m_state.object_data(handle);
+    old.shader = shader;
+    old.batch = batch;
     m_state.update_object(handle, old);
 }
 

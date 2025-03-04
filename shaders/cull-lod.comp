@@ -63,7 +63,11 @@ layout(set = 0, binding = 3) readonly buffer CullDataBuffer {
     CullData cull_data;
 };
 
-layout(set = 0, binding = 4) buffer CullStatisticsBuffer {
+layout(set = 0, binding = 4) readonly buffer BatchBuffer {
+    u64 batches[];
+};
+
+layout(set = 0, binding = 5) buffer CullStatisticsBuffer {
     CullStatistics stats;
 };
 
@@ -106,10 +110,10 @@ bool is_visible(uint object_id, mat4 affine_transform) {
 
         // get furthest point in the direction of the normal
         vec3 p = vec3(
-            normal.x > 0.0 ? aabb[1].x : aabb[0].x,
-            normal.y > 0.0 ? aabb[1].y : aabb[0].y,
-            normal.z > 0.0 ? aabb[1].z : aabb[0].z
-        );
+                normal.x > 0.0 ? aabb[1].x : aabb[0].x,
+                normal.y > 0.0 ? aabb[1].y : aabb[0].y,
+                normal.z > 0.0 ? aabb[1].z : aabb[0].z
+            );
 
         bool is_outside = dot(p, normal) + dist < 0.0;
         visible = visible && !is_outside;

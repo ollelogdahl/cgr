@@ -170,7 +170,7 @@ void ForwardIndirectPass::record(CommandBuffer &cmd, const RenderTarget &target,
         // [count][draw0     ][draw1      ]...[drawN      ]
         // u32    DrawCmd     DrawCmd
         vkCmdDrawIndexedIndirectCount(cmd.get(),
-            m_draw_buffer, batch.index * sizeof(DrawCommand) + sizeof(u32), m_draw_buffer, 0, batch.max_draws,
+            m_draw_buffer, batch.offset + sizeof(u32), m_draw_buffer, 0, batch.max_draws,
             sizeof(DrawCommand));
     }
 
