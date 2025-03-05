@@ -16,9 +16,8 @@ struct CullStatistics {
     u32 draw_count_lod[4];
 };
 
-CullComputePass::CullComputePass(gpu_t &gpu, u32 max_batches, ShaderCompiler &sc)
+CullComputePass::CullComputePass(gpu_t &gpu, ShaderCompiler &sc)
 : m_gpu(&gpu),
-    m_batch_buffer(gpu, max_batches * sizeof(u64), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT),
     m_cull_buffer(gpu, sizeof(CullData), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT),
     m_stats_buffer(gpu, sizeof(CullStatistics), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, BufferType::Readback)
 {
@@ -42,21 +41,18 @@ CullComputePass::CullComputePass(gpu_t &gpu, u32 max_batches, ShaderCompiler &sc
     //      binding 1: draw buffer      (IN-OUT)
     //      binding 2: mesh buffer      (IN)
     //      binding 3: cull buffer      (IN)
-    //      binding 4: batch buffer     (IN)
-    //      binding 5: stats buffer     (OUT)
+    //      binding 4: stats buffer     (OUT)
     VkDescriptorSetLayout ds_layout = DescriptorSetLayoutBuilder()
         .add_binding(0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT)
         .add_binding(1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT)
         .add_binding(2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT)
         .add_binding(3, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT)
         .add_binding(4, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT)
-        .add_binding(5, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT)
         .build(gpu);
 
     m_descriptor_set.init(gpu, descriptor_pool, ds_layout);
     m_descriptor_set.write_storage_buffer(3, 0, m_cull_buffer.get(), 0, VK_WHOLE_SIZE);
-    m_descriptor_set.write_storage_buffer(4, 0, m_batch_buffer.get(), 0, VK_WHOLE_SIZE);
-    m_descriptor_set.write_storage_buffer(5, 0, m_stats_buffer.get(), 0, VK_WHOLE_SIZE);
+    m_descriptor_set.write_storage_buffer(4, 0, m_stats_buffer.get(), 0, VK_WHOLE_SIZE);
 
     m_pipeline_layout = PipelineLayoutBuilder()
         .add_descriptor_set(ds_layout)
@@ -93,20 +89,9 @@ const char *draw_count_lod_metric_names[] = {
     "rend2.cull.draw_count_lod[3]",
 };
 
-void CullComputePass::assign_batches(std::span<Batch> batches) {
-    m_object_count = 0;
-    for (auto &batch : batches) {
-        m_object_count += batch.objects.size();
-    }
-    m_batches = std::move(batches);
-    m_batches_dirty = true;
-}
-
 void CullComputePass::record(CommandBuffer &cmd, u32 object_count) {
     ZoneScoped;
     TracyVkZone(cmd.tracy_ctx(), cmd.get(), "cull_lod_compute");
-
-    assert(m_batches.size() > 0);
 
     // read statistics from last frame
     {
@@ -153,12 +138,6 @@ void CullComputePass::record(CommandBuffer &cmd, u32 object_count) {
         auto b = m_cull_buffer.write_with_barrier(cmd.get(), slice<byte>((byte *)&m_cull_data, sizeof(CullData)));
         dependencies.join(b);
         m_cull_data_dirty = false;
-    }
-
-    if (m_batches_dirty) {
-        auto b = m_batch_buffer.write_with_barrier(cmd.get(), slice<u64>(m_batches.data(), m_batches.size()));
-        dependencies.join(b);
-        m_batches_dirty = false;
     }
 
     {

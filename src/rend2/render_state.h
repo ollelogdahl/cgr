@@ -46,11 +46,14 @@ struct alignas(16) MeshData {
     v4f bounds_min;
     v4f bounds_max;
 };
+
+typedef u32 BatchId;
+
 struct alignas(16) ObjectData {
     f32 transform[12]; // column-major affine transform 3x4 matrix
     MaterialHandle material;
     MeshHandle mesh;
-    u32 batch_id;
+    BatchId batch;
     u32 _pad;
 };
 
@@ -98,10 +101,24 @@ public:
     };
 
     // flushes changes to the GPU.
-    std::span<TextureWrite> texture_writes();
     FlushDependencies flush(CommandBuffer &cmd);
 
     u32 highest_object_id() const { return m_highest_object_id; }
+
+    // used by forward indirect pass for now; can maybe be moved?
+    //
+    // binding 0: global data (vert, frag)
+    // binding 1: object data (vert)
+    // binding 2: material data (frag)
+    // binding 3: texture array (frag)
+    DescriptorSet &render_descriptor_set() { return m_render_descriptor_set; }
+
+    struct Batch {
+        BatchId id;
+        u32 start_index;
+        u32 count;
+    };
+    std::span<const Batch> object_batches() const { return m_object_batches; }
 
     const GpuBuffer &object_buffer() const { return m_object_buffer; }
     const GpuBuffer &vertex_buffer() const { return m_vertex_buffer; }
@@ -110,9 +127,8 @@ public:
     const GpuBuffer &mesh_buffer() const { return m_mesh_buffer; }
     const GpuBuffer &global_buffer() const { return m_global_buffer; }
 private:
-    gpu_t *m_gpu;
 
-    std::vector<TextureWrite> m_texture_writes;
+    gpu_t *m_gpu;
 
     // objects are fun! They lie both on the CPU and the GPU.
     GpuBuffer m_object_buffer;
@@ -130,6 +146,11 @@ private:
     SlotAllocator m_mesh_alloc;
     SlotAllocator m_texture_alloc;
     SlotAllocator m_object_alloc;
+
+    DescriptorSet m_render_descriptor_set;
+
+    std::vector<Batch> m_object_batches;
+    std::unordered_map<ObjectHandle, u32> m_object_to_idx_map;
 
     u32 m_highest_object_id = 0;
 

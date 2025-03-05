@@ -73,6 +73,11 @@ void dragons_in_grid(Renderer &renderer, f32 spacing, usize size) {
     Model mod = load_model("assets/dragon.obj", lods);
     Mesh m = mod.meshes[0];
 
+    ShaderHandle shader = renderer.load_shader({
+        .glsl_vert_path = "shaders/forward.vert",
+        .glsl_frag_path = "shaders/forward.frag",
+    });
+
     MeshHandle mesh_handle = renderer.add_mesh(m);
 
     for (usize i = 0; i < size; ++i) {
@@ -83,7 +88,7 @@ void dragons_in_grid(Renderer &renderer, f32 spacing, usize size) {
                 f32 halfy = (f32)(size - 1) * spacing / 2;
 
                 v3f translate = {(f32)i * spacing - halfx, (f32)k * spacing - halfy, (f32)j * spacing - halfz};
-                translate.y += 300.0f;
+                // translate.y += 300.0f;
                 m4f scale = m4f::scale({0.02, 0.02, 0.02});
                 m4f transform = scale * m4f::translate(translate);
 
@@ -98,6 +103,7 @@ void dragons_in_grid(Renderer &renderer, f32 spacing, usize size) {
 
                 renderer.assign_geometry(obj, mesh_handle);
                 renderer.assign_material(obj, mat);
+                renderer.assign_shader(obj, shader);
                 renderer.update_transform(obj, transform);
             }
         }
@@ -138,7 +144,7 @@ int main(int argc, char **argv) {
     Renderer m_renderer(m_gpu, shader_compiler);
     ImGuiRenderer gui(m_gpu);
 
-    dragons_in_grid(m_renderer, 5.0f, 50);
+    dragons_in_grid(m_renderer, 5.0f, 2);
 
     class Camera {
     public:
@@ -175,9 +181,14 @@ int main(int argc, char **argv) {
             .proj = persp,
             .view_pos = camera.position(),
         });
+        View view = {
+            .projection = persp,
+            .view = m4f::look_at(camera.position(), camera.position() + camera.forward(), camera.up()),
+            .position = camera.position(),
+        };
 
         m_gpu.frame([&](gpu_t::frame_t &frame) {
-            m_renderer.render(frame);
+            m_renderer.render(frame, view);
             gui.draw(frame);
         });
 

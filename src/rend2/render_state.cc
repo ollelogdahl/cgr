@@ -4,9 +4,13 @@
 #include "descriptor_set_layout_builder.h"
 #include "rend2/vku.h"
 
+#include <map>
+#include <algorithm>
+
 #include "log.h"
 
 #include <tracy/Tracy.hpp>
+#include <vulkan/vulkan_core.h>
 
 const u32 vertex_size = 9 * sizeof(f32);
 const u32 index_size = sizeof(u32);
@@ -49,7 +53,7 @@ RenderState::RenderState(gpu_t &gpu, const RenderStateConfig &config)
             },
             .material = -1,
             .mesh = -1,
-            .batch_id = -1,
+            .batch = -1U,
         };
 
 
@@ -58,6 +62,37 @@ RenderState::RenderState(gpu_t &gpu, const RenderStateConfig &config)
         }
 
         m_object_buffer.write(slice<byte>((byte *)m_object_data, config.max_objects * sizeof(ObjectData)));
+    }
+
+    // create the descriptor pool & set
+    {
+        VkDescriptorPoolSize pool_sizes[] = {
+            { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 3 },
+            { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, config.max_textures },
+        };
+
+        VkDescriptorPoolCreateInfo pool_info = {};
+        pool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+        pool_info.poolSizeCount = array_size(pool_sizes);
+        pool_info.pPoolSizes = pool_sizes;
+        pool_info.maxSets = 1;
+
+        VkDescriptorPool descriptor_pool;
+        VK_CHECK(vkCreateDescriptorPool(gpu.device, &pool_info, nullptr, &descriptor_pool));
+
+        VkDescriptorSetLayout ds_layout = DescriptorSetLayoutBuilder()
+            .add_binding(0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)
+            .add_binding(1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_VERTEX_BIT)
+            .add_binding(2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_FRAGMENT_BIT)
+            .add_variable_binding(3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, config.max_textures)
+            .build(gpu);
+
+        m_render_descriptor_set.init(gpu, descriptor_pool, ds_layout);
+
+        m_render_descriptor_set.write_storage_buffer(0, 0, m_global_buffer.get(), 0, VK_WHOLE_SIZE);
+        m_render_descriptor_set.write_storage_buffer(1, 0, m_object_buffer.get(), 0, VK_WHOLE_SIZE);
+        m_render_descriptor_set.write_storage_buffer(2, 0, m_material_buffer.get(), 0, VK_WHOLE_SIZE);
+        m_render_descriptor_set.flush(gpu);
     }
 }
 
@@ -134,8 +169,7 @@ TextureHandle RenderState::alloc_texture(VkImageView view, VkSampler sampler) {
 
     counts.textures += 1;
 
-    // m_global_ds.write_combined_image_sampler(0, idx, view, sampler);
-    m_texture_writes.push_back(TextureWrite{idx, view, sampler});
+    m_render_descriptor_set.write_combined_image_sampler(0, idx, view, sampler);
 
     return {idx};
 }
@@ -148,8 +182,7 @@ ObjectHandle RenderState::alloc_object() {
         return {-1U};
     }
 
-    // @todo: we should be able to create the object with some data.
-    m_object_data[idx] = ObjectData{
+    ObjectData default_object = {
         .transform = {
             1, 0, 0,
             0, 1, 0,
@@ -158,22 +191,86 @@ ObjectHandle RenderState::alloc_object() {
         },
         .material = -1,
         .mesh = -1,
+        .batch = -1U,
     };
+
+    // @todo: we should be able to create the object with some data.
+    m_object_data[idx] = default_object;
+    m_object_to_idx_map.insert({idx, idx});
     dirty_objects.insert({idx});
 
     counts.objects += 1;
 
     m_highest_object_id = std::max(m_highest_object_id, idx);
+
     return {idx};
 }
 
 void RenderState::update_object(ObjectHandle handle, const ObjectData &object) {
-    m_object_data[handle.id] = object;
+    u32 idx = m_object_to_idx_map[handle.id];
+    BatchId new_batch = object.batch;
+    BatchId old_batch = m_object_data[idx].batch;
 
-    dirty_objects.insert(handle);
+    if (new_batch == old_batch) {
+        m_object_data[idx] = object;
+        dirty_objects.insert(handle);
+        return;
+    }
+
+    // this could be done faster.
+    auto batch_it = std::find_if(m_object_batches.begin(), m_object_batches.end(), [&](const Batch &b) {
+        return b.id == new_batch;
+    });
+
+    // if there doesn't exist a batch, create one!
+    if (batch_it == m_object_batches.end()) {
+        m_object_batches.push_back(Batch{
+            .id = new_batch,
+            .start_index = idx,
+            .count = 1,
+        });
+        return;
+    }
+
+    // there exist another batch. We need to reconcile the two.
+    // This is tricky! For now, objects are allocated and never deallocated.
+    // This means that the new object is always above the old batch.
+    //
+    // case 0:
+    //           X     N
+    // [0][0][0][1][1][0]
+    //      -> swap N with first 1 (X).
+    //
+    // case 1:
+    //           Y     X     N
+    // [0][0][0][1][1][2][2][0]
+    //      -> swap N with first 2 (X). Then swap X with first 1 (Y).
+    //
+    // we simply 'bubble down'.
+
+    // figure out the target batch index.
+    u32 target_idx = batch_it - m_object_batches.begin();
+
+    u32 cursor = idx;
+    for (u32 i = m_object_batches.size() - 1; i > target_idx; --i) {
+        auto &batch = m_object_batches[i];
+        std::swap(m_object_data[cursor], m_object_data[batch.start_index]);
+        cursor = batch.start_index;
+
+        batch.start_index += 1;
+
+        dirty_objects.insert({batch.start_index});
+        dirty_objects.insert({cursor});
+    }
+
+    // we are now one element above the target batch.
+    // we can now update the target batch.
+    batch_it->count += 1;
 }
+
 const ObjectData &RenderState::object_data(ObjectHandle handle) {
-    return m_object_data[handle.id];
+    u32 idx = m_object_to_idx_map[handle.id];
+    return m_object_data[idx];
 }
 
 void RenderState::update_global(const GlobalData &data) {
@@ -190,6 +287,8 @@ RenderState::FlushDependencies RenderState::flush(CommandBuffer &cmd) {
         object_changes.insert(handle.id * sizeof(ObjectData), object);
     }
     dirty_objects.clear();
+
+    m_render_descriptor_set.flush(*m_gpu);
 
     FlushDependencies deps;
     {
@@ -224,9 +323,6 @@ RenderState::FlushDependencies RenderState::flush(CommandBuffer &cmd) {
         }
     }
 
-
-    m_texture_writes.clear();
-
     // update metrics
     metrics::gauge_u32("rend2.state.vertices", counts.vertices);
     metrics::gauge_u32("rend2.state.indices", counts.indices);
@@ -236,8 +332,4 @@ RenderState::FlushDependencies RenderState::flush(CommandBuffer &cmd) {
     metrics::gauge_u32("rend2.state.objects", counts.objects);
 
     return deps;
-}
-
-std::span<TextureWrite> RenderState::texture_writes() {
-    return m_texture_writes;
 }

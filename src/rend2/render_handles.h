@@ -80,7 +80,17 @@ private:
 
     friend class RenderState;
     friend class Renderer;
+
+    friend struct std::hash<ObjectHandle>;
 };
+
+template <>
+struct std::hash<ObjectHandle> {
+    std::size_t operator()(const ObjectHandle &handle) const {
+        return std::hash<u32>()(handle.id);
+    }
+};
+
 class ShaderHandle {
 public:
     ShaderHandle() : id(-1) {}

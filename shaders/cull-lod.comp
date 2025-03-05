@@ -63,11 +63,7 @@ layout(set = 0, binding = 3) readonly buffer CullDataBuffer {
     CullData cull_data;
 };
 
-layout(set = 0, binding = 4) readonly buffer BatchBuffer {
-    u64 batches[];
-};
-
-layout(set = 0, binding = 5) buffer CullStatisticsBuffer {
+layout(set = 0, binding = 4) buffer CullStatisticsBuffer {
     CullStatistics stats;
 };
 

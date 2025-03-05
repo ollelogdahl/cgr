@@ -1,5 +1,6 @@
 #set heading(numbering: "1.1.1")
 #set par(justify: true)
+#show: x => columns(2, x)
 
 = Renderer 2
 
@@ -23,6 +24,7 @@ state changes between objects. The following strategies were used:
 
 #figure(
   placement: top,
+  scope: "parent",
   image(width: 50%, "figures/gpu-driven.svg"),
   caption: "Memory Layout Diagram for the GPU scene representation.",
 ) <fig:gpu-storage>
@@ -35,18 +37,17 @@ This means that:
 To use this system, the drawable instances (plainly called _objects_ going forward) need to be stored on the
 gpu. We call this the _object buffer_. Objects are instances which refer to a mesh, a material and carry instance
 data like transformation. When the scene changes on the CPU, the neccessary updates need to happen on the GPU as
-well.
-
-See figure <fig:gpu-storage> for a diagram of the memory layout.
+well. See @fig:gpu-storage for a diagram of the memory layout.
 
 == Object Ordering
 
-
+Objects are stored in the object buffer. To support multiple different
 
 == Culling Compute
 
 #figure(
     placement: top,
+    scope: "parent",
     image(width: 40%, "figures/cull.svg"),
     caption: "Culling Compute Shader",
 )
@@ -101,5 +102,13 @@ efficient. We wouldn't need the draw buffer at all. Culling could be implemented
 meshlet level instead of objects, meaning that the geometry would be more evenly distributed.
 
 Overall, mesh shading would be really interesting to try out.
+
+== Future Work
+
+The current design has some flaws, but also shows great promise.
+
+Support for GPU mesh skinning.
+
+Simple ray-tracing acceleration structures.
 
 #bibliography(style: "ieee", "uni.bib")

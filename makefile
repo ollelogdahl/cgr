@@ -36,7 +36,7 @@ CCFLAGS_COMMON = -std=c++2a -Wall -Wextra -Werror -Ivendor/include -Isrc -I. -g 
 	-Ivendor/tracy
 LDFLAGS_COMMON = -ldl -lglfw -lvulkan
 
-CCFLAGS_DEV = $(CCFLAGS_COMMON) -O3 -DTRACY_ENABLE -DTRACY_CALLSTACK=2
+CCFLAGS_DEV = $(CCFLAGS_COMMON) -DDEBUG -O3 -DTRACY_ENABLE -DTRACY_CALLSTACK=2
 CCFLAGS_RELEASE = $(CCFLAGS_COMMON) -DRELEASE -O3
 CCFLAGS_MEM = $(CCFLAGS_COMMON) -DVALIDATE -O0 -fsanitize=undefined -fsanitize=address
 

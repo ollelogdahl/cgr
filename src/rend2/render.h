@@ -2,14 +2,14 @@
 
 #include "model.h"
 #include "oc.h"
-#include "rend2/cull_compute_pass.h"
-#include "rend2/forward_indirect_pass.h"
+#include "rend2/forward_mesh_pass.h"
 #include "rend2/render_handles.h"
 #include "rend2/render_state.h"
 
 #include "shader_compiler.h"
 
 #include "command_buffer.h"
+#include <vulkan/vulkan_core.h>
 
 struct LoadShaderProperties {
     const char *glsl_vert_path;
@@ -45,21 +45,21 @@ public:
     void update_global(const GlobalData &data);
 
     // render
-    void render(gpu_t::frame_t &frame);
+    void render(gpu_t::frame_t &frame, const View &view);
 private:
-    BatchId get_batch_id(ShaderHandle shader);
-
-    std::span<CullComputePass::Batch> cull_batches();
-    std::span<IndirectBatch> forward_batches;
-
     gpu_t *m_gpu;
     RenderState m_state;
+    ShaderCompiler &m_shader_compiler;
 
-    // @todo: break out!
-    CullComputePass cull_pass;
-    ForwardIndirectPass forward_pass;
+    VkPipelineLayout m_forward_pipeline_layout;
+
     GpuBuffer m_draw_buffer;
+    ForwardMeshPass m_forward_pass;
 
-    std::unordered_map<LoadShaderProperties, ShaderHandle> shader_cache;
-    std::vector<gpu_shader_t> shaders; // @todo: stop using the old gpu_shader_t type!
+    struct ShaderInfo {
+        VkPipeline render_pipeline;
+    };
+
+    std::unordered_map<LoadShaderProperties, ShaderHandle> m_shader_cache;
+    std::vector<ShaderInfo> m_shaders; // @todo: stop using the old gpu_shader_t type!
 };
