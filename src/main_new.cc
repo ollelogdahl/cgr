@@ -144,7 +144,7 @@ int main(int argc, char **argv) {
     Renderer m_renderer(m_gpu, shader_compiler);
     ImGuiRenderer gui(m_gpu);
 
-    dragons_in_grid(m_renderer, 5.0f, 2);
+    dragons_in_grid(m_renderer, 5.0f, 50);
 
     class Camera {
     public:
