@@ -6,6 +6,7 @@
 #include "rend2/render_handles.h"
 #include "rend2/render_state.h"
 
+#include "rend2/shadow_mesh_pass.h"
 #include "shader_compiler.h"
 
 #include "command_buffer.h"
@@ -44,6 +45,11 @@ public:
 
     void update_global(const GlobalData &data);
 
+    // @todo: see note in render state...
+    void set_lights(std::span<const LightData> lights) {
+        m_state.set_lights(lights);
+    }
+
     // render
     void render(gpu_t::frame_t &frame, const View &view);
 private:
@@ -55,6 +61,9 @@ private:
 
     GpuBuffer m_draw_buffer;
     ForwardMeshPass m_forward_pass;
+    ShadowMeshPass m_shadow_pass;
+
+    gpu_image_t m_shadow_map_image;
 
     struct ShaderInfo {
         VkPipeline render_pipeline;

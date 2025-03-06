@@ -222,6 +222,7 @@ void gpu_t::init(GLFWwindow *window, const gpu_create_options_t &options) {
         vkGetPhysicalDeviceFeatures2(pdev, &features2);
 
         support.pipeline_statistics = features2.features.pipelineStatisticsQuery;
+        support.depth_bias_clamp = features2.features.depthBiasClamp;
     }
 
     {
@@ -264,6 +265,11 @@ void gpu_t::init(GLFWwindow *window, const gpu_create_options_t &options) {
         if (support.pipeline_statistics) {
             gpu_log.info("pipeline statistics supported");
             enabled_features.pipelineStatisticsQuery = VK_TRUE;
+        }
+
+        if (support.depth_bias_clamp) {
+            gpu_log.info("depth bias clamp supported");
+            enabled_features.depthBiasClamp = VK_TRUE;
         }
 
         enabled_features.drawIndirectFirstInstance = VK_TRUE;

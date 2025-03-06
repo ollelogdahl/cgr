@@ -109,6 +109,53 @@ void dragons_in_grid(Renderer &renderer, f32 spacing, usize size) {
         }
     }
 }
+void simple_scene(Renderer &renderer) {
+    std::vector<LODSetting> lods = {
+        LODSetting{.min_distance = 10, .target_error = 1e-3},
+        LODSetting{.min_distance = 20, .target_error = 4e-3},
+        LODSetting{.min_distance = 40, .target_error = 2e-2},
+    };
+    Model mod = load_model("assets/dragon.obj", lods);
+    Mesh m = mod.meshes[0];
+
+    ShaderHandle shader = renderer.load_shader({
+        .glsl_vert_path = "shaders/forward.vert",
+        .glsl_frag_path = "shaders/forward.frag",
+    });
+
+    MeshHandle dragon_mesh_handle = renderer.add_mesh(m);
+
+    mod = load_model("assets/plane.obj", {});
+    m = mod.meshes[0];
+
+    MeshHandle plane_mesh_handle = renderer.add_mesh(m);
+
+    auto dragon = renderer.add_object();
+    auto plane = renderer.add_object();
+
+    auto mat1 = renderer.add_material(MaterialData{
+        .color = {1, 0, 0, 1},
+        .emission = {0, 0, 0, 1},
+        .roughness = 0.2,
+        .metallic = 0.0,
+    });
+    auto mat2 = renderer.add_material(MaterialData{
+        .color = {0, 1, 0, 1},
+        .emission = {0, 0, 0, 1},
+        .roughness = 0.2,
+        .metallic = 0.0,
+    });
+
+    renderer.assign_geometry(dragon, dragon_mesh_handle);
+    renderer.assign_shader(dragon, shader);
+    renderer.update_transform(dragon, m4f::scale({0.02, 0.02, 0.02}));
+    renderer.assign_material(dragon, mat1);
+
+    renderer.assign_geometry(plane, plane_mesh_handle);
+    renderer.update_transform(plane, m4f::scale({10, 10, 10}) * m4f::translate({0, -0.8, 0}));
+    renderer.assign_shader(plane, shader);
+    renderer.assign_material(plane, mat2);
+}
 
 int main(int argc, char **argv) {
     oc_init();
@@ -145,6 +192,17 @@ int main(int argc, char **argv) {
     ImGuiRenderer gui(m_gpu);
 
     dragons_in_grid(m_renderer, 5.0f, 50);
+    // simple_scene(m_renderer);
+
+    auto dirlight = v3f::normalize(v3f{0.3, -1, 0});
+    auto lights = std::vector<LightData>({
+        {
+            .position = {dirlight.x, dirlight.y, dirlight.z, 0},
+            .color = {1, 1, 1, 1},
+            .radius = 0,
+        }
+    });
+    m_renderer.set_lights(lights);
 
     class Camera {
     public:

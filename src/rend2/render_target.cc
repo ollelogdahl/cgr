@@ -1,4 +1,5 @@
 #include "render_target.h"
+#include "oc.h"
 
 VkRenderingAttachmentInfo RenderTarget::as_color_attachment() const {
     return {
@@ -26,5 +27,22 @@ VkRenderingAttachmentInfo RenderTarget::as_depth_attachment() const {
         .loadOp = (clear_first) ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD,
         .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
         .clearValue = {{{1.0f, 0}}},
+    };
+}
+
+VkViewport RenderTarget::viewport() const {
+    return {
+        .x = 0,
+        .y = 0,
+        .width = (f32)extent.width,
+        .height = (f32)extent.height,
+        .minDepth = 0,
+        .maxDepth = 1,
+    };
+}
+VkRect2D RenderTarget::scissor() const {
+    return {
+        .offset = {0, 0},
+        .extent = extent,
     };
 }

@@ -21,6 +21,7 @@ static const RenderStateConfig config = {
     .max_meshes = 1024,
     .max_materials = 200 * 1024,
     .max_textures = 1024,
+    .max_lights = 1024,
 };
 static const u32 max_draws = config.max_objects;
 
@@ -30,9 +31,35 @@ Renderer::Renderer(gpu_t &gpu, ShaderCompiler &sc) : m_gpu(&gpu), m_state(gpu, c
     m_shader_compiler(sc),
     m_draw_buffer(gpu, max_draws * sizeof(DrawCommand) + 1 * sizeof(u32),
         VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT),
-    m_forward_pass(gpu, sc, m_state, m_draw_buffer)
+    m_forward_pass(gpu, sc, m_state, m_draw_buffer),
+    m_shadow_pass(gpu, sc, m_state, m_draw_buffer) {
+
+    m_forward_pipeline_layout = m_forward_pass.pipeline_layout();
+
+    gpu.create_image(2048, 2048, VK_FORMAT_D32_SFLOAT,
+        VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+        m_shadow_map_image);
+
+    // @todo: messy!
     {
-        m_forward_pipeline_layout = m_forward_pass.pipeline_layout();
+        // create the view
+        VkImageViewCreateInfo viewInfo{};
+        viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        viewInfo.image = m_shadow_map_image.image;
+        viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        viewInfo.format = VK_FORMAT_D32_SFLOAT;
+        viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+        viewInfo.subresourceRange.baseMipLevel = 0;
+        viewInfo.subresourceRange.levelCount = 1;
+        viewInfo.subresourceRange.baseArrayLayer = 0;
+        viewInfo.subresourceRange.layerCount = 1;
+
+        VK_CHECK(vkCreateImageView(gpu.device, &viewInfo, nullptr, &m_shadow_map_image.view));
+    }
+
+    auto cmd = gpu.begin_single_use_command_buffer();
+    transition_image(cmd, m_shadow_map_image.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL);
+    gpu.end_single_use_command_buffer(cmd);
 }
 
 MeshHandle Renderer::add_mesh(const Mesh &mesh) {
@@ -212,29 +239,77 @@ void Renderer::render(gpu_t::frame_t &frame, const View &view) {
             VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT);
     }
 
-    RenderTarget target = {
-        .color_view = m_gpu->swapchain.image_views[frame.image_idx],
-        .depth_view = m_gpu->depth_image.view,
-        .extent = m_gpu->swapchain.extent,
-    };
-
-    auto store_batches = m_state.object_batches();
-    std::vector<IndirectBatch2> batches(store_batches.size());
-    for (size_t i = 0; i < store_batches.size(); i++) {
-        auto &batch = store_batches[i];
-        batches[i] = {
-            .pipeline = m_shaders[batch.id].render_pipeline,
-            .buffer_offset = batch.start_index,
-            .count = batch.count,
+    {
+        RenderTarget target = {
+            .depth_view = m_shadow_map_image.view,
+            .extent = {2048, 2048},
+            .clear_first = true,
         };
+
+        f32 shadow_start_distance = 10.0f;
+        f32 shadow_depth_distance = 20.0f;
+        f32 shadow_width = 20.0f;
+
+        v3f light_dir = v3f::normalize(v3f{-0.2, -0.8, 0.0});
+
+        // calculate the lookat.
+        m4f lookat = m4f::look_at(light_dir * -shadow_start_distance, {0, 0, 0}, {0, 1, 0});
+        m4f projection = m4f::orthographic(-shadow_width, shadow_width, -shadow_width, shadow_width, 0.0001, shadow_depth_distance);
+
+        View shadow_view = {
+            .projection = projection,
+            .view = lookat,
+            .position = {0, 0, 0},
+        };
+
+        m_shadow_pass.record(frame.cmd, target, shadow_view, 0, max_draws);
     }
 
-    // fmt::println("rendering {} batches", store_batches.size());
-    // for (auto &batch : store_batches) {
-    //     fmt::println("\tbatch {}: {} + {}", batch.id, batch.start_index, batch.count);
-    // }
+    {
+        // wait for shadow texture to be written.
+        //  -> this happens after any writes to the draw buffer.
 
-    m_forward_pass.record(frame.cmd, target, view, batches);
+        TracyVkZone(frame.cmd.tracy_ctx(), frame.cmd.get(), "wait-shadow-pass");
+
+        VkImageMemoryBarrier depth_barrier = {};
+        depth_barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        depth_barrier.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+        depth_barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        depth_barrier.oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+        depth_barrier.newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+        depth_barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        depth_barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        depth_barrier.image = m_shadow_map_image.image;
+        depth_barrier.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1};
+
+        vkCmdPipelineBarrier(frame.cmd.get(),
+            VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+            0,
+            0, nullptr,
+            0, nullptr,
+            1, &depth_barrier);
+    }
+
+    {
+        RenderTarget target = {
+            .color_view = m_gpu->swapchain.image_views[frame.image_idx],
+            .depth_view = m_gpu->depth_image.view,
+            .extent = m_gpu->swapchain.extent,
+        };
+
+        auto store_batches = m_state.object_batches();
+        std::vector<IndirectBatch2> batches(store_batches.size());
+        for (size_t i = 0; i < store_batches.size(); i++) {
+            auto &batch = store_batches[i];
+            batches[i] = {
+                .pipeline = m_shaders[batch.id].render_pipeline,
+                .buffer_offset = batch.start_index,
+                .count = batch.count,
+            };
+        }
+
+        m_forward_pass.record(frame.cmd, target, view, batches);
+    }
 }
 
 bool operator==(const LoadShaderProperties &lhs, const LoadShaderProperties &rhs) {

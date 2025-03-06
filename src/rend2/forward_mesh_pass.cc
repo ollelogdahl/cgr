@@ -34,18 +34,8 @@ void ForwardMeshPass::record(CommandBuffer &cmd, RenderTarget& target, const Vie
 
     vkCmdBindVertexBuffers(cmd.get(), 0, 1, vertex_buffers, offsets);
 
-    VkViewport viewport{
-        .x = 0.0f,
-        .y = 0.0f,
-        .width = (f32)target.extent.width,
-        .height = (f32)target.extent.height,
-        .minDepth = 0.0f,
-        .maxDepth = 1.0f,
-    };
-    VkRect2D scissor{
-        .offset = {0, 0},
-        .extent = target.extent,
-    };
+    VkViewport viewport = target.viewport();
+    VkRect2D scissor = target.scissor();
 
     vkCmdSetViewport(cmd.get(), 0, 1, &viewport);
     vkCmdSetScissor(cmd.get(), 0, 1, &scissor);

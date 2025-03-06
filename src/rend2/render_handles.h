@@ -104,6 +104,19 @@ private:
     friend class Renderer;
 };
 
+class LightHandle {
+public:
+    LightHandle() : id(-1) {}
+    bool operator==(const LightHandle &rhs) const { return id == rhs.id; }
+    bool operator<(const LightHandle &rhs) const { return id < rhs.id; }
+private:
+    LightHandle(u32 id) : id(id) {}
+    u32 id;
+
+    friend class RenderState;
+    friend class Renderer;
+};
+
 std::string format_as(VertexDataHandle);
 std::string format_as(IndexDataHandle);
 std::string format_as(MaterialHandle);

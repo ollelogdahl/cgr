@@ -14,7 +14,6 @@
 
 const u32 vertex_size = 9 * sizeof(f32);
 const u32 index_size = sizeof(u32);
-const u32 material_size = 32;
 
 logger_t logger = logger_t("renderstate");
 
@@ -26,9 +25,10 @@ RenderState::RenderState(gpu_t &gpu, const RenderStateConfig &config)
     m_object_data(new ObjectData[config.max_objects]),
     m_vertex_buffer(gpu, config.max_vertices * vertex_size, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT),
     m_index_buffer(gpu, config.max_indices * index_size, VK_BUFFER_USAGE_INDEX_BUFFER_BIT),
-    m_material_buffer(gpu, config.max_materials * material_size, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT),
+    m_material_buffer(gpu, config.max_materials * sizeof(MaterialData), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT),
     m_mesh_buffer(gpu, config.max_meshes * sizeof(MeshData), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT),
     m_global_buffer(gpu, sizeof(GlobalData), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT),
+    m_light_buffer(gpu, config.max_lights * sizeof(LightData) + sizeof(u32), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT),
     m_vertex_alloc(config.max_vertices),
     m_index_alloc(config.max_indices),
     m_material_alloc(config.max_materials),
@@ -67,7 +67,7 @@ RenderState::RenderState(gpu_t &gpu, const RenderStateConfig &config)
     // create the descriptor pool & set
     {
         VkDescriptorPoolSize pool_sizes[] = {
-            { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 3 },
+            { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 4 },
             { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, config.max_textures },
         };
 
@@ -84,7 +84,8 @@ RenderState::RenderState(gpu_t &gpu, const RenderStateConfig &config)
             .add_binding(0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)
             .add_binding(1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_VERTEX_BIT)
             .add_binding(2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_FRAGMENT_BIT)
-            .add_variable_binding(3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, config.max_textures)
+            .add_binding(3, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_FRAGMENT_BIT)
+            .add_variable_binding(4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, config.max_textures)
             .build(gpu);
 
         m_render_descriptor_set.init(gpu, descriptor_pool, ds_layout);
@@ -92,6 +93,7 @@ RenderState::RenderState(gpu_t &gpu, const RenderStateConfig &config)
         m_render_descriptor_set.write_storage_buffer(0, 0, m_global_buffer.get(), 0, VK_WHOLE_SIZE);
         m_render_descriptor_set.write_storage_buffer(1, 0, m_object_buffer.get(), 0, VK_WHOLE_SIZE);
         m_render_descriptor_set.write_storage_buffer(2, 0, m_material_buffer.get(), 0, VK_WHOLE_SIZE);
+        m_render_descriptor_set.write_storage_buffer(3, 0, m_light_buffer.get(), 0, VK_WHOLE_SIZE);
         m_render_descriptor_set.flush(gpu);
     }
 }
@@ -154,7 +156,7 @@ MaterialHandle RenderState::alloc_material(const MaterialData &data) {
 
     counts.materials += 1;
 
-    m_writes.materials.insert(idx * material_size, data);
+    m_writes.materials.insert(idx * sizeof(MaterialData), data);
 
     return {idx};
 }
@@ -169,7 +171,7 @@ TextureHandle RenderState::alloc_texture(VkImageView view, VkSampler sampler) {
 
     counts.textures += 1;
 
-    m_render_descriptor_set.write_combined_image_sampler(0, idx, view, sampler);
+    m_render_descriptor_set.write_combined_image_sampler(4, idx, view, sampler);
 
     return {idx};
 }
@@ -204,6 +206,11 @@ ObjectHandle RenderState::alloc_object() {
     m_highest_object_id = std::max(m_highest_object_id, idx);
 
     return {idx};
+}
+
+void RenderState::set_lights(std::span<const LightData> lights) {
+    m_lights = {lights.begin(), lights.end()};
+    m_lights_dirty = true;
 }
 
 void RenderState::update_object(ObjectHandle handle, const ObjectData &object) {
@@ -320,6 +327,17 @@ RenderState::FlushDependencies RenderState::flush(CommandBuffer &cmd) {
             slice<byte> global_data_slice((byte *)&m_writes.global_data, sizeof(GlobalData));
             deps.global = m_global_buffer.write_with_barrier(cmd.get(), global_data_slice);
             m_writes.global_data_dirty = false;
+        }
+
+        if (m_lights_dirty) {
+            slice<byte> light_data_slice((byte *)m_lights.data(), m_lights.size() * sizeof(LightData));
+            deps.lights = m_light_buffer.write_with_barrier(cmd.get(), light_data_slice, 16);
+
+            u32 size = m_lights.size();
+            auto size_dep = m_light_buffer.write_with_barrier(cmd.get(), slice<byte>((byte *)&size, sizeof(u32)), 0);
+
+            deps.lights.join(size_dep);
+            m_lights_dirty = false;
         }
     }
 

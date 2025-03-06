@@ -10,4 +10,6 @@ struct RenderTarget {
 
     VkRenderingAttachmentInfo as_color_attachment() const;
     VkRenderingAttachmentInfo as_depth_attachment() const;
+    VkViewport viewport() const;
+    VkRect2D scissor() const;
 };

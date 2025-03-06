@@ -20,6 +20,7 @@ struct RenderStateConfig {
     u32 max_meshes;
     u32 max_materials;
     u32 max_textures;
+    u32 max_lights;
 };
 
 class RenderState;
@@ -29,6 +30,8 @@ class RenderState;
 struct alignas(16) MaterialData {
     v4f color;
     v4f emission;
+    f32 roughness;
+    f32 metallic;
 };
 struct alignas(16) GlobalData {
     m4f view;
@@ -55,6 +58,12 @@ struct alignas(16) ObjectData {
     MeshHandle mesh;
     BatchId batch;
     u32 _pad;
+};
+
+struct alignas(16) LightData {
+    v4f position; // w = 0 for directional light
+    v4f color; // w intensity
+    f32 radius; // @todo: replace with attenuation factors
 };
 
 struct DrawCommand {
@@ -89,6 +98,11 @@ public:
     const ObjectData &object_data(ObjectHandle handle);
     void update_object(ObjectHandle handle, const ObjectData &);
 
+    // @todo: I don't think it is that important to track lights.
+    // Therefore, lights are just uploaded again every frame D:
+    // I think this is 'fine' for now... hope.
+    void set_lights(std::span<const LightData> lights);
+
     void update_global(const GlobalData &);
 
     struct FlushDependencies {
@@ -98,6 +112,7 @@ public:
         WriteDependency meshes;
         WriteDependency objects;
         WriteDependency global;
+        WriteDependency lights;
     };
 
     // flushes changes to the GPU.
@@ -139,6 +154,10 @@ private:
     GpuBuffer m_material_buffer;
     GpuBuffer m_mesh_buffer;
     GpuBuffer m_global_buffer;
+
+    GpuBuffer m_light_buffer;
+    std::vector<LightData> m_lights;
+    bool m_lights_dirty = false;
 
     RandomAllocator m_vertex_alloc;
     RandomAllocator m_index_alloc;

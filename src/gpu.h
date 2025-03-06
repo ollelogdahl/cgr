@@ -142,6 +142,7 @@ struct gpu_t {
     struct {
         bool timestamp_queries;
         bool pipeline_statistics;
+        bool depth_bias_clamp;
     } support;
 
     struct {
@@ -222,3 +223,5 @@ private:
     std::deque<VkDescriptorBufferInfo> buffer_infos;
     std::vector<VkWriteDescriptorSet> writes;
 };
+
+void transition_image(VkCommandBuffer cmd, VkImage image, VkImageLayout old_layout, VkImageLayout new_layout);
