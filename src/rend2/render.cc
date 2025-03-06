@@ -14,6 +14,47 @@
 #include "rend2/vku.h"
 #include "tracy/Tracy.hpp"
 
+class ImageDependency {
+public:
+    ImageDependency() = default;
+    ImageDependency(VkImage image, VkPipelineStageFlags2 src_stage,
+        VkAccessFlags2 src_access /* @todo: layouts */) {
+        add(src_stage, src_access, image);
+    }
+
+    void add(VkPipelineStageFlags2 src_stage, VkAccessFlags2 src_access, VkImage image) {
+        barriers.push_back({
+            .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+            .srcStageMask = src_stage,
+            .srcAccessMask = src_access,
+            .dstStageMask = 0,
+            .dstAccessMask = 0,
+            .image = image,
+        });
+    }
+
+    void join(ImageDependency &other) {
+        barriers.insert(barriers.end(), other.barriers.begin(), other.barriers.end());
+    }
+
+    void pipeline_barrier(VkCommandBuffer cmd, VkPipelineStageFlags2 dst_stage,
+        VkAccessFlags2 dst_access) {
+        for (auto &barrier : barriers) {
+            barrier.dstStageMask = dst_stage;
+            barrier.dstAccessMask = dst_access;
+        }
+
+        VkDependencyInfo dependency{};
+        dependency.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+        dependency.imageMemoryBarrierCount = barriers.size();
+        dependency.pImageMemoryBarriers = barriers.data();
+
+        vkCmdPipelineBarrier2(cmd, &dependency);
+    }
+private:
+    std::vector<VkImageMemoryBarrier2> barriers;
+};
+
 static const RenderStateConfig config = {
     .max_objects = 200 * 1024,
     .max_vertices = 1 * 1024 * 1024,
@@ -35,31 +76,6 @@ Renderer::Renderer(gpu_t &gpu, ShaderCompiler &sc) : m_gpu(&gpu), m_state(gpu, c
     m_shadow_pass(gpu, sc, m_state, m_draw_buffer) {
 
     m_forward_pipeline_layout = m_forward_pass.pipeline_layout();
-
-    gpu.create_image(2048, 2048, VK_FORMAT_D32_SFLOAT,
-        VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-        m_shadow_map_image);
-
-    // @todo: messy!
-    {
-        // create the view
-        VkImageViewCreateInfo viewInfo{};
-        viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-        viewInfo.image = m_shadow_map_image.image;
-        viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-        viewInfo.format = VK_FORMAT_D32_SFLOAT;
-        viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
-        viewInfo.subresourceRange.baseMipLevel = 0;
-        viewInfo.subresourceRange.levelCount = 1;
-        viewInfo.subresourceRange.baseArrayLayer = 0;
-        viewInfo.subresourceRange.layerCount = 1;
-
-        VK_CHECK(vkCreateImageView(gpu.device, &viewInfo, nullptr, &m_shadow_map_image.view));
-    }
-
-    auto cmd = gpu.begin_single_use_command_buffer();
-    transition_image(cmd, m_shadow_map_image.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL);
-    gpu.end_single_use_command_buffer(cmd);
 }
 
 MeshHandle Renderer::add_mesh(const Mesh &mesh) {
@@ -239,30 +255,53 @@ void Renderer::render(gpu_t::frame_t &frame, const View &view) {
             VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT);
     }
 
-    {
-        RenderTarget target = {
-            .depth_view = m_shadow_map_image.view,
-            .extent = {2048, 2048},
-            .clear_first = true,
-        };
+    // make one shadow pass for each light which casts shadows.
+    /*
+    ImageDependency shadow_dependencies;
+    bool first_light = true;
+    for (auto &light : m_state.lights()) {
+        bool casts_shadow = light.shadowcast_texture_id != -1U;
 
-        f32 shadow_start_distance = 10.0f;
-        f32 shadow_depth_distance = 20.0f;
-        f32 shadow_width = 20.0f;
+        if (casts_shadow) {
 
-        v3f light_dir = v3f::normalize(v3f{-0.2, -0.8, 0.0});
+            if (first_light) {
+                first_light = false;
+            } else {
+                WriteDependency draw_buffer_dependency;
+                draw_buffer_dependency.add(
+                    VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT,
+                    VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT,
+                    m_draw_buffer.get());
+                draw_buffer_dependency.pipeline_barrier(frame.cmd.get(),
+                    VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_WRITE_BIT);
+            }
 
-        // calculate the lookat.
-        m4f lookat = m4f::look_at(light_dir * -shadow_start_distance, {0, 0, 0}, {0, 1, 0});
-        m4f projection = m4f::orthographic(-shadow_width, shadow_width, -shadow_width, shadow_width, 0.0001, shadow_depth_distance);
+            TextureSlot &slot = m_state.texture(light.shadowcast_texture_id);
+            RenderTarget target = {
+                .depth_view = slot.view,
+                .extent = {2048, 2048},
+                .clear_first = true,
+            };
 
-        View shadow_view = {
-            .projection = projection,
-            .view = lookat,
-            .position = {0, 0, 0},
-        };
+            f32 shadow_start_distance = 10.0f;
+            f32 shadow_depth_distance = 20.0f;
+            f32 shadow_width = 20.0f;
 
-        m_shadow_pass.record(frame.cmd, target, shadow_view, 0, max_draws);
+            v3f light_dir = light.position.xyz();
+
+            m4f lookat = m4f::look_at(light_dir * -shadow_start_distance, {0, 0, 0}, {0, 1, 0});
+            m4f projection = m4f::orthographic(-shadow_width, shadow_width, -shadow_width, shadow_width, 0.0001, shadow_depth_distance);
+
+            View shadow_view = {
+                .projection = projection,
+                .view = lookat,
+                .position = {0, 0, 0},
+            };
+            m_shadow_pass.record(frame.cmd, target, shadow_view, max_draws);
+
+            shadow_dependencies.add(VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+                VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, slot.image);
+        }
     }
 
     {
@@ -271,24 +310,10 @@ void Renderer::render(gpu_t::frame_t &frame, const View &view) {
 
         TracyVkZone(frame.cmd.tracy_ctx(), frame.cmd.get(), "wait-shadow-pass");
 
-        VkImageMemoryBarrier depth_barrier = {};
-        depth_barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-        depth_barrier.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-        depth_barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-        depth_barrier.oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-        depth_barrier.newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-        depth_barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        depth_barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        depth_barrier.image = m_shadow_map_image.image;
-        depth_barrier.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1};
-
-        vkCmdPipelineBarrier(frame.cmd.get(),
-            VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-            0,
-            0, nullptr,
-            0, nullptr,
-            1, &depth_barrier);
+        shadow_dependencies.pipeline_barrier(frame.cmd.get(),
+            VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT);
     }
+    */
 
     {
         RenderTarget target = {

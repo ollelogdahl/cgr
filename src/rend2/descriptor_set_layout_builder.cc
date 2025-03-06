@@ -19,7 +19,7 @@ DescriptorSetLayoutBuilder &DescriptorSetLayoutBuilder::add_variable_binding(u32
         .stageFlags = stages
     });
     binding_flags.push_back(
-        VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT | VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT
+        0 //VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT | VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT
     );
     return *this;
 }
@@ -39,6 +39,11 @@ VkDescriptorSetLayout DescriptorSetLayoutBuilder::build(gpu_t &gpu) {
 
     VkDescriptorSetLayout layout;
     VK_CHECK(vkCreateDescriptorSetLayout(gpu.device, &layout_info, nullptr, &layout));
+
+    fmt::println("created descriptor set layout {}", (void *)layout);
+    for (auto &binding : bindings) {
+        fmt::println("  binding {} type {} count {} stages {}", binding.binding, (u32)binding.descriptorType, binding.descriptorCount, (u32)binding.stageFlags);
+    }
 
     return layout;
 }

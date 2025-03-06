@@ -18,8 +18,7 @@ public:
     void set_bias_slope(f32 bias_slope) { m_bias_slope = bias_slope; }
     void set_bias_clamp(f32 bias_clamp) { m_bias_clamp = bias_clamp; }
 
-    void record(CommandBuffer &cmd, RenderTarget& target, const View& view,
-        u32 buffer_offset, u32 max_count);
+    void record(CommandBuffer &cmd, RenderTarget& target, const View& view, u32 max_count);
 private:
     gpu_t &m_gpu;
     RenderState &m_state;

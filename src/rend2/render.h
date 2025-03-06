@@ -63,8 +63,6 @@ private:
     ForwardMeshPass m_forward_pass;
     ShadowMeshPass m_shadow_pass;
 
-    gpu_image_t m_shadow_map_image;
-
     struct ShaderInfo {
         VkPipeline render_pipeline;
     };

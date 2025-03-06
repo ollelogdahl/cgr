@@ -12,6 +12,7 @@
 #include "model.h"
 
 #include <tracy/Tracy.hpp>
+#include <unistd.h>
 #include <variant>
 
 #include "render/imgui_renderer.h"
@@ -157,6 +158,37 @@ void simple_scene(Renderer &renderer) {
     renderer.assign_material(plane, mat2);
 }
 
+class TracyProfilerRunner {
+public:
+    TracyProfilerRunner() {}
+    void update(InputSystem &input) {
+
+        if (input.key_pressed(GLFW_KEY_GRAVE_ACCENT)) {
+            if (!m_pressed_last_frame && !m_tracy_running) {
+                launch();
+            }
+
+            m_pressed_last_frame = true;
+        } else {
+            m_pressed_last_frame = false;
+        }
+    }
+private:
+    void launch() {
+        m_tracy_pid = fork();
+        if (m_tracy_pid == 0) {
+            execlp("tracy-profiler", "tracy-profiler", "-a", "localhost", nullptr);
+            exit(1);
+        }
+        m_tracy_running = true;
+    }
+
+    pid_t m_tracy_pid = -1;
+    bool m_tracy_running = false;
+
+    bool m_pressed_last_frame = false;
+};
+
 int main(int argc, char **argv) {
     oc_init();
 
@@ -191,8 +223,10 @@ int main(int argc, char **argv) {
     Renderer m_renderer(m_gpu, shader_compiler);
     ImGuiRenderer gui(m_gpu);
 
-    dragons_in_grid(m_renderer, 5.0f, 50);
-    // simple_scene(m_renderer);
+    TracyProfilerRunner tracy_runner;
+
+    // dragons_in_grid(m_renderer, 5.0f, 50);
+    simple_scene(m_renderer);
 
     auto dirlight = v3f::normalize(v3f{0.3, -1, 0});
     auto lights = std::vector<LightData>({
@@ -233,6 +267,8 @@ int main(int argc, char **argv) {
         gui_metric();
 
         camera_controller.update(1.0f / 30.0f);
+
+        tracy_runner.update(input);
 
         m_renderer.update_global(GlobalData{
             .view = m4f::look_at(camera.position(), camera.position() + camera.forward(), camera.up()),

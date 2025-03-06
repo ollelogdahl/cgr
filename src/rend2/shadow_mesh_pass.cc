@@ -30,7 +30,7 @@ ShadowMeshPass::ShadowMeshPass(gpu_t &gpu, ShaderCompiler &sc,
 }
 
 void ShadowMeshPass::record(CommandBuffer &cmd, RenderTarget& target, const View& view,
-    u32 buffer_offset, u32 max_count) {
+    u32 max_count) {
     ZoneScoped;
     TracyVkZone(cmd.tracy_ctx(), cmd.get(), "shadow_mesh");
 
@@ -102,8 +102,8 @@ void ShadowMeshPass::record(CommandBuffer &cmd, RenderTarget& target, const View
         vkCmdBindPipeline(cmd.get(), VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline);
 
         vkCmdDrawIndexedIndirectCount(cmd.get(),
-            m_draw_buffer.get(), buffer_offset + sizeof(u32), m_draw_buffer.get(),
-            buffer_offset, max_count, sizeof(DrawCommand));
+            m_draw_buffer.get(), sizeof(u32), m_draw_buffer.get(),
+            0, max_count, sizeof(DrawCommand));
 
         vkCmdEndRendering(cmd.get());
     }

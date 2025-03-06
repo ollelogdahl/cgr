@@ -64,6 +64,11 @@ struct alignas(16) LightData {
     v4f position; // w = 0 for directional light
     v4f color; // w intensity
     f32 radius; // @todo: replace with attenuation factors
+
+    // nice we can put this here! :D
+    u32 shadowcast_texture_id = -1U;
+
+    u32 _pad[2];
 };
 
 struct DrawCommand {
@@ -72,6 +77,12 @@ struct DrawCommand {
 
 struct TextureWrite {
     u32 index;
+    VkImageView view;
+    VkSampler sampler;
+};
+
+struct TextureSlot {
+    VkImage image;
     VkImageView view;
     VkSampler sampler;
 };
@@ -91,7 +102,7 @@ public:
     MeshHandle alloc_mesh(const MeshData &);
 
     MaterialHandle alloc_material(const MaterialData &);
-    TextureHandle alloc_texture(VkImageView view, VkSampler sampler);
+    TextureHandle alloc_texture(VkImage image, VkImageView view, VkSampler sampler);
 
     ObjectHandle alloc_object();
 
@@ -141,6 +152,9 @@ public:
     const GpuBuffer &material_buffer() const { return m_material_buffer; }
     const GpuBuffer &mesh_buffer() const { return m_mesh_buffer; }
     const GpuBuffer &global_buffer() const { return m_global_buffer; }
+
+    std::span<const LightData> lights() const { return m_lights; }
+    TextureSlot &texture(TextureHandle handle) { return m_textures[handle.id]; }
 private:
 
     gpu_t *m_gpu;
@@ -158,6 +172,8 @@ private:
     GpuBuffer m_light_buffer;
     std::vector<LightData> m_lights;
     bool m_lights_dirty = false;
+
+    TextureSlot *m_textures = nullptr;
 
     RandomAllocator m_vertex_alloc;
     RandomAllocator m_index_alloc;
