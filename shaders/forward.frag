@@ -26,7 +26,8 @@ struct MaterialData {
 struct LightData {
     vec4 position;
     vec4 color;
-    float radius;
+    float falloff_linear;
+    float falloff_quadratic;
 };
 
 layout(set = 0, binding = 0) readonly buffer GlobalBuffer {
@@ -150,7 +151,10 @@ void main() {
         vec3 light_dir_dir = normalize(-light.position.xyz);
         vec3 L = light_is_directional ? light_dir_dir : light_dir_point;
 
-        vec3 radiance_point = (light.color.rgb * light.color.a) / (4.0 * M_PI * light.radius * light.radius);
+        float distance = length(P - light.position.xyz);
+        float point_attenuation = 1.0 / (1.0 + light.falloff_linear * distance + light.falloff_quadratic * pow(distance, 2.0));
+
+        vec3 radiance_point = (light.color.rgb * light.color.a) * point_attenuation;
         vec3 radiance_dir = light.color.rgb * light.color.a;
         vec3 radiance = light_is_directional ? radiance_dir : radiance_point;
         float shadow = 1.0;

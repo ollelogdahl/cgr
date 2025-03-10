@@ -1,15 +1,29 @@
-#set heading(numbering: "1.1.1")
-#set par(justify: true)
-#show: x => columns(2, x)
+#import "ieee.typ": *
+#show: ieee.with(
+  title: [Assignment 2 --- GPU-Driven Culling],
+  course: [Advanced Computer Graphics, 5DV180],
+  authors: (
+    (
+      name: "Olle Lögdahl",
+      email: "olle.logdahl@umu.se"
+    ),
+  ),
+  paper-size: "a4",
+)
 
-= Renderer 2
+
+= Introduction
+
+The following document describes the design of a GPU-driven culling system for a rendering engine.
+The new renderer is designed to reduce the CPU overhead of rendering large scenes by offloading
+as much as possible to the GPU. The result is that an entire scene can be rendered with very few
+draw calls, meaning that command buffer recording on the CPU is cheaper.
 
 = Indirect Rendering
 
-In the new renderer, the main passes have been structured around gpu-driven rendering.
-The current design uses the traditional geometry rasterization pipeline (see @sec:mesh-render),
-but dispatches draw-calls from the GPU instead. This allows for more flexible rendering and
-controlling draws from GPU.
+The new renderer uses the traditional geometry rasterization pipeline (see @sec:mesh-render),
+but dispatches draw-calls from the GPU instead. This allows for
+controlling draws from the GPU.
 The purpose of this design was to support culling and LOD selection on the GPU, which would reduce
 CPU overhead. 
 
@@ -23,9 +37,9 @@ state changes between objects. The following strategies were used:
 - Partitioning objects into batches with same shader pipeline.
 
 #figure(
-  placement: top,
+  placement: bottom,
   scope: "parent",
-  image(width: 50%, "figures/gpu-driven.svg"),
+  image(width: 80%, "figures/gpu-driven.svg"),
   caption: "Memory Layout Diagram for the GPU scene representation.",
 ) <fig:gpu-storage>
 
@@ -41,16 +55,31 @@ well. See @fig:gpu-storage for a diagram of the memory layout.
 
 == Object Ordering
 
-Objects are stored in the object buffer. To support multiple different
+Objects are stored in the object buffer. To support multiple different pipelines, we need to partition
+the objects into batches. This also requires indirection of object handles, as any object may move
+without the holder knowing. See @fig:object-partition. Note that holes may exist in the object buffer
+due to deletion of objects, but this is fine as they have no effect on rendering.
+
+#figure(
+  placement: top,
+  image(width: 50%, "figures/order-insert.svg"),
+  caption: "A sequence of swaps required to re-partition the object buffer.",
+) <fig:object-partition>
 
 == Culling Compute
 
+When the objects are stored in the correct order in the object buffer, the draw commands can be
+generated. The culling shader performs an AABB-frustum test on every object. All objects which
+pass get assigned an index in the draw buffer. The lod selection is done using distance only.
+Currently, each batch needs its own culling dispatch. This is to reduce the size of the draw buffer.
+See @fig:cull for a diagram of the culling compute shader.
+
 #figure(
     placement: top,
-    scope: "parent",
-    image(width: 40%, "figures/cull.svg"),
-    caption: "Culling Compute Shader",
-)
+    image(width: 80%, "figures/cull.svg"),
+    caption: "Culling compute shader without compaction.",
+) <fig:cull>
+
 
 == Compacting the Draw Buffer
 
@@ -70,13 +99,32 @@ objects can now write to their correct position in the draw buffer.
 The algorithm is presented in @fig:compaction.
 
 #figure(
-  placement: top,
+  placement: bottom,
+  scope: "parent",
   image(width: 80%, "figures/compaction.svg"),
-  caption: "Compaction Algorithm",
+  caption: "Compaction Algorithm in detail.",
 ) <fig:compaction>
 
 Using this algorithm, the overhead of drawing 125k culled objects is reduced to a static cost of 0.9ms
-for an empty draw call.
+for a single empty draw indirect call.
+
+== Full Scene Rendering
+
+To summarize, the rendering process of an entire scene is as follows:
+- Wait for new objects to be uploaded.
+- Bind buffers.
+- For each batch:
+  - Run the culling compute shader.
+  - Bind pipeline.
+  - Perform draw indirect.
+
+Due to lack of time shadows are not implemented. But shadowing could easily be done by adding another
+cull and draw pass before doing the main forward pass. Noteworthy is that if the shadow pass does not
+need to rebind pipelines (if not using vertex-effects), culling and drawing can be done in 1 pass.
+
+= Analysis
+
+In the following section, the design is analyzed from different perspectives.
 
 == Manual Vertex Pulling
 
@@ -103,12 +151,40 @@ meshlet level instead of objects, meaning that the geometry would be more evenly
 
 Overall, mesh shading would be really interesting to try out.
 
+== Scene Graph
+
+Transitioning to this new design, the scene-graph makes less sense. In a CPU-driven renderer,
+all state resides on the CPU and the scene-graph works well to organize it. In our design
+the GPU has ownership of data, and the CPU only updates it. 
+
 == Future Work
 
-The current design has some flaws, but also shows great promise.
+The current design has some flaws, but also shows great promise. The following are some ideas
+of future features that fit particularly well with the current design:
 
-Support for GPU mesh skinning.
+*Particle systems* could easily be supported while also being fully GPU-driven. Draw calls can
+be generated directly on the GPU reading from a _particle buffer_. A compute shader updates
+this buffer. Even advanced effects like collision can be done, as the GPU could maintain some
+collision structures.
 
-Simple ray-tracing acceleration structures.
+*Occlusion culling* can be implemented in multiple
+ways, and would be simple as everything already resides on the GPU. One way would be to find the
+$n$ biggest occluders, and rendering them in an early pass. Then, the culling shader can query
+this Hi-Z buffer to determine if an AABB would be fully occluded.
+
+*Raytracing* requires managing acceleration structures on the GPU. This is a natural extension
+of the current design, as the GPU already has ownership of the scene data.
+
+*GPU Mesh Skinning* can be done by using a separate compute shader to transform entire meshes.
+Utilizing new buffers like a _joint buffer_ and a _transient vertex buffer_ would make this
+possible.
+
+*Clustered Shading* is a technique that resolves the problem of many lights in a forward renderer.
+Instead of shading every pixel for every light, the screen is divided into clusters. An early
+compute pass assigns lights to clusters only if they overlap. When shading a fragment, only the
+lights in the fragments cluster are considered.
+
+*IdTech Shadow Atlas*: IdTech uses a big shadow atlas to store shadowmaps for all lights. Each
+light can have a different resolution depending on distance.
 
 #bibliography(style: "ieee", "uni.bib")

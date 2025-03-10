@@ -4,7 +4,7 @@
 
 #include <tracy/Tracy.hpp>
 
-ForwardMeshPass::ForwardMeshPass(gpu_t &gpu, ShaderCompiler &sc, RenderState &state,
+ForwardMeshPass::ForwardMeshPass(gpu_t &gpu, ShaderCompiler &sc, RenderStorage &state,
     GpuBuffer &draw_buffer)
 : m_gpu(gpu), m_state(state), m_draw_buffer(draw_buffer), m_cull_pass(gpu, sc) {
 

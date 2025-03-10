@@ -70,51 +70,6 @@ struct gpu_shader_t {
     bool modified = false;
 };
 
-struct pipeline_layout_config_t {
-    VkPipelineLayoutCreateFlags flags;
-    std::vector<VkDescriptorSetLayout> descriptor_set_layouts;
-    std::vector<VkPushConstantRange> push_constant_ranges;
-};
-DECL_KEY(pipeline_layout_config_t)
-
-struct pipeline_config_t {
-    ref_t<gpu_shader_t> shader;
-    gpu_cull_mode_t cull_mode = gpu_cull_mode_t::back;
-
-    struct pipeline_layout_config_t layout;
-
-    // @todo: this could have a nicer api.
-    struct {
-        std::vector<VkVertexInputBindingDescription> bindings;
-        std::vector<VkVertexInputAttributeDescription> attributes;
-    } vertex_input_info;
-
-    struct {
-        bool depth_test;
-        bool depth_write;
-        VkCompareOp depth_compare_op;
-    } depth_stencil;
-
-    std::vector<VkFormat> color_attachment_formats;
-    VkFormat depth_attachment_format;
-};
-DECL_KEY(pipeline_config_t)
-
-struct gpu_pipeline_t {
-    VkPipeline pipeline;
-    VkPipelineLayout layout;
-};
-
-struct buffer_write_barrier_t {
-    VkDependencyInfo dependency_info = {};
-    std::vector<VkBufferMemoryBarrier2> barriers = {};
-
-    void set_dst(VkPipelineStageFlags2KHR stage, VkAccessFlags2KHR access) {
-        barriers.back().dstStageMask = stage;
-        barriers.back().dstAccessMask = access;
-    }
-};
-
 struct gpu_create_options_t {
     bool request_validation_layers = false;
 };
@@ -177,11 +132,6 @@ struct gpu_t {
     void init(GLFWwindow *window, const gpu_create_options_t &options);
     void recreate_swapchain(u32 width, u32 height);
 
-    ref_t<gpu_pipeline_t> make_pipeline(const pipeline_config_t &config);
-
-    // to be called from the resource loader.
-    void rebuild_pipelines();
-
     // @todo: make this extendable. We can probably provide a callback function
     // which in turn will run the block using the gpu as context.
     void frame(std::function<void(frame_t &)> fn);
@@ -194,10 +144,6 @@ struct gpu_t {
     void create_buffer(usize size, VkBufferUsageFlags usage, gpu_buffer_t &buffer);
     void write_buffer(gpu_buffer_t &buffer, slice<u8> data);
 
-    void write_buffer_with_barrier(gpu_buffer_t &buffer, slice<u8> data,
-        VkCommandBuffer cmd,
-        buffer_write_barrier_t &barrier);
-
     void create_image(usize width, usize height, VkFormat format, VkImageUsageFlags usage, gpu_image_t &image);
     void create_image(slice<u8> data, usize width, usize height, VkFormat format, VkImageUsageFlags usage, bool mipmap, gpu_image_t &image);
 
@@ -205,8 +151,6 @@ struct gpu_t {
     void end_single_use_command_buffer(VkCommandBuffer cmd);
 
 private:
-    std::unordered_map<pipeline_config_t, ref_t<gpu_pipeline_t>> loaded_pipelines;
-    std::unordered_map<pipeline_layout_config_t, VkPipelineLayout> pipeline_layouts;
 };
 
 class descriptor_writer_t {

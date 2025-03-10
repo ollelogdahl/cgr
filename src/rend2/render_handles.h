@@ -3,6 +3,7 @@
 #include "oc.h"
 
 class Renderer;
+class RenderStorage;
 class RenderState;
 
 class VertexDataHandle {
@@ -15,8 +16,10 @@ private:
     u32 idx;
     u32 size;
 
-    friend class RenderState;
+    friend class RenderStorage;
     friend class Renderer;
+    friend class RenderState;
+    friend std::string format_as(VertexDataHandle);
 };
 class IndexDataHandle {
 public:
@@ -28,8 +31,10 @@ private:
     u32 idx;
     u32 size;
 
-    friend class RenderState;
+    friend class RenderStorage;
     friend class Renderer;
+    friend class RenderState;
+    friend std::string format_as(IndexDataHandle);
 };
 class MaterialHandle {
 public:
@@ -40,8 +45,10 @@ private:
     MaterialHandle(u32 id) : id(id) {}
     u32 id;
 
-    friend class RenderState;
+    friend class RenderStorage;
     friend class Renderer;
+    friend class RenderState;
+    friend std::string format_as(MaterialHandle);
 };
 class TextureHandle {
 public:
@@ -52,8 +59,10 @@ private:
     TextureHandle(u32 id) : id(id) {}
     u32 id;
 
-    friend class RenderState;
+    friend class RenderStorage;
     friend class Renderer;
+    friend class RenderState;
+    friend std::string format_as(TextureHandle);
 };
 
 class MeshHandle {
@@ -65,8 +74,10 @@ private:
     MeshHandle(u32 id) : id(id) {}
     u32 id;
 
-    friend class RenderState;
+    friend class RenderStorage;
     friend class Renderer;
+    friend class RenderState;
+    friend std::string format_as(MeshHandle);
 };
 
 class ObjectHandle {
@@ -78,10 +89,12 @@ private:
     ObjectHandle(u32 id) : id(id) {}
     u32 id;
 
-    friend class RenderState;
+    friend class RenderStorage;
     friend class Renderer;
+    friend class RenderState;
 
     friend struct std::hash<ObjectHandle>;
+    friend std::string format_as(ObjectHandle);
 };
 
 template <>
@@ -100,8 +113,10 @@ private:
     ShaderHandle(u32 id) : id(id) {}
     u32 id;
 
-    friend class RenderState;
+    friend class RenderStorage;
     friend class Renderer;
+    friend class RenderState;
+    friend std::string format_as(ShaderHandle);
 };
 
 class LightHandle {
@@ -113,8 +128,10 @@ private:
     LightHandle(u32 id) : id(id) {}
     u32 id;
 
-    friend class RenderState;
+    friend class RenderStorage;
     friend class Renderer;
+    friend class RenderState;
+    friend std::string format_as(LightHandle);
 };
 
 std::string format_as(VertexDataHandle);

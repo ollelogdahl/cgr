@@ -9,20 +9,20 @@
 template <Controllable T>
 class FreeflyController {
 public:
-    FreeflyController(T &object, InputSystem &input) : m_input(&input), m_object(object) {}
-    void update(float dt) {
+    FreeflyController(InputSystem &input) : m_input(&input) {}
+    void update(T &object, float dt) {
         auto move_relative = [&](v3f relative) {
-            auto forward = m_object.forward();
-            auto right = v3f::cross(forward, m_object.up());
-            auto up = m_object.up();
+            auto forward = object.forward();
+            auto right = v3f::cross(forward, object.up());
+            auto up = object.up();
 
-            m_object.set_position(m_object.position() + forward * relative.z + right * relative.x + up * relative.y);
+            object.set_position(object.position() + forward * relative.z + right * relative.x + up * relative.y);
         };
 
         auto rotate = [&](anglef pitch, anglef yaw) {
-            auto forward = m_object.forward();
-            auto right = v3f::cross(forward, m_object.up());
-            auto up = m_object.up();
+            auto forward = object.forward();
+            auto right = v3f::cross(forward, object.up());
+            auto up = object.up();
 
             // limit rotation to not be directly up or down
             auto dot = v3f::dot(up, forward);
@@ -36,7 +36,7 @@ public:
             auto rotation = m4f::rotate(pitch, right) * m4f::rotate(yaw, up);
             auto new_forward = (v4f{forward.x, forward.y, forward.z, 0} * rotation).xyz();
 
-            m_object.set_forward(new_forward);
+            object.set_forward(new_forward);
         };
 
         v3f relative = eqwasd();
@@ -87,7 +87,6 @@ private:
     }
 
     InputSystem *m_input;
-    T &m_object;
 
     bool m_pressed_last_frame = false;
     f64 m_mouse_x, m_mouse_y;

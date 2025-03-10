@@ -21,7 +21,7 @@ struct IndirectBatch2 {
 class ForwardMeshPass {
 public:
     ForwardMeshPass(gpu_t &gpu, ShaderCompiler &sc,
-        RenderState &state,
+        RenderStorage &state,
         GpuBuffer &draw_buffer);
 
     VkPipelineLayout pipeline_layout() const { return m_pipeline_layout; }
@@ -30,7 +30,7 @@ public:
         std::span<IndirectBatch2> batches);
 private:
     gpu_t &m_gpu;
-    RenderState &m_state;
+    RenderStorage &m_state;
 
     GpuBuffer &m_draw_buffer;
 

@@ -1,12 +1,43 @@
+#include "model.h"
 #include "sg.h"
 
-#include "resource.h"
 #include "log.h"
 #include <tinyxml2/tinyxml2.h>
+#include <span>
+
+struct ModelCacheKey {
+    std::string path;
+    std::vector<LODSetting> lod_settings;
+};
+
+bool operator==(const ModelCacheKey &lhs, const ModelCacheKey &rhs) {
+    if (lhs.path != rhs.path) return false;
+    for (size_t i = 0; i < lhs.lod_settings.size(); i++) {
+        if (lhs.lod_settings[i].min_distance != rhs.lod_settings[i].min_distance) return false;
+        if (lhs.lod_settings[i].target_error != rhs.lod_settings[i].target_error) return false;
+    }
+    return true;
+}
+
+template <>
+struct ::std::hash<ModelCacheKey> {
+    std::size_t operator()(const ModelCacheKey &key) const {
+        std::size_t h = 0;
+        h ^= std::hash<std::string>()(key.path);
+        for (auto &lod : key.lod_settings) {
+            h ^= std::hash<f32>()(lod.min_distance);
+            h ^= std::hash<f32>()(lod.target_error);
+        }
+        return h;
+    }
+};
 
 namespace sg {
 
 typedef std::pair<f32, f32> LodSpec;
+
+// @todo: restructure this!
+static std::vector<MeshHandle> load_cache_model(RenderState &render_state, const char *path, std::vector<LODSetting> &&lod_settings);
 
 std::vector<f32> parse_attr_list_f32(const std::string_view &v);
 std::vector<LodSpec> parse_attr_autolod_spec(const std::string_view &v);
@@ -14,41 +45,39 @@ v3f parse_attr_v3f(const std::string_view &v);
 v4f parse_attr_color4(const std::string_view &v);
 v3f parse_attr_color3(const std::string_view &v);
 
-sg::state_t parse_state(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLElement *elem, bool &success);
+sg::Material &parse_material(RenderState &state, sg::scene_t &scene, tinyxml2::XMLElement *elem);
 
-sg::node_t *parse_group(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLElement *elem);
-sg::node_t *parse_model(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLElement *elem);
-sg::node_t *parse_point_light(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLElement *elem);
-sg::node_t *parse_directional_light(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLElement *elem);
-sg::node_t *parse_transform(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLElement *elem);
-sg::node_t *parse_lod(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLElement *elem);
-sg::node_t *parse_grid(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLElement *elem);
-sg::node_t *parse_camera(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLElement *elem);
+sg::node_t *parse_group(RenderState &state, sg::scene_t &scene, tinyxml2::XMLElement *elem);
+sg::node_t *parse_model(RenderState &state, sg::scene_t &scene, tinyxml2::XMLElement *elem);
+sg::node_t *parse_point_light(RenderState &state, sg::scene_t &scene, tinyxml2::XMLElement *elem);
+sg::node_t *parse_directional_light(RenderState &state, sg::scene_t &scene, tinyxml2::XMLElement *elem);
+sg::node_t *parse_transform(RenderState &state, sg::scene_t &scene, tinyxml2::XMLElement *elem);
+sg::node_t *parse_grid(RenderState &state, sg::scene_t &scene, tinyxml2::XMLElement *elem);
+sg::node_t *parse_camera(RenderState &state, sg::scene_t &scene, tinyxml2::XMLElement *elem);
 
-sg::node_t *interpret_node(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLElement *elem) {
+sg::node_t *interpret_node(RenderState &state, sg::scene_t &scene, tinyxml2::XMLElement *elem) {
     if (elem->Name() == std::string("group")) {
-        return parse_group(loader, scene, elem);
+        return parse_group(state, scene, elem);
     } else if (elem->Name() == std::string("model")) {
-        return parse_model(loader, scene, elem);
+        return parse_model(state, scene, elem);
     } else if (elem->Name() == std::string("point-light")) {
-        return parse_point_light(loader, scene, elem);
+        return parse_point_light(state, scene, elem);
     } else if (elem->Name() == std::string("directional-light")) {
-        return parse_directional_light(loader, scene, elem);
+        return parse_directional_light(state, scene, elem);
     } else if (elem->Name() == std::string("transform")) {
-        return parse_transform(loader, scene, elem);
-    } else if (elem->Name() == std::string("lod")) {
-        return parse_lod(loader, scene, elem);
+        return parse_transform(state, scene, elem);
     } else if (elem->Name() == std::string("grid")) {
-        return parse_grid(loader, scene, elem);
+        return parse_grid(state, scene, elem);
     } else if (elem->Name() == std::string("camera")) {
-        return parse_camera(loader, scene, elem);
+        return parse_camera(state, scene, elem);
+        return parse_camera(state, scene, elem);
     } else {
         g_log.error("unknown node type: {}", elem->Name());
         return nullptr;
     }
 }
 
-bool load(loader_t &loader, const char *path, sg::scene_t &scene) {
+bool load(RenderState &render_state, const char *path, sg::scene_t &scene) {
     // @todo: reset the current scene.
     (void)path;
     tinyxml2::XMLDocument doc;
@@ -66,7 +95,7 @@ bool load(loader_t &loader, const char *path, sg::scene_t &scene) {
     }
 
     for (tinyxml2::XMLElement *elem = root->FirstChildElement(); elem; elem = elem->NextSiblingElement()) {
-        sg::node_t *node = interpret_node(loader, scene, elem);
+        sg::node_t *node = interpret_node(render_state, scene, elem);
         if (node != nullptr)
             scene.add(node);
     }
@@ -74,19 +103,11 @@ bool load(loader_t &loader, const char *path, sg::scene_t &scene) {
     return true;
 }
 
-sg::node_t *parse_group(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLElement *elem) {
+sg::node_t *parse_group(RenderState &render_state, sg::scene_t &scene, tinyxml2::XMLElement *elem) {
     sg::group_t *group = scene.create_group();
 
-    bool set_state;
-    sg::state_t state = parse_state(loader, scene, elem, set_state);
-    if (set_state) {
-        auto sref = scene.create_state();
-        *sref = state;
-        group->set_state(sref);
-    }
-
     for (tinyxml2::XMLElement *child = elem->FirstChildElement(); child; child = child->NextSiblingElement()) {
-        auto subnode = interpret_node(loader, scene, child);
+        auto subnode = interpret_node(render_state, scene, child);
 
         if (subnode != nullptr)
             group->add(subnode);
@@ -95,18 +116,12 @@ sg::node_t *parse_group(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLEleme
     return group;
 }
 
-sg::node_t *parse_model(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLElement *elem) {
+sg::node_t *parse_model(RenderState &render_state, sg::scene_t &scene, tinyxml2::XMLElement *elem) {
     // model creates multiple geometries and transforms.
     auto path = elem->Attribute("file");
     auto lod_spec = elem->Attribute("auto-lod");
 
-    bool set_state;
-    sg::state_t state = parse_state(loader, scene, elem, set_state);
-    sg::state_t *state_ptr = nullptr;
-    if (set_state) {
-        state_ptr = scene.create_state();
-        *state_ptr = state;
-    }
+    auto &material = parse_material(render_state, scene, elem);
 
     bool use_autolod = lod_spec != nullptr;
 
@@ -115,79 +130,29 @@ sg::node_t *parse_model(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLEleme
         lod_ranges = parse_attr_autolod_spec(std::string_view(lod_spec));
     }
 
-    std::vector<model_load_params_t::lod_setting_t> lod_settings;
+    std::vector<LODSetting> lod_settings;
     for (auto &range : lod_ranges) {
         lod_settings.push_back({
-            .error_limit = range.second,
+            .min_distance = range.first,
+            .target_error = range.second,
         });
     }
 
-    auto model_desc = loader.load_model({
-        .path = path,
-        .lod_settings = std::move(lod_settings),
-    });
+    auto cached_model = load_cache_model(render_state, path, std::move(lod_settings));
 
-    if (use_autolod) {
-        auto lod = scene.create_lod();
-        if (state_ptr) lod->set_state(state_ptr);
-        lod->set_bounding_box(model_desc.aabb);
+    auto group = scene.create_group();
 
-        std::vector<f32> min_ranges = {};
-        min_ranges.reserve(lod_ranges.size() + 1);
-
-        min_ranges.push_back(0.0f);
-        for (usize i = 0; i < lod_ranges.size() + 1; i++) {
-            if (i > 0) {
-                min_ranges.push_back(lod_ranges[i - 1].first);
-            }
-
-            auto group = scene.create_group();
-            if (state_ptr) group->set_state(state_ptr);
-
-            for (auto &mesh : model_desc.meshes) {
-                auto geometry = scene.create_geometry(mesh.vertex_buffer,
-                    mesh.lods[i].index_buffer, mesh.lods[i].index_count);
-
-                if (state_ptr) geometry->set_state(state_ptr);
-                geometry->set_bounding_box(model_desc.aabb);
-
-                group->add(geometry);
-            }
-            group->set_bounding_box(model_desc.aabb);
-
-            lod->add(group);
-        }
-        lod->set_ranges(min_ranges);
-
-        return lod;
-    } else {
-        auto group = scene.create_group();
-        if (state_ptr) group->set_state(state_ptr);
-        group->set_bounding_box(model_desc.aabb);
-
-        for (auto &mesh : model_desc.meshes) {
-            auto geometry = scene.create_geometry(mesh.vertex_buffer,
-                mesh.lods[0].index_buffer, mesh.lods[0].index_count);
-
-            if (state_ptr) geometry->set_state(state_ptr);
-            geometry->set_bounding_box(model_desc.aabb);
-            group->add(geometry);
-        }
-
-        return group;
+    for (auto &mesh : cached_model) {
+        auto geometry = scene.create_geometry(mesh);
+        geometry->set_material(material);
+        group->add(geometry);
     }
+
+    return group;
 }
 
-sg::node_t *parse_point_light(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLElement *elem) {
+sg::node_t *parse_point_light(RenderState &render_state, sg::scene_t &scene, tinyxml2::XMLElement *elem) {
     sg::point_light_t *point_light = scene.create_point_light();
-
-    bool set_state;
-    sg::state_t state = parse_state(loader, scene, elem, set_state);
-    if (set_state) {
-        auto sref = scene.create_state();
-        *sref = state;
-        point_light->set_state(sref);
-    }
 
     auto color_attr = elem->Attribute("color");
     auto position_attr = elem->Attribute("position");
@@ -209,16 +174,8 @@ sg::node_t *parse_point_light(loader_t &loader, sg::scene_t &scene, tinyxml2::XM
     return point_light;
 }
 
-sg::node_t *parse_directional_light(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLElement *elem) {
+sg::node_t *parse_directional_light(RenderState &render_state, sg::scene_t &scene, tinyxml2::XMLElement *elem) {
     sg::directional_light_t *directional_light = scene.create_directional_light();
-
-    bool set_state;
-    sg::state_t state = parse_state(loader, scene, elem, set_state);
-    if (set_state) {
-        auto sref = scene.create_state();
-        *sref = state;
-        directional_light->set_state(sref);
-    }
 
     auto color_attr = elem->Attribute("color");
     auto position_attr = elem->Attribute("direction");
@@ -238,16 +195,8 @@ sg::node_t *parse_directional_light(loader_t &loader, sg::scene_t &scene, tinyxm
     return directional_light;
 }
 
-sg::node_t *parse_transform(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLElement *elem) {
+sg::node_t *parse_transform(RenderState &render_state, sg::scene_t &scene, tinyxml2::XMLElement *elem) {
     sg::transform_t *transform = scene.create_transform();
-
-    bool set_state;
-    sg::state_t state = parse_state(loader, scene, elem, set_state);
-    if (set_state) {
-        auto sref = scene.create_state();
-        *sref = state;
-        transform->set_state(sref);
-    }
 
     auto translate_attr = elem->Attribute("translate");
     auto scale_attr = elem->Attribute("scale");
@@ -278,7 +227,7 @@ sg::node_t *parse_transform(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLE
     }
 
     for (tinyxml2::XMLElement *child = elem->FirstChildElement(); child; child = child->NextSiblingElement()) {
-        auto subnode = interpret_node(loader, scene, child);
+        auto subnode = interpret_node(render_state, scene, child);
         if (subnode != nullptr)
             transform->add(subnode);
     }
@@ -286,52 +235,9 @@ sg::node_t *parse_transform(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLE
     return transform;
 }
 
-sg::node_t *parse_lod(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLElement *elem) {
-    auto lod = scene.create_lod();
-
-    bool set_state;
-    sg::state_t state = parse_state(loader, scene, elem, set_state);
-    if (set_state) {
-        auto sref = scene.create_state();
-        *sref = state;
-        lod->set_state(sref);
-    }
-
-    auto ranges_attr = elem->Attribute("ranges");
-
-    std::vector<f32> ranges = parse_attr_list_f32(std::string_view(ranges_attr));
-
-    usize num_children = 0;
-    for (tinyxml2::XMLElement *child = elem->FirstChildElement(); child; child = child->NextSiblingElement()) {
-        auto subnode = interpret_node(loader, scene, child);
-        if (subnode != nullptr) {
-            lod->add(subnode);
-            num_children++;
-        }
-    }
-
-    if (num_children != ranges.size()) {
-        g_log.error("number of candidate children does not match number of ranges");
-        return nullptr;
-    }
-    lod->set_ranges(ranges);
-
-    return lod;
-}
-
-sg::node_t *parse_grid(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLElement *elem) {
+sg::node_t *parse_grid(RenderState &render_state, sg::scene_t &scene, tinyxml2::XMLElement *elem) {
     // grid repeats its children in a grid pattern.
     auto grid = scene.create_group();
-
-    bool set_state;
-    sg::state_t state = parse_state(loader, scene, elem, set_state);
-    sg::state_t *state_ptr = nullptr;
-    if (set_state) {
-        state_ptr = scene.create_state();
-        *state_ptr = state;
-    }
-
-    grid->set_state(state_ptr);
 
     auto count_attr = elem->Attribute("count");
     auto spacing_attr = elem->Attribute("spacing");
@@ -344,13 +250,6 @@ sg::node_t *parse_grid(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLElemen
     auto count = parse_attr_v3f(std::string_view(count_attr));
     auto spacing = parse_attr_v3f(std::string_view(spacing_attr));
 
-    std::vector<sg::node_t *> children;
-    for (tinyxml2::XMLElement *child = elem->FirstChildElement(); child; child = child->NextSiblingElement()) {
-        auto subnode = interpret_node(loader, scene, child);
-        if (subnode != nullptr)
-            children.push_back(subnode);
-    }
-
     for (f32 x = 0; x < count.x; x++) {
         auto halfx = (count.x - 1) * spacing.x / 2;
         for (f32 y = 0; y < count.y; y++) {
@@ -359,11 +258,17 @@ sg::node_t *parse_grid(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLElemen
                 auto halfz = (count.z - 1) * spacing.z / 2;
 
                 auto transform = scene.create_transform();
-                transform->set_state(state_ptr);
 
                 v3f translate = {x * spacing.x - halfx, y * spacing.y - halfy, z * spacing.z - halfz};
                 transform->set_initial_transform(translate, v3f{0, 0, 0}, v3f{1, 1, 1});
 
+                // @todo: this is soo bad, but we need to copy the children.
+                std::vector<sg::node_t *> children;
+                for (tinyxml2::XMLElement *child = elem->FirstChildElement(); child; child = child->NextSiblingElement()) {
+                    auto subnode = interpret_node(render_state, scene, child);
+                    if (subnode != nullptr)
+                        children.push_back(subnode);
+                }
                 for (auto &child : children) {
                     transform->add(child);
                 }
@@ -376,16 +281,8 @@ sg::node_t *parse_grid(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLElemen
     return grid;
 }
 
-sg::node_t *parse_camera(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLElement *elem) {
+sg::node_t *parse_camera(RenderState &render_state, sg::scene_t &scene, tinyxml2::XMLElement *elem) {
     auto camera = scene.create_camera();
-
-    bool set_state;
-    sg::state_t state = parse_state(loader, scene, elem, set_state);
-    if (set_state) {
-        auto sref = scene.create_state();
-        *sref = state;
-        camera->set_state(sref);
-    }
 
     auto position_attr = elem->Attribute("position");
     auto target_attr = elem->Attribute("target");
@@ -496,17 +393,14 @@ v3f parse_attr_color3(const std::string_view &v) {
     return result;
 }
 
-sg::state_t parse_state(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLElement *elem, bool &success) {
+sg::Material &parse_material(RenderState &state, sg::scene_t &scene, tinyxml2::XMLElement *elem) {
     // read the element, and pick out state attributes.
-    success = false;
-    state_t state;
 
     bool any_material_attr_set = false;
 
-    auto mat_diffuse_attr = elem->Attribute("mat-diffuse");
-    auto mat_specular_attr = elem->Attribute("mat-specular");
-    auto mat_ambient_attr = elem->Attribute("mat-ambient");
+    auto mat_diffuse_attr = elem->Attribute("mat-color");
     auto mat_roughness_attr = elem->Attribute("mat-roughness");
+    auto mat_metallic_attr = elem->Attribute("mat-metallic");
 
     auto mat_tex_albedo0_attr = elem->Attribute("mat-tex-albedo0");
     auto mat_tex_albedo1_attr = elem->Attribute("mat-tex-albedo1");
@@ -519,9 +413,8 @@ sg::state_t parse_state(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLEleme
     auto shader_glsl_vert_attr = elem->Attribute("shader-vert-glsl");
 
     any_material_attr_set |= mat_diffuse_attr != nullptr;
-    any_material_attr_set |= mat_specular_attr != nullptr;
-    any_material_attr_set |= mat_ambient_attr != nullptr;
     any_material_attr_set |= mat_roughness_attr != nullptr;
+    any_material_attr_set |= mat_metallic_attr != nullptr;
     any_material_attr_set |= mat_tex_albedo0_attr != nullptr;
     any_material_attr_set |= mat_tex_albedo1_attr != nullptr;
     any_material_attr_set |= mat_tex_albedo2_attr != nullptr;
@@ -532,70 +425,87 @@ sg::state_t parse_state(loader_t &loader, sg::scene_t &scene, tinyxml2::XMLEleme
     any_material_attr_set |= shader_glsl_vert_attr != nullptr;
 
     if (any_material_attr_set) {
-        state.material = scene.create_material();
+        auto material = scene.create_material();
+        material->set_color(scene.default_material().color());
+        material->set_emission(scene.default_material().emission());
+        material->set_roughness(scene.default_material().roughness());
+        material->set_metallic(scene.default_material().metallic());
 
-        auto default_state = scene.default_state();
+        if (mat_diffuse_attr) {
+            material->set_color(parse_attr_color4(std::string_view(mat_diffuse_attr)));
+        }
+        if (mat_roughness_attr) {
+            material->set_roughness(std::strtof(mat_roughness_attr, nullptr));
+        }
+        if (mat_metallic_attr) {
+            material->set_metallic(std::strtof(mat_metallic_attr, nullptr));
+        }
 
-        state.material->ambient = default_state->material->ambient;
-        state.material->diffuse = default_state->material->diffuse;
-        state.material->specular = default_state->material->specular;
-        state.material->roughness = default_state->material->roughness;
-        state.material->metallic = default_state->material->metallic;
-        state.material->tex_albedo0 = default_state->material->tex_albedo0;
-        state.material->tex_albedo1 = default_state->material->tex_albedo1;
-        state.material->tex_albedo2 = default_state->material->tex_albedo2;
-        state.material->tex_normal = default_state->material->tex_normal;
-        state.material->tex_roughness = default_state->material->tex_roughness;
-        state.material->shader = default_state->material->shader;
-        state.material->cull_mode = default_state->material->cull_mode;
-    }
+        if (mat_tex_albedo0_attr) {
 
-    if (mat_diffuse_attr) {
-        success = true;
-        state.material->diffuse = parse_attr_color4(std::string_view(mat_diffuse_attr));
+        }
+
+        if (shader_glsl_frag_attr && shader_glsl_vert_attr) {
+            material->set_shader(state.load_shader({
+                .glsl_vert_path = shader_glsl_vert_attr,
+                .glsl_frag_path = shader_glsl_frag_attr,
+            }));
+        }
+
+        return *material;
     }
-    if (mat_specular_attr) {
-        success = true;
-        state.material->specular = parse_attr_color4(std::string_view(mat_specular_attr));
-    }
-    if (mat_ambient_attr) {
-        success = true;
-        state.material->ambient = parse_attr_color4(std::string_view(mat_ambient_attr));
-    }
-    if (mat_roughness_attr) {
-        success = true;
-        state.material->roughness = std::strtof(mat_roughness_attr, nullptr);
-    }
+    return scene.default_material();
+
+    /*
     if (mat_tex_albedo0_attr) {
         success = true;
-        state.material->tex_albedo0 = loader.load_texture({.path = mat_tex_albedo0_attr});
+        state.material->tex_albedo0 = render_state.load_texture({.path = mat_tex_albedo0_attr});
     }
     if (mat_tex_albedo1_attr) {
         success = true;
-        state.material->tex_albedo1 = loader.load_texture({.path = mat_tex_albedo1_attr});
+        state.material->tex_albedo1 = render_state.load_texture({.path = mat_tex_albedo1_attr});
     }
     if (mat_tex_albedo2_attr) {
         success = true;
-        state.material->tex_albedo2 = loader.load_texture({.path = mat_tex_albedo2_attr});
+        state.material->tex_albedo2 = render_state.load_texture({.path = mat_tex_albedo2_attr});
     }
     if (mat_tex_normal_attr) {
         success = true;
-        state.material->tex_normal = loader.load_texture({.path = mat_tex_normal_attr, .srgb = false});
+        state.material->tex_normal = render_state.load_texture({.path = mat_tex_normal_attr, .srgb = false});
     }
     if (mat_tex_roughness_attr) {
         success = true;
-        state.material->tex_roughness = loader.load_texture({.path = mat_tex_roughness_attr, .srgb = false});
+        state.material->tex_roughness = render_state.load_texture({.path = mat_tex_roughness_attr, .srgb = false});
     }
 
     if (shader_glsl_frag_attr && shader_glsl_vert_attr) {
         success = true;
-        state.material->shader = loader.load_shader_program({
+        state.material->shader = render_state.load_shader_program({
             .vertex_glsl_path = shader_glsl_vert_attr,
             .fragment_glsl_path = shader_glsl_frag_attr,
         });
     }
+    */
+}
 
-    return state;
+std::unordered_map<ModelCacheKey, std::vector<MeshHandle>> model_cache;
+
+std::vector<MeshHandle> load_cache_model(RenderState &render_state, const char *path, std::vector<LODSetting> &&lod_settings) {
+    auto key = ModelCacheKey{path, lod_settings};
+    auto it = model_cache.find(key);
+    if (it != model_cache.end()) {
+        return it->second;
+    }
+
+    auto model = load_model(path, lod_settings);
+    std::vector<MeshHandle> handles;
+    for (auto &mesh : model.meshes) {
+        auto handle = render_state.add_mesh(mesh);
+        handles.push_back(handle);
+    }
+
+    model_cache[key] = handles;
+    return handles;
 }
 
 }

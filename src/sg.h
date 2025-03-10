@@ -3,10 +3,12 @@
 #include <vector>
 #include <functional>
 
+#include "model.h"
 #include "oc.h"
 #include "linalg.h"
 
-#include "material.h"
+#include "rend2/render_handles.h"
+#include "rend2/render_state.h"
 
 #include <tracy/Tracy.hpp>
 
@@ -21,16 +23,62 @@ class directional_light_t;
 class transform_t;
 class geometry_t;
 class camera_t;
-class lod_t;
 
 class node_visitor_t;
 
-class state_t {
-public:
-    ref_t<material_t> material;
-};
-
 typedef std::function<void(node_t &)> update_callback_t;
+
+class Material {
+public:
+    Material(RenderState &state) : m_state(state) {
+        m_handle = m_state.add_material(m_data);
+    }
+
+    const v4f &color() {
+        return m_data.color;
+    }
+    const v4f &emission() {
+        return m_data.emission;
+    }
+    const f32 &roughness() {
+        return m_data.roughness;
+    }
+    const f32 &metallic() {
+        return m_data.metallic;
+    }
+
+    void set_color(const v4f &color) {
+        m_data.color = color;
+        m_state.update_material(m_handle, m_data);
+    }
+    void set_emission(const v4f &emission) {
+        m_data.emission = emission;
+        m_state.update_material(m_handle, m_data);
+    }
+    void set_roughness(f32 roughness) {
+        m_data.roughness = roughness;
+        m_state.update_material(m_handle, m_data);
+    }
+    void set_metallic(f32 metallic) {
+        m_data.metallic = metallic;
+        m_state.update_material(m_handle, m_data);
+    }
+    void set_shader(ShaderHandle shader) {
+        m_shader = shader;
+    }
+
+    MaterialHandle handle() {
+        return m_handle;
+    }
+    ShaderHandle shader() {
+        return m_shader;
+    }
+private:
+    MaterialData m_data;
+    MaterialHandle m_handle;
+    ShaderHandle m_shader;
+    RenderState &m_state;
+};
 
 class node_t {
 public:
@@ -38,13 +86,6 @@ public:
     virtual void accept(node_visitor_t &visitor) = 0;
 
     virtual void reset_to_initial_state() {}
-
-    state_t &state() {
-        return *m_state;
-    }
-    void set_state(state_t *state) {
-        this->m_state = state;
-    }
 
     aabb_t bounding_box() {
         return m_aabb;
@@ -64,7 +105,6 @@ public:
 
 protected:
     update_callback_t m_update_callback = nullptr;
-    state_t *m_state = nullptr;
     aabb_t m_aabb;
 };
 
@@ -77,7 +117,6 @@ public:
 
     virtual void visit(group_t &group);
     virtual void visit(transform_t &transform);
-    virtual void visit(lod_t &lod);
 };
 
 // specialized nodes
@@ -151,6 +190,10 @@ private:
 class transform_t : public group_t {
 public:
     virtual ~transform_t() = default;
+
+    bool is_dirty() {
+        return m_dirty;
+    }
 
     m4f get_local_matrix() {
         if (m_dirty) {
@@ -230,16 +273,33 @@ class geometry_t : public node_t {
 public:
     virtual ~geometry_t() = default;
 
-    geometry_t(ref_t<gpu_buffer_t> vertex_buffer, ref_t<gpu_buffer_t> index_buffer, u32 index_count)
-        : vertex_buffer(vertex_buffer), index_buffer(index_buffer), index_count(index_count) {}
+    geometry_t(RenderState &state) : m_state(state) {
+        m_handle = m_state.add_object();
+    }
+
+    void set_mesh(MeshHandle mesh) {
+        m_state.assign_geometry(m_handle, mesh);
+    }
+
+    void set_material(Material &material) {
+        m_state.assign_material(m_handle, material.handle());
+        m_state.assign_shader(m_handle, material.shader());
+    }
+
+    void set_transform(const m4f &transform) {
+        m_state.update_transform(m_handle, transform);
+    }
 
     void accept(node_visitor_t &visitor) override {
         visitor.visit(*this);
     }
 
-    ref_t<gpu_buffer_t> vertex_buffer;
-    ref_t<gpu_buffer_t> index_buffer;
-    u32 index_count;
+    ObjectHandle handle() {
+        return m_handle;
+    }
+private:
+    RenderState &m_state;
+    ObjectHandle m_handle;
 };
 
 // @note: camera doesn't care about it's surrounding transforms.
@@ -325,39 +385,24 @@ private:
     } m_initial;
 };
 
-class lod_t : public group_t {
-public:
-    virtual ~lod_t() = default;
-
-    lod_t() : center{0, 0, 0}, ranges_min{} {}
-
-    void accept(node_visitor_t &visitor) {
-        visitor.visit(*this);
-    }
-
-    void set_center(const v3f &center) {
-        this->center = center;
-    }
-
-    void set_ranges(const std::vector<f32> &ranges) {
-        ranges_min = ranges;
-    }
-
-    void traverse(node_visitor_t &visitor);
-
-private:
-    v3f center;
-    // @note: this needs the same length as the number of children.
-    std::vector<f32> ranges_min;
-};
-
 class scene_t {
 public:
+    scene_t(RenderState &render_state) : m_render_state(render_state), m_default_material(m_render_state) {
+        auto default_shader = m_render_state.load_shader({
+            .glsl_vert_path = "shaders/forward.vert",
+            .glsl_frag_path = "shaders/forward.frag",
+        });
+
+        m_default_material.set_color({1, 1, 1, 1});
+        m_default_material.set_roughness(0.5f);
+        m_default_material.set_metallic(0.0f);
+        m_default_material.set_shader(default_shader);
+    }
+
     void add(node_t *node) {
         nodes.push_back(node);
     }
     void accept(node_visitor_t &visitor) {
-        ZoneScopedN("scene-graph-accept");
         for (auto &node : nodes) {
             node->accept(visitor);
         }
@@ -368,45 +413,40 @@ public:
     // resets the scene to its initial state.
     void reset_to_initial_state();
 
-    void set_default_state(state_t *state) {
-        m_default_state = state;
-    }
-    state_t *default_state() {
-        return m_default_state;
-    }
-
 #define DECL_CREATOR(name, tname, storage) \
     template <typename ...Args> \
     tname *create_##name(Args... args) { \
         auto ptr = storage.alloc_make(args...); \
-        ptr->set_state(m_default_state); \
         return ptr; \
     }
 
     DECL_CREATOR(group, group_t, storage.groups)
-    DECL_CREATOR(geometry, geometry_t, storage.geometries)
     DECL_CREATOR(point_light, point_light_t, storage.point_lights)
     DECL_CREATOR(directional_light, directional_light_t, storage.directional_lights)
     DECL_CREATOR(transform, transform_t, storage.transforms)
     DECL_CREATOR(camera, camera_t, storage.cameras)
-    DECL_CREATOR(lod, lod_t, storage.lods)
 #undef DECL_CREATOR
 
-    state_t *create_state() {
-        auto ptr = storage.states.alloc_make();
-        ptr->material = m_default_state->material;
+    geometry_t *create_geometry(MeshHandle mesh) {
+        auto ptr = new geometry_t(m_render_state); // storage.geometries.alloc_make(m_render_state);
+        ptr->set_mesh(mesh);
+        ptr->set_material(m_default_material);
         return ptr;
     }
 
-    ref_t<material_t> create_material() {
-        auto ptr = make_ref<material_t>();
-        storage.materials.push_back(ptr);
-        return ptr;
+    Material &default_material() {
+        return m_default_material;
+    }
+
+    Material *create_material() {
+        return new Material(m_render_state);
     }
 
 private:
     std::vector<node_t *> nodes;
 
+    // @note: this is only some of the data. The important part is that
+    //
     struct node_storage_t {
         pool_allocator_t<group_t> groups;
         pool_allocator_t<geometry_t> geometries;
@@ -414,20 +454,15 @@ private:
         pool_allocator_t<directional_light_t> directional_lights;
         pool_allocator_t<transform_t> transforms;
         pool_allocator_t<camera_t> cameras;
-        pool_allocator_t<lod_t> lods;
-
-        pool_allocator_t<state_t> states;
-        std::vector<ref_t<material_t>> materials;
     } storage;
+    RenderState &m_render_state;
 
-    state_t *m_default_state;
+    Material m_default_material;
 
     bool modified_on_disk = false;
     std::string disk_path;
-
-    friend struct ::loader_t;
 };
 
-bool load(loader_t &loader, const char *path, scene_t &scene);
+bool load(RenderState &state, const char *path, scene_t &scene);
 
 }

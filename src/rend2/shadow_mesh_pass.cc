@@ -8,7 +8,7 @@
 VkPipeline build_pipeline(gpu_t &gpu, VkPipelineLayout layout, Shader &shader);
 
 ShadowMeshPass::ShadowMeshPass(gpu_t &gpu, ShaderCompiler &sc,
-    RenderState &state,
+    RenderStorage &state,
     GpuBuffer &draw_buffer)
 : m_gpu(gpu), m_state(state),
     m_draw_buffer(draw_buffer),

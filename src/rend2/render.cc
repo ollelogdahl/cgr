@@ -55,12 +55,12 @@ private:
     std::vector<VkImageMemoryBarrier2> barriers;
 };
 
-static const RenderStateConfig config = {
-    .max_objects = 200 * 1024,
+static const RenderStorageConfig config = {
+    .max_objects = 20 * 1024,
     .max_vertices = 1 * 1024 * 1024,
     .max_indices = 1 * 1024 * 1024,
     .max_meshes = 1024,
-    .max_materials = 200 * 1024,
+    .max_materials = 20 * 1024,
     .max_textures = 1024,
     .max_lights = 1024,
 };
@@ -68,168 +68,33 @@ static const u32 max_draws = config.max_objects;
 
 static VkPipeline make_render_pipeline(gpu_t &gpu, VkPipelineLayout layout, Shader shader);
 
-Renderer::Renderer(gpu_t &gpu, ShaderCompiler &sc) : m_gpu(&gpu), m_state(gpu, config),
+Renderer::Renderer(gpu_t &gpu, RenderStorage &storage, ShaderCompiler &sc) : m_gpu(&gpu), m_storage(storage),
     m_shader_compiler(sc),
     m_draw_buffer(gpu, max_draws * sizeof(DrawCommand) + 1 * sizeof(u32),
         VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT),
-    m_forward_pass(gpu, sc, m_state, m_draw_buffer),
-    m_shadow_pass(gpu, sc, m_state, m_draw_buffer) {
+    m_forward_pass(gpu, sc, m_storage, m_draw_buffer),
+    m_shadow_pass(gpu, sc, m_storage, m_draw_buffer) {
 
     m_forward_pipeline_layout = m_forward_pass.pipeline_layout();
 }
 
-MeshHandle Renderer::add_mesh(const Mesh &mesh) {
-    // 1. interleave vertex properties.
-    // 2. calculate the index offset (where the vertices were allocated), and offset all indices.
-
-    // @todo: Using manual vertex fetching, we could actually support different
-    // types of vertex data. This could be really nice, as we could save memory.
-    // According to some sources, manual fetching is not too slow.
-
-    bool uv_present = mesh.uvs.size() > 0;
-    bool color_present = mesh.colors.size() > 0;
-    auto interleaved = std::vector<byte>(mesh.vertices.size() * 9 * sizeof(f32));
-    for (size_t i = 0; i < mesh.vertices.size(); i++) {
-        auto &v = mesh.vertices[i];
-        auto &n = mesh.normals[i];
-
-        memcpy(&interleaved[i * 9 * sizeof(f32)], &v, sizeof(v));
-        memcpy(&interleaved[i * 9 * sizeof(f32) + 3 * sizeof(f32)], &n, sizeof(n));
-
-        if (uv_present) {
-            auto &t = mesh.uvs[i];
-            memcpy(&interleaved[i * 9 * sizeof(f32) + 6 * sizeof(f32)], &t, sizeof(t));
-        }
-
-        if (color_present) {
-            auto &c = mesh.colors[i];
-            memcpy(&interleaved[i * 9 * sizeof(f32) + 8 * sizeof(f32)], &c, sizeof(c));
-        }
-    }
-
-    auto vertex_handle = m_state.alloc_vertices(slice<byte>(interleaved));
-
-    auto idx_handles = std::vector<IndexDataHandle>();
-    idx_handles.reserve(mesh.lods.size());
-
-    // offset all indices
-    for (auto &lod : mesh.lods) {
-        // make a complete copy :^)
-        auto indices = std::vector<u32>(lod.indices.size());
-        indices = lod.indices;
-
-        std::transform(indices.begin(), indices.end(), indices.begin(),
-            [&](u32 idx) { return idx + vertex_handle.idx; });
-
-        idx_handles.push_back(
-            m_state.alloc_indices(std::move(indices))
-        );
-    }
-
-    assert(mesh.lods.size() > 0);
-    // @note: as MeshData currently works, this makes the vertex-data handle actually dangling.
-    // In my current scenario this is fine (as i think we should try automatic resource reclaim),
-    // but maybe not in the future.
-    auto mesh_data = MeshData{};
-    for (size_t i = 0; i < 4; i++) {
-        auto src_idx = std::min(i, mesh.lods.size() - 1);
-        mesh_data.lods[i] = {
-            .index_start = idx_handles[src_idx].idx,
-            .index_count = idx_handles[src_idx].size,
-            .distance = mesh.lods[src_idx].min_distance,
-        };
-    }
-
-    mesh_data.bounds_min = mesh.bounds.min.to_homogeneous();
-    mesh_data.bounds_max = mesh.bounds.max.to_homogeneous();
-
-    auto mesh_handle = m_state.alloc_mesh(mesh_data);
-    return mesh_handle;
-}
-
-MaterialHandle Renderer::add_material(const MaterialData &data) {
-    return m_state.alloc_material(data);
-}
-
-ShaderHandle Renderer::load_shader(const LoadShaderProperties &props) {
-    auto it = m_shader_cache.find(props);
-    if (it != m_shader_cache.end()) {
-        return it->second;
-    }
-
-    auto shader = Shader({
-        m_shader_compiler.compile(props.glsl_vert_path),
-        m_shader_compiler.compile(props.glsl_frag_path),
-    });
-
-    // make rendering pipeline
-    // @todo: when changing the render target, we need to change this as well.
-    // Not cool.
+RenderStorage::ShaderInfo Renderer::create_pipelines_for(Shader &shader) {
     auto render_pipeline = make_render_pipeline(*m_gpu, m_forward_pipeline_layout, shader);
-
-    ShaderHandle handle = {(u32)m_shaders.size()};
-    m_shaders.push_back({
+    return {
         .render_pipeline = render_pipeline,
-    });
-
-    m_shader_cache.insert({props, handle});
-    return handle;
-}
-
-ObjectHandle Renderer::add_object() {
-    // each object has a unique transform for now
-    auto object = m_state.alloc_object();
-
-    return object;
-}
-
-void Renderer::assign_geometry(ObjectHandle handle, MeshHandle mesh) {
-    auto old = m_state.object_data(handle);
-    old.mesh = mesh;
-    m_state.update_object(handle, old);
-}
-
-void Renderer::assign_material(ObjectHandle handle, MaterialHandle material) {
-    auto old = m_state.object_data(handle);
-    old.material = material;
-    m_state.update_object(handle, old);
-}
-
-void Renderer::assign_shader(ObjectHandle handle, ShaderHandle shader) {
-    auto old = m_state.object_data(handle);
-    old.batch = shader.id;
-    m_state.update_object(handle, old);
-}
-
-void assign_packed_affine_transformation(f32 *dest, const m4f &m) {
-    // column-major
-    dest[0] = m.m[0];
-    dest[1] = m.m[1];
-    dest[2] = m.m[2];
-    dest[3] = m.m[4];
-    dest[4] = m.m[5];
-    dest[5] = m.m[6];
-    dest[6] = m.m[8];
-    dest[7] = m.m[9];
-    dest[8] = m.m[10];
-    dest[9] = m.m[12];
-    dest[10] = m.m[13];
-    dest[11] = m.m[14];
-}
-
-void Renderer::update_transform(ObjectHandle handle, const m4f &t) {
-    auto o = m_state.object_data(handle);
-    assign_packed_affine_transformation(o.transform, t);
-    m_state.update_object(handle, o);
-}
-
-void Renderer::update_global(const GlobalData &data) {
-    m_state.update_global(data);
+    };
 }
 
 void Renderer::render(gpu_t::frame_t &frame, const View &view) {
     ZoneScoped;
-    auto state_dependencies = m_state.flush(frame.cmd);
+
+    m_storage.update_global({
+        .view = view.view,
+        .proj = view.projection,
+        .view_pos = view.position,
+    });
+
+    auto state_dependencies = m_storage.flush(frame.cmd);
 
     // @todo: move this!
     // We invoke a compute shader which performs copies from the Object Buffer to
@@ -322,12 +187,12 @@ void Renderer::render(gpu_t::frame_t &frame, const View &view) {
             .extent = m_gpu->swapchain.extent,
         };
 
-        auto store_batches = m_state.object_batches();
+        auto store_batches = m_storage.object_batches();
         std::vector<IndirectBatch2> batches(store_batches.size());
         for (size_t i = 0; i < store_batches.size(); i++) {
             auto &batch = store_batches[i];
             batches[i] = {
-                .pipeline = m_shaders[batch.id].render_pipeline,
+                .pipeline = m_storage.shaders()[batch.id].render_pipeline,
                 .buffer_offset = batch.start_index,
                 .count = batch.count,
             };
@@ -343,6 +208,14 @@ bool operator==(const LoadShaderProperties &lhs, const LoadShaderProperties &rhs
 
 std::size_t std::hash<LoadShaderProperties>::operator()(const LoadShaderProperties &props) const {
     return std::hash<const char *>()(props.glsl_vert_path) ^ std::hash<const char *>()(props.glsl_frag_path);
+}
+
+bool operator==(const LoadTextureProperties &lhs, const LoadTextureProperties &rhs) {
+    return lhs.path == rhs.path && lhs.type == rhs.type;
+}
+
+std::size_t std::hash<LoadTextureProperties>::operator()(const LoadTextureProperties &props) const {
+    return std::hash<const char *>()(props.path) ^ std::hash<u32>()(static_cast<u32>(props.type));
 }
 
 VkPipeline make_render_pipeline(gpu_t &gpu, VkPipelineLayout layout, Shader shader) {

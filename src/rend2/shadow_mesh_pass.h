@@ -11,7 +11,7 @@
 class ShadowMeshPass {
 public:
     ShadowMeshPass(gpu_t &gpu, ShaderCompiler &sc,
-        RenderState &state,
+        RenderStorage &state,
         GpuBuffer &draw_buffer);
 
     void set_bias_constant(f32 bias) { m_bias_constant = bias; }
@@ -21,7 +21,7 @@ public:
     void record(CommandBuffer &cmd, RenderTarget& target, const View& view, u32 max_count);
 private:
     gpu_t &m_gpu;
-    RenderState &m_state;
+    RenderStorage &m_state;
 
     GpuBuffer &m_draw_buffer;
 
