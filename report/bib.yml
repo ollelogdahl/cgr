@@ -6,3 +6,13 @@ glslc:
   urldate: 2025-02-11
   parent:
     title: GitHub
+wihlidal2016:
+  author: Wihlidal, Graham
+  type: article
+  title: Optimizing the graphics pipeline with compute
+  parent:
+    type: conference
+    title: Game Developers Conference
+    volume: 2
+    number: 3
+    year: 2016

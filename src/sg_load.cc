@@ -19,18 +19,20 @@ bool operator==(const ModelCacheKey &lhs, const ModelCacheKey &rhs) {
     return true;
 }
 
-template <>
-struct ::std::hash<ModelCacheKey> {
-    std::size_t operator()(const ModelCacheKey &key) const {
-        std::size_t h = 0;
-        h ^= std::hash<std::string>()(key.path);
-        for (auto &lod : key.lod_settings) {
-            h ^= std::hash<f32>()(lod.min_distance);
-            h ^= std::hash<f32>()(lod.target_error);
+namespace std {
+    template <>
+    struct hash<ModelCacheKey> {
+        std::size_t operator()(const ModelCacheKey &key) const {
+            std::size_t h = 0;
+            h ^= std::hash<std::string>()(key.path);
+            for (auto &lod : key.lod_settings) {
+                h ^= std::hash<f32>()(lod.min_distance);
+                h ^= std::hash<f32>()(lod.target_error);
+            }
+            return h;
         }
-        return h;
-    }
-};
+    };
+}
 
 namespace sg {
 

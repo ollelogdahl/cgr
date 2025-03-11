@@ -43,6 +43,11 @@ After building the program, it can be run with `./cgr <scene file>`. The program
 If `glslc` is not found, the path can be specified using the `GLSLC_PATH` environment
 variable at runtime.
 
+The project can also be built using cmake:
+
+- `cmake -B build -DCMAKE_BUILD_TYPE=Debug`
+- `cmake --build build --parallel`
+
 == System Requirements
 
 Below are the system requirements for running the application. Note that the program
@@ -58,7 +63,7 @@ The new renderer uses the traditional geometry rasterization pipeline (see @sec:
 but dispatches draw-calls from the GPU instead. This allows for
 controlling draws from the GPU.
 The purpose of this design was to support culling and LOD selection on the GPU, which would reduce
-CPU overhead. 
+CPU overhead.
 
 Pipeline changes and state changes are conventionally not supported directly on the GPU. But draw
 calls can be produced by using `VkDrawIndexedIndirect`. When submitted, this command reads draw calls
@@ -171,7 +176,7 @@ See @fig:gpu-time for a comparison. Note that the actual GPU command recording o
 the scene graph. This shows clearly that the old scene-graph is not sufficient.
 
 #figure(
-  table(columns: (2fr, 1fr, 1fr, 1fr, 1fr, 1fr,), 
+  table(columns: (2fr, 1fr, 1fr, 1fr, 1fr, 1fr,),
     [Dragons], table.vline(), table.cell(colspan: 2, [Old]), table.vline(), table.cell(colspan: 3, [New]),
     [], [CPU], [Draw], [CPU], [Cull], [Draw],
     table.hline(),
@@ -213,7 +218,7 @@ Overall, mesh shading would be really interesting to try out.
 
 Transitioning to this new design, the scene-graph makes less sense. In a CPU-driven renderer,
 all state resides on the CPU and the scene-graph works well to organize it. In our design
-the GPU has ownership of data, and the CPU only updates it. 
+the GPU has ownership of data, and the CPU only updates it.
 The current design reuses the old scene-graph transform system. Geometry nodes now reference an element in the _object buffer_, and therefore also own the transform. To minimize bandwidth this requires logic on the scene-graph side to ensure that transforms are not updated when not changed.
 
 Another possibility would be to keep the entire transform data on the gpu. The current transform tree could be flattened into a linear list. For rendering performance, this could be split into two separate buffers; a _transform node buffer_ for the flattened tree structure, and the _transform buffer_ only containing transforms required when rendering.
@@ -225,7 +230,7 @@ reduce the GPU utilization to somewhere around 1/64 or 1/128.
 == Resource ownership
 The previous system utilized reference counting for tracking GPU resources. In theory, this allows for automatic freeing of resources when a handle is no longer held. This was implemented using C++ constructors/destructors and RAII. While it worked in the previous system where the scene graph owned each node, it would not work for the new design.
 
-Firstly, resources need to be freed at the right time. It is invalid to free a buffer while it is in use by a command list. As we have multiple frames in flight, and thus also multiple lists, freeing a resource needs to be delayed. An advantage of having 
+Firstly, resources need to be freed at the right time. It is invalid to free a buffer while it is in use by a command list. As we have multiple frames in flight, and thus also multiple lists, freeing a resource needs to be delayed. An advantage of having
 shared buffers is that a model (being a subrange in the buffer) can be freed and replaced in one frame.
 
 Secondly, the resources are now owned by the GPU. Therefore the CPU usually cannot know wether a resource is referenced or not.
