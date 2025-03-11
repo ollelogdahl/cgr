@@ -6,7 +6,8 @@
 
 ForwardMeshPass::ForwardMeshPass(gpu_t &gpu, ShaderCompiler &sc, RenderStorage &state,
     GpuBuffer &draw_buffer)
-: m_gpu(gpu), m_state(state), m_draw_buffer(draw_buffer), m_cull_pass(gpu, sc) {
+: m_gpu(gpu), m_state(state), m_draw_buffer(draw_buffer), m_cull_pass(gpu, sc),
+    m_pipeline_query(gpu) {
 
     m_cull_pass.bind_buffers(state.object_buffer(), draw_buffer, state.mesh_buffer());
 
@@ -85,6 +86,18 @@ void ForwardMeshPass::record(CommandBuffer &cmd, RenderTarget& target, const Vie
         {
             TracyVkZone(cmd.tracy_ctx(), cmd.get(), "draw");
 
+            m_pipeline_query.begin(cmd);
+
+            {
+                auto results = m_pipeline_query.get_results();
+                metrics::gauge_u64("rend2.forward.input_assembly_vertices", results[0]);
+                metrics::gauge_u64("rend2.forward.input_assembly_primitives", results[1]);
+                metrics::gauge_u64("rend2.forward.clipping_invocations", results[3]);
+                metrics::gauge_u64("rend2.forward.clipping_primitives", results[4]);
+                metrics::gauge_u64("rend2.forward.vertex_invocations", results[2]);
+                metrics::gauge_u64("rend2.forward.fragment_invocations", results[5]);
+            }
+
             VkRenderingAttachmentInfo color_attachments[] = {
                 target.as_color_attachment()
             };
@@ -115,6 +128,8 @@ void ForwardMeshPass::record(CommandBuffer &cmd, RenderTarget& target, const Vie
                 sizeof(DrawCommand));
 
             vkCmdEndRendering(cmd.get());
+
+            m_pipeline_query.end(cmd);
         }
     }
 

@@ -9,6 +9,7 @@
 #include "control/freefly_controller.h"
 #include "sg.h"
 #include "sg/render_visitor.h"
+#include "sg/update_visitor.h"
 
 #include <tracy/Tracy.hpp>
 
@@ -107,7 +108,7 @@ void Application::init_and_run(const char *scene_file_path, const ApplicationCon
     // renderer visitor
     RenderVisitor render_visitor(*m_render_state);
 
-    // update_visitor_t update_visitor;
+    update_visitor_t update_visitor;
 
     FreeflyController<sg::camera_t> camera_controller(input);
 
@@ -130,7 +131,7 @@ void Application::init_and_run(const char *scene_file_path, const ApplicationCon
             ZoneScopedN("update");
 
             // m_current_scene->accept(camera_movement_visitor);
-            // m_current_scene->accept(update_visitor);
+            m_current_scene->accept(update_visitor);
 
             {
                 ZoneScopedN("render-visitor");

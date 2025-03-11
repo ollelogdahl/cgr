@@ -67,6 +67,31 @@ public:
         m_shader = shader;
     }
 
+    void set_albedo0(TextureHandle albedo0) {
+        m_data.tex_albedo0 = albedo0;
+        m_state.update_material(m_handle, m_data);
+    }
+    void set_albedo1(TextureHandle albedo1) {
+        m_data.tex_albedo1 = albedo1;
+        m_state.update_material(m_handle, m_data);
+    }
+    void set_albedo2(TextureHandle albedo2) {
+        m_data.tex_albedo2 = albedo2;
+        m_state.update_material(m_handle, m_data);
+    }
+    void set_normal(TextureHandle normal) {
+        m_data.tex_normal = normal;
+        m_state.update_material(m_handle, m_data);
+    }
+    void set_metallic(TextureHandle metallic) {
+        m_data.tex_metallic = metallic;
+        m_state.update_material(m_handle, m_data);
+    }
+    void set_roughness(TextureHandle roughness) {
+        m_data.tex_roughness = roughness;
+        m_state.update_material(m_handle, m_data);
+    }
+
     MaterialHandle handle() {
         return m_handle;
     }
@@ -78,6 +103,13 @@ private:
     MaterialHandle m_handle;
     ShaderHandle m_shader;
     RenderState &m_state;
+
+    TextureHandle m_tex_albedo0;
+    TextureHandle m_tex_albedo1;
+    TextureHandle m_tex_albedo2;
+    TextureHandle m_tex_normal;
+    TextureHandle m_tex_metallic;
+    TextureHandle m_tex_roughness;
 };
 
 class node_t {

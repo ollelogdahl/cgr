@@ -82,15 +82,13 @@ RenderStorage::RenderStorage(gpu_t &gpu, const RenderStorageConfig &config)
         VkDescriptorPool descriptor_pool;
         VK_CHECK(vkCreateDescriptorPool(gpu.device, &pool_info, nullptr, &descriptor_pool));
 
-        VkDescriptorSetLayout ds_layout = DescriptorSetLayoutBuilder()
+        auto ds_builder = DescriptorSetLayoutBuilder()
             .add_binding(0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)
             .add_binding(1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_VERTEX_BIT)
             .add_binding(2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_FRAGMENT_BIT)
             .add_binding(3, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_FRAGMENT_BIT)
-            .add_variable_binding(4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, config.max_textures)
-            .build(gpu);
-
-        m_render_descriptor_set.init(gpu, descriptor_pool, ds_layout);
+            .add_variable_binding(4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, config.max_textures);
+        ds_builder.create_set(gpu, descriptor_pool, m_render_descriptor_set);
 
         m_render_descriptor_set.write_storage_buffer(0, 0, m_global_buffer.get(), 0, VK_WHOLE_SIZE);
         m_render_descriptor_set.write_storage_buffer(1, 0, m_object_buffer.get(), 0, VK_WHOLE_SIZE);
@@ -173,7 +171,7 @@ TextureHandle RenderStorage::alloc_texture(VkImage image, VkImageView view, VkSa
 
     counts.textures += 1;
 
-    m_render_descriptor_set.write_combined_image_sampler(4, idx, view, sampler);
+    m_render_descriptor_set.write_combined_image_sampler(4, idx, image, view, sampler);
     m_textures[idx] = {image, view, sampler};
 
     return {idx};
@@ -305,6 +303,7 @@ void RenderStorage::update_object(ObjectHandle handle, const ObjectData &object)
             .start_index = idx,
             .count = 1,
         });
+
         return;
     }
 
@@ -374,9 +373,10 @@ RenderStorage::FlushDependencies RenderStorage::flush(CommandBuffer &cmd) {
     }
     dirty_objects.clear();
 
-    m_render_descriptor_set.flush(*m_gpu);
-
     FlushDependencies deps;
+
+    deps.textures = m_render_descriptor_set.flush(*m_gpu);
+
     {
         TracyVkZone(cmd.tracy_ctx(), cmd.get(), "render-state-write");
 

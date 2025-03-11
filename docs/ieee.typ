@@ -169,9 +169,7 @@
   show table: it => box(it, width: 90%)
   set table(
     align: center + horizon,
-    stroke: (x, y) => (
-      bottom: if y == 0 { 1pt },
-    ),
+    stroke: (),
   )
 
   // Display the paper's contents.

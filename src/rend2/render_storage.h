@@ -32,6 +32,13 @@ struct alignas(16) MaterialData {
     v4f emission;
     f32 roughness;
     f32 metallic;
+
+    TextureHandle tex_albedo0;
+    TextureHandle tex_albedo1;
+    TextureHandle tex_albedo2;
+    TextureHandle tex_normal;
+    TextureHandle tex_metallic;
+    TextureHandle tex_roughness;
 };
 struct alignas(16) GlobalData {
     m4f view;
@@ -132,6 +139,7 @@ public:
         WriteDependency objects;
         WriteDependency global;
         WriteDependency lights;
+        Dependency textures;
     };
 
     // flushes changes to the GPU.

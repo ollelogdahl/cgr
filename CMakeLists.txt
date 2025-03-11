@@ -75,6 +75,7 @@ target_link_libraries(cgr PRIVATE
 if (ENABLE_SANITIZERS)
     target_compile_options(cgr PRIVATE
         "-fsanitize=address,undefined"
+        "-g"
     )
     target_link_options(cgr PRIVATE
         "-fsanitize=address,undefined"

@@ -19,6 +19,39 @@ The new renderer is designed to reduce the CPU overhead of rendering large scene
 as much as possible to the GPU. The result is that an entire scene can be rendered with very few
 draw calls, meaning that command buffer recording on the CPU is cheaper.
 
+= Usage guide
+
+In the following section, the usage of the program is described. Firstly in @sec:building, the building process is described.
+
+== Building and running <sec:building>
+
+For building the application, the following are required:
+- C++20 / C++2a compatible compiler.
+- `GLFW` installed system-wide.
+- `make`
+
+The following `make` commands are available:
+
+- `make dev` (default) - Builds the program in dev mode. Full optimizations but with
+  tracing enabled.
+- `make release` - Builds the program in release mode.
+- `make memcheck` - Builds the program with ubsan, asan and validation layers enabled.
+- `make clean` - Cleans the build directory.
+
+After building the program, it can be run with `./cgr <scene file>`. The program requires
+`glslc` @glslc to be installed and on `$PATH`, as it is used to compile glsl shaders.
+If `glslc` is not found, the path can be specified using the `GLSLC_PATH` environment
+variable at runtime.
+
+== System Requirements
+
+Below are the system requirements for running the application. Note that the program
+only works on linux curretly.
+
+- Vulkan 1.2 compatible GPU, supporting both the `VK_KHR_dynamic_rendering` and
+  `VK_KHR_synchronization2` extensions. The descriptor indexing feature is also
+  required. These are generally widely supported.
+
 = Indirect Rendering
 
 The new renderer uses the traditional geometry rasterization pipeline (see @sec:mesh-render),
@@ -122,6 +155,31 @@ Due to lack of time shadows are not implemented. But shadowing could easily be d
 cull and draw pass before doing the main forward pass. Noteworthy is that if the shadow pass does not
 need to rebind pipelines (if not using vertex-effects), culling and drawing can be done in 1 pass.
 
+= Performance <sec:performance>
+
+The new system using culling can easily render 27'000 dragons on a NVIDIA
+RTX A2000 12GB card in 60fps. In the `manydragons.xml` scene, inspecting the metrics shows that:
+- A total of 27'000 dragons exist
+- They are all rendered in one batch
+- About 5'000 are actually drawn
+- Approximately 51 million input vertices and 17 million input triangles
+- 30 million vertex invocations
+- depending on direction, 2-6 million fragment invocations
+
+See @fig:gpu-time for a comparison. Note that the actual GPU command recording on the CPU only takes
+120us in the new design. Adapting the old scene graph gives an overhead of 1.9ms just for traversing
+the scene graph. This shows clearly that the old scene-graph is not sufficient.
+
+#figure(
+  table(columns: (2fr, 1fr, 1fr, 1fr, 1fr, 1fr,), 
+    [Dragons], table.vline(), table.cell(colspan: 2, [Old]), table.vline(), table.cell(colspan: 3, [New]),
+    [], [CPU], [Draw], [CPU], [Cull], [Draw],
+    table.hline(),
+    [27000], [2.9ms], [22.2ms], [2.0ms], [30.7us], [9.3ms]
+  ),
+  caption: [Comparison between the old and the new design, measuring duration for rendering a single frame.],
+) <fig:gpu-time>
+
 = Analysis
 
 In the following section, the design is analyzed from different perspectives.
@@ -151,13 +209,65 @@ meshlet level instead of objects, meaning that the geometry would be more evenly
 
 Overall, mesh shading would be really interesting to try out.
 
-== Scene Graph
+== Scene Graph & GPU Transform
 
 Transitioning to this new design, the scene-graph makes less sense. In a CPU-driven renderer,
 all state resides on the CPU and the scene-graph works well to organize it. In our design
 the GPU has ownership of data, and the CPU only updates it. 
+The current design reuses the old scene-graph transform system. Geometry nodes now reference an element in the _object buffer_, and therefore also own the transform. To minimize bandwidth this requires logic on the scene-graph side to ensure that transforms are not updated when not changed.
 
-== Future Work
+Another possibility would be to keep the entire transform data on the gpu. The current transform tree could be flattened into a linear list. For rendering performance, this could be split into two separate buffers; a _transform node buffer_ for the flattened tree structure, and the _transform buffer_ only containing transforms required when rendering.
+
+This system could easily be extended to GPU bone animations. This could allow GPU-side procedural animation like wind.
+Using these buffers would obviously cause some redundant transforms (i.e. transforms not used for rendering but for structure) to consume VRAM. From a design perspective it would be important to not use redundant transforms; but that should already be a consideration. The major issue is that tree traversal is generally not efficient on the GPU. Calculating the global transform requires the parent element world transform, meaning that we can at worst only traverse one element at a time. Due to subgroups this would
+reduce the GPU utilization to somewhere around 1/64 or 1/128.
+
+== Resource ownership
+The previous system utilized reference counting for tracking GPU resources. In theory, this allows for automatic freeing of resources when a handle is no longer held. This was implemented using C++ constructors/destructors and RAII. While it worked in the previous system where the scene graph owned each node, it would not work for the new design.
+
+Firstly, resources need to be freed at the right time. It is invalid to free a buffer while it is in use by a command list. As we have multiple frames in flight, and thus also multiple lists, freeing a resource needs to be delayed. An advantage of having 
+shared buffers is that a model (being a subrange in the buffer) can be freed and replaced in one frame.
+
+Secondly, the resources are now owned by the GPU. Therefore the CPU usually cannot know wether a resource is referenced or not.
+
+Using plain handles gives us two possible freeing strategies:
+- Explicit free; change of scene or rooms.
+- Automatic free; Textures could be simply replaced using a LRU scheme.
+
+Overall, this design is interesting and very important for a real system. In our case freeing is simply ignored for simplicity. The replacement scheme
+can be used for streaming textures for example.
+
+= Requirements
+See @fig:requirements for a list of the requirements of the
+program. See @fig:bonus-requirements for a list of the bonus requirements
+which have been implemented.
+
+#figure(
+  placement: top,
+  scope: "parent",
+  table(columns: (3fr, 2fr),
+    table.header([Requirement], [Done]),
+    [Ground Plane], [Yes],
+    [Moving Objects], [Yes, animations],
+    [View Frustum Culling], [Yes],
+    [Key to toggle VFC], [No],
+    [Frame-rate], [No],
+    [Performance Discussion], [Yes, see @sec:performance],
+  ),
+  caption: "Requirements for the project."
+) <fig:requirements>
+
+#figure(
+  placement: top,
+  scope: "parent",
+  table(columns: (2fr, 1fr),
+    table.header([Requirement], [Done]),
+    [Normal Mapping], [Yes],
+  ),
+  caption: "Bonus requirements for the project."
+) <fig:bonus-requirements>
+
+= Future Work
 
 The current design has some flaws, but also shows great promise. The following are some ideas
 of future features that fit particularly well with the current design:
@@ -187,4 +297,4 @@ lights in the fragments cluster are considered.
 *IdTech Shadow Atlas*: IdTech uses a big shadow atlas to store shadowmaps for all lights. Each
 light can have a different resolution depending on distance.
 
-#bibliography(style: "ieee", "uni.bib")
+#bibliography(style: "ieee", "bib.yml")

@@ -6,6 +6,7 @@ class RenderVisitor : public sg::node_visitor_t {
 public:
     RenderVisitor(RenderState &render_state) : m_render_state(render_state) {
         transform_stack.push_back(m4f::identity());
+        dirty_stack.push_back(false);
     }
 
     void visit(sg::geometry_t &geometry) override {

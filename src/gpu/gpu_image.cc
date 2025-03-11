@@ -82,6 +82,6 @@ void gpu_t::create_image(slice<u8> data, usize width, usize height, VkFormat for
 }
 
 gpu_image_t::~gpu_image_t() {
-    if (image == VK_NULL_HANDLE) return;
-    vmaDestroyImage(owner->allocator, image, allocation);
+    // if (image == VK_NULL_HANDLE) return;
+    // vmaDestroyImage(owner->allocator, image, allocation);
 }

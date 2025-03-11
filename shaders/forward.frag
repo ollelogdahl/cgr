@@ -1,4 +1,6 @@
 #version 450
+#extension GL_EXT_nonuniform_qualifier : require
+
 #define M_PI 3.1415926535897932384626433832795
 
 layout(location = 0) in vec3 frag_pos_ws;
@@ -20,7 +22,13 @@ struct MaterialData {
     vec4 emission;
     float roughness;
     float metallic;
-    float _pad[2];
+
+    uint tex_albedo0;
+    uint tex_albedo1;
+    uint tex_albedo2;
+    uint tex_normal;
+    uint tex_metallic;
+    uint tex_roughness;
 };
 
 struct LightData {
@@ -42,6 +50,8 @@ layout(set = 0, binding = 3) readonly buffer LightBuffer {
     uint light_count;
     LightData lights[];
 };
+
+layout(set = 0, binding = 4) uniform sampler2D textures[];
 
 vec3 fresnel_schlick(float cosTheta, vec3 F0)
 {
@@ -132,16 +142,95 @@ vec3 pbr(
     return (kD * diffuse + specular) * radiance * NdotL * shadow;
 }
 
+// Based on:
+// Christian Schüler, “Normal Mapping without Precomputed Tangents”,
+// ShaderX 5, Chapter 2.6, pp. 131 – 140
+//
+// taken from http://www.thetenthplanet.de/archives/1180
+mat3 shuler_cotangent_frame(vec3 N, vec3 p, vec2 uv) {
+    // get edge vectors of the pixel triangle
+    vec3 dp1 = dFdx(p);
+    vec3 dp2 = dFdy(p);
+    vec2 duv1 = dFdx(uv);
+    vec2 duv2 = dFdy(uv);
+
+    // flip as vulkan is y-down
+    dp2 = -dp2;
+    duv2 = -duv2;
+
+    // solve the linear system
+    vec3 dp2perp = cross(dp2, N);
+    vec3 dp1perp = cross(N, dp1);
+    vec3 T = dp2perp * duv1.x + dp1perp * duv2.x;
+    vec3 B = dp2perp * duv1.y + dp1perp * duv2.y;
+
+    // construct a scale-invariant frame
+    float invmax = inversesqrt(max(dot(T, T), dot(B, B)));
+    return mat3(T * invmax, B * invmax, N);
+}
+
+vec3 shuler_perturb_normal(sampler2D bumpmap, vec3 N, vec3 V, vec2 texcoord) {
+    // assume N, the interpolated vertex normal and
+    // V, the view vector (vertex to eye)
+    vec3 pn = texture(bumpmap, texcoord).xyz;
+
+    pn = pn * 2. - 1.;
+    pn.y = -pn.y;
+
+    mat3 TBN = shuler_cotangent_frame(N, -V, texcoord);
+    return normalize(TBN * pn);
+}
+
 void main() {
     vec3 P = frag_pos_ws;
     vec3 V = normalize(global.cam_pos - frag_pos_ws);
     vec3 N = normalize(frag_normal_ws);
     vec3 color = vec3(0.0);
 
+    // determine if we use textures.
+    uint normalmap_idx = materials[material_id].tex_normal;
+    if (normalmap_idx != -1) {
+        N = shuler_perturb_normal(textures[normalmap_idx], N, V, frag_uv);
+    }
+
+    uint albedo0_idx = materials[material_id].tex_albedo0;
+    uint albedo1_idx = materials[material_id].tex_albedo1;
+    uint albedo2_idx = materials[material_id].tex_albedo2;
+
+    vec3 albedo = vec3(0.0);
+    if (albedo0_idx != -1) {
+        bool multitex = albedo0_idx != -1 && albedo1_idx != -1 && albedo2_idx != -1;
+
+        if (multitex) {
+            vec3 a0 = texture(textures[albedo0_idx], frag_uv).rgb * frag_vertex_color.x;
+            vec3 a1 = texture(textures[albedo1_idx], frag_uv).rgb * frag_vertex_color.y;
+            vec3 a2 = texture(textures[albedo2_idx], frag_uv).rgb * frag_vertex_color.z;
+            albedo = a0 + a1 + a2;
+        } else {
+            albedo = texture(textures[albedo0_idx], frag_uv).rgb;
+        }
+    } else {
+        albedo = materials[material_id].color.rgb;
+    }
+
+    uint roughness_idx = materials[material_id].tex_roughness;
+    uint metallic_idx = materials[material_id].tex_metallic;
+
+    float roughness = materials[material_id].roughness;
+    float metallic = materials[material_id].metallic;
+
+    if (roughness_idx != -1) {
+        roughness = texture(textures[roughness_idx], frag_uv).r;
+    }
+
+    if (metallic_idx != -1) {
+        metallic = texture(textures[metallic_idx], frag_uv).r;
+    }
+
     PbrProperties props = PbrProperties(
-        materials[material_id].color.rgb,
-        materials[material_id].roughness,
-        materials[material_id].metallic);
+            albedo,
+            roughness,
+            metallic);
 
     for (uint i = 0; i < light_count; i++) {
         LightData light = lights[i];
@@ -160,13 +249,13 @@ void main() {
         float shadow = 1.0;
 
         vec3 result = pbr(
-            L,
-            V,
-            N,
-            props,
-            radiance,
-            shadow
-        );
+                L,
+                V,
+                N,
+                props,
+                radiance,
+                shadow
+            );
 
         color += result;
     }

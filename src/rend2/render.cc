@@ -181,6 +181,13 @@ void Renderer::render(gpu_t::frame_t &frame, const View &view) {
     */
 
     {
+        // barrier for updates to textures in descriptor set
+        state_dependencies.textures.pipeline_barrier(
+            VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT,
+            frame.cmd);
+    }
+
+    {
         RenderTarget target = {
             .color_view = m_gpu->swapchain.image_views[frame.image_idx],
             .depth_view = m_gpu->depth_image.view,

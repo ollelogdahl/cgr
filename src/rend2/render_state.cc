@@ -1,7 +1,13 @@
 #include "render_state.h"
 #include "render.h"
 
+#include "log.h"
+
+#include <stb/stb_image.h>
+
 #include <algorithm>
+
+static logger_t logger = logger_t("renderstate");
 
 MeshHandle RenderState::add_mesh(const Mesh &mesh) {
     // 1. interleave vertex properties.
@@ -100,36 +106,99 @@ TextureHandle RenderState::load_texture(const LoadTextureProperties &props) {
         return it->second;
     }
 
+    logger.info("Loading texture: {}", props.path);
+
     VkImage image;
     VkSampler sampler;
     VkImageView view;
     {
+        VkFormat format;
         int target_channels;
         switch (props.type) {
         case TextureType::R:
             target_channels = 1;
+            format = VK_FORMAT_R8_UNORM;
             break;
         case TextureType::RGB:
+            target_channels = 3;
+            format = VK_FORMAT_R8G8B8_UNORM;
+            break;
         case TextureType::SRGB:
             target_channels = 3;
+            format = VK_FORMAT_R8G8B8_SRGB;
             break;
         case TextureType::RGBA:
+            target_channels = 4;
+            format = VK_FORMAT_R8G8B8A8_UNORM;
+            break;
         case TextureType::SRGBA:
             target_channels = 4;
+            format = VK_FORMAT_R8G8B8A8_SRGB;
             break;
         }
 
         // @todo: break this stuff out!
         int width, height, channels;
-        auto img = stbi_load(props.path, &width, &height, &channels, target_channels);
+        auto ptr = stbi_load(props.path, &width, &height, &channels, target_channels);
 
-        auto img = m_gpu.create_image(
+        auto img_data = slice<u8>(ptr, width * height * target_channels);
+
+        gpu_image_t img;
+        m_gpu.create_image(
+            img_data,
+            width,
+            height,
+            format,
+            VK_IMAGE_USAGE_SAMPLED_BIT,
+            false,
+            img);
+
         image = img.image;
-        sampler = img.sampler;
-        view = img.view;
+
+        auto sampler_info = VkSamplerCreateInfo{};
+        sampler_info.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+        sampler_info.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+        sampler_info.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+        sampler_info.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+        sampler_info.magFilter = VK_FILTER_LINEAR;
+        sampler_info.minFilter = VK_FILTER_LINEAR;
+        sampler_info.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+        sampler_info.mipLodBias = 0.0f;
+        sampler_info.maxAnisotropy = 1.0f;
+        sampler_info.minLod = 0.0f;
+        sampler_info.maxLod = 1.0f;
+        sampler_info.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
+        sampler_info.unnormalizedCoordinates = false;
+
+        vkCreateSampler(
+            m_gpu.device,
+            &sampler_info,
+            nullptr,
+            &sampler);
+
+        auto view_info = VkImageViewCreateInfo{};
+        view_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        view_info.image = image;
+        view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        view_info.format = format;
+        view_info.components.r = VK_COMPONENT_SWIZZLE_R;
+        view_info.components.g = VK_COMPONENT_SWIZZLE_G;
+        view_info.components.b = VK_COMPONENT_SWIZZLE_B;
+        view_info.components.a = VK_COMPONENT_SWIZZLE_A;
+        view_info.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        view_info.subresourceRange.baseMipLevel = 0;
+        view_info.subresourceRange.levelCount = 1;
+        view_info.subresourceRange.baseArrayLayer = 0;
+        view_info.subresourceRange.layerCount = 1;
+
+        vkCreateImageView(
+            m_gpu.device,
+            &view_info,
+            nullptr,
+            &view);
     }
 
-    auto texture = m_storage.alloc_texture(props.path, props.type);
+    auto texture = m_storage.alloc_texture(image, view, sampler);
     m_texture_cache[props] = texture;
     return texture;
 }

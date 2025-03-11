@@ -7,6 +7,8 @@
 #include "rend2/view.h"
 #include <vulkan/vulkan_core.h>
 
+#include "rend2/pipeline_query.h"
+
 // @todo: make a base MeshPass
 
 // @todo: inter-mesh pass dependency tracking!
@@ -37,4 +39,6 @@ private:
     VkPipelineLayout m_pipeline_layout;
 
     CullComputePass m_cull_pass;
+
+    PipelineQuery m_pipeline_query;
 };

@@ -407,6 +407,7 @@ sg::Material &parse_material(RenderState &state, sg::scene_t &scene, tinyxml2::X
     auto mat_tex_albedo2_attr = elem->Attribute("mat-tex-albedo2");
 
     auto mat_tex_normal_attr = elem->Attribute("mat-tex-normal");
+    auto mat_tex_metallic_attr = elem->Attribute("mat-tex-metallic");
     auto mat_tex_roughness_attr = elem->Attribute("mat-tex-roughness");
 
     auto shader_glsl_frag_attr = elem->Attribute("shader-frag-glsl");
@@ -419,6 +420,7 @@ sg::Material &parse_material(RenderState &state, sg::scene_t &scene, tinyxml2::X
     any_material_attr_set |= mat_tex_albedo1_attr != nullptr;
     any_material_attr_set |= mat_tex_albedo2_attr != nullptr;
     any_material_attr_set |= mat_tex_normal_attr != nullptr;
+    any_material_attr_set |= mat_tex_metallic_attr != nullptr;
     any_material_attr_set |= mat_tex_roughness_attr != nullptr;
 
     any_material_attr_set |= shader_glsl_frag_attr != nullptr;
@@ -442,7 +444,33 @@ sg::Material &parse_material(RenderState &state, sg::scene_t &scene, tinyxml2::X
         }
 
         if (mat_tex_albedo0_attr) {
+            auto tex = state.load_texture({.path = mat_tex_albedo0_attr, .type = TextureType::RGBA});
+            material->set_albedo0(tex);
+        }
 
+        if (mat_tex_albedo1_attr) {
+            auto tex = state.load_texture({.path = mat_tex_albedo1_attr, .type = TextureType::RGBA});
+            material->set_albedo1(tex);
+        }
+
+        if (mat_tex_albedo2_attr) {
+            auto tex = state.load_texture({.path = mat_tex_albedo2_attr, .type = TextureType::RGBA});
+            material->set_albedo2(tex);
+        }
+
+        if (mat_tex_normal_attr) {
+            auto tex = state.load_texture({.path = mat_tex_normal_attr, .type = TextureType::RGBA});
+            material->set_normal(tex);
+        }
+
+        if (mat_tex_metallic_attr) {
+            auto tex = state.load_texture({.path = mat_tex_metallic_attr, .type = TextureType::R});
+            material->set_metallic(tex);
+        }
+
+        if (mat_tex_roughness_attr) {
+            auto tex = state.load_texture({.path = mat_tex_roughness_attr, .type = TextureType::R});
+            material->set_roughness(tex);
         }
 
         if (shader_glsl_frag_attr && shader_glsl_vert_attr) {

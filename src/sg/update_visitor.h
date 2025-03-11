@@ -25,10 +25,4 @@ public:
         }
         transform.update();
     }
-    void visit(sg::lod_t &lod) override {
-        for (auto &child : lod.children()) {
-            child->accept(*this);
-        }
-        lod.update();
-    }
 };
