@@ -23,3 +23,10 @@ std::string format_as(MeshHandle h) {
 std::string format_as(ObjectHandle h) {
     return fmt::format("obj:{}", h.id);
 }
+
+std::string format_as(ShaderHandle h) {
+    return fmt::format("shd:{}", h.id);
+}
+std::string format_as(LightHandle h) {
+    return fmt::format("lht:{}", h.id);
+}

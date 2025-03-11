@@ -117,17 +117,17 @@ public:
     const ObjectData &object_data(ObjectHandle handle);
     void update_object(ObjectHandle handle, const ObjectData &);
 
+    // lights
+    LightHandle alloc_light(const LightData &);
+    const LightData &light_data(LightHandle handle);
+    void update_light(LightHandle handle, const LightData &);
+
     void update_material(MaterialHandle handle, const MaterialData &);
 
     struct ShaderInfo {
         VkPipeline render_pipeline;
     };
     ShaderHandle store_shader(const ShaderInfo &info);
-
-    // @todo: I don't think it is that important to track lights.
-    // Therefore, lights are just uploaded again every frame D:
-    // I think this is 'fine' for now... hope.
-    void set_lights(std::span<const LightData> lights);
 
     void update_global(const GlobalData &);
 
@@ -168,8 +168,8 @@ public:
     const GpuBuffer &material_buffer() const { return m_material_buffer; }
     const GpuBuffer &mesh_buffer() const { return m_mesh_buffer; }
     const GpuBuffer &global_buffer() const { return m_global_buffer; }
+    const GpuBuffer &light_buffer() const { return m_lights.buffer; }
 
-    std::span<const LightData> lights() const { return m_lights; }
     TextureSlot &texture(TextureHandle handle) { return m_textures[handle.id]; }
 
     std::span<const ShaderInfo> shaders() { return m_shaders; }
@@ -186,10 +186,6 @@ private:
     GpuBuffer m_material_buffer;
     GpuBuffer m_mesh_buffer;
     GpuBuffer m_global_buffer;
-
-    GpuBuffer m_light_buffer;
-    std::vector<LightData> m_lights;
-    bool m_lights_dirty = false;
 
     TextureSlot *m_textures = nullptr;
 
@@ -208,6 +204,15 @@ private:
     u32 m_highest_object_id = 0;
 
     std::vector<ShaderInfo> m_shaders;
+
+    // @todo: same behaviour as object data; maybe break out into a CpuGpuSyncedBuffer?
+    struct {
+        GpuBuffer buffer;
+        LightData *data = nullptr;
+        SlotAllocator allocator;
+
+        std::set<LightHandle> dirty;
+    } m_lights;
 
     struct {
         u32 vertices = 0;

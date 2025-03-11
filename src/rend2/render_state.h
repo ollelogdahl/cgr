@@ -56,6 +56,9 @@ public:
     void assign_shader(ObjectHandle handle, ShaderHandle shader);
 
     void update_transform(ObjectHandle handle, const m4f &transform);
+
+    LightHandle add_light(const LightData &data);
+    void update_light(LightHandle handle, const LightData &data);
 private:
     gpu_t &m_gpu;
     RenderStorage &m_storage;

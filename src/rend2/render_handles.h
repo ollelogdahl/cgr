@@ -140,3 +140,5 @@ std::string format_as(MaterialHandle);
 std::string format_as(TextureHandle);
 std::string format_as(MeshHandle);
 std::string format_as(ObjectHandle);
+std::string format_as(ShaderHandle);
+std::string format_as(LightHandle);

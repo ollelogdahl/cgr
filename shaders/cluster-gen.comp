@@ -1,0 +1,87 @@
+#version 460
+
+// @todo: this is bad utilization!!
+layout(local_size_x = 1) in;
+
+#define MAX_LIGHTS_PER_CLUSTER 31
+
+struct ClusterData {
+    vec4 bounds_min;
+    vec4 bounds_max;
+    uint num_lights;
+    uint light_indices[MAX_LIGHTS_PER_CLUSTER];
+};
+
+struct ClusterGenPushConstants {
+    mat4 inv_proj;
+    float znear;
+    float zfar;
+    uint grid_x;
+    uint grid_y;
+    uint grid_z;
+};
+
+layout(set = 0, binding = 0) buffer ClusterBuffer {
+    ClusterData clusters[];
+};
+
+layout(push_constant) uniform Constants {
+    ClusterGenPushConstants push;
+};
+
+vec3 ndc_to_view(vec3 ndc);
+vec3 line_z_intersect(vec3 p1, vec3 p2, float z);
+
+void main() {
+    uint cluster_index = gl_WorkGroupID.x + (gl_WorkGroupID.y * push.grid_x) +
+                (gl_WorkGroupID.z * push.grid_x * push.grid_y);
+
+    // [0, grid) to NDC [-1, 1]
+    vec3 grid_size = vec3(push.grid_x, push.grid_y, push.grid_z);
+
+    vec2 cluster_min = (vec2(gl_WorkGroupID.xy) / grid_size.xy) * 2.0 - 1.0;
+    vec2 cluster_max = (vec2(gl_WorkGroupID.xy + 1) / grid_size.xy) * 2.0 - 1.0;
+
+    // calculate the z values using exponential division
+    float min_z = push.znear * pow(push.zfar / push.znear, float(gl_WorkGroupID.z) / grid_size.z);
+    float max_z = push.znear * pow(push.zfar / push.znear, float(gl_WorkGroupID.z + 1) / grid_size.z);
+
+    vec3 cluster_min_vs = ndc_to_view(vec3(cluster_min, -1));
+    vec3 cluster_max_vs = ndc_to_view(vec3(cluster_max, -1));
+
+    // eye in view space
+    vec3 eye_vs = vec3(0.0, 0.0, 0.0);
+
+    // calculate intersection points
+    vec3 min_near_vs = line_z_intersect(eye_vs, cluster_min_vs, min_z);
+    vec3 max_near_vs = line_z_intersect(eye_vs, cluster_max_vs, min_z);
+    vec3 min_far_vs = line_z_intersect(eye_vs, cluster_min_vs, max_z);
+    vec3 max_far_vs = line_z_intersect(eye_vs, cluster_max_vs, max_z);
+
+    vec3 corners[4] = {min_near_vs, max_near_vs, min_far_vs, max_far_vs};
+
+    vec3 cluster_bounds_min = min_near_vs;
+    vec3 cluster_bounds_max = max_near_vs;
+
+    for (int i = 1; i < 4; i++) {
+        cluster_bounds_min = min(cluster_bounds_min, corners[i]);
+        cluster_bounds_max = max(cluster_bounds_max, corners[i]);
+    }
+
+    // create the minimal AABB containing this sub-frustum
+    // vec4 cluster_bounds_min = vec4(min(min_near_vs, min_far_vs), 0.0);
+    // vec4 cluster_bounds_max = vec4(max(max_near_vs, max_far_vs), 0.0);
+
+    clusters[cluster_index].bounds_min = vec4(cluster_bounds_min, 0.0);
+    clusters[cluster_index].bounds_max = vec4(cluster_bounds_max, 0.0);
+}
+
+vec3 line_z_intersect(vec3 p1, vec3 p2, float z) {
+    return p1 + (p2 - p1) * ((z - p1.z) / (p2.z - p1.z));
+}
+
+vec3 ndc_to_view(vec3 ndc) {
+    vec4 viewCoord = push.inv_proj * vec4(ndc, 1.0);
+    viewCoord /= viewCoord.w;
+    return viewCoord.xyz;
+}

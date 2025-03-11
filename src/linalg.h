@@ -312,7 +312,7 @@ struct m4f {
     // map the z-range from [-1, 1] to [0, 1]
     m4f static constexpr normalize_unit_range(const m4f &mat);
 
-    m4f static constexpr inverse(m4f &mat);
+    m4f static constexpr inverse(const m4f &mat);
 };
 
 // 3x4 matrix useful to store affine transformations
@@ -505,10 +505,10 @@ m4f constexpr m4f::normalize_unit_range(const m4f &mat) {
     return mat * normalize;
 }
 
-m4f constexpr m4f::inverse(m4f &mat) {
+m4f constexpr m4f::inverse(const m4f &mat) {
     // calculate the inverse of a 4x4 matrix
     m4f inverse;
-    f32 *m = mat.m;
+    const f32 *m = mat.m;
     f32 *inv = inverse.m;
 
     // taken from mesa glu library

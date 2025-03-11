@@ -29,14 +29,18 @@ RenderStorage::RenderStorage(gpu_t &gpu, const RenderStorageConfig &config)
     m_material_buffer(gpu, config.max_materials * sizeof(MaterialData), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT),
     m_mesh_buffer(gpu, config.max_meshes * sizeof(MeshData), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT),
     m_global_buffer(gpu, sizeof(GlobalData), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT),
-    m_light_buffer(gpu, config.max_lights * sizeof(LightData) + sizeof(u32), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT),
     m_textures(new TextureSlot[config.max_textures]),
     m_vertex_alloc(config.max_vertices),
     m_index_alloc(config.max_indices),
     m_material_alloc(config.max_materials),
     m_mesh_alloc(config.max_meshes),
     m_texture_alloc(config.max_textures),
-    m_object_alloc(config.max_objects) {
+    m_object_alloc(config.max_objects),
+    m_lights(
+        GpuBuffer(gpu, config.max_lights * sizeof(LightData), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT),
+        new LightData[config.max_lights],
+        SlotAllocator(config.max_lights)
+    ) {
 
     u64 gpu_total_size_bytes = m_object_buffer.size() + m_vertex_buffer.size() + m_index_buffer.size() +
         m_material_buffer.size() + m_mesh_buffer.size() + m_global_buffer.size();
@@ -93,7 +97,7 @@ RenderStorage::RenderStorage(gpu_t &gpu, const RenderStorageConfig &config)
         m_render_descriptor_set.write_storage_buffer(0, 0, m_global_buffer.get(), 0, VK_WHOLE_SIZE);
         m_render_descriptor_set.write_storage_buffer(1, 0, m_object_buffer.get(), 0, VK_WHOLE_SIZE);
         m_render_descriptor_set.write_storage_buffer(2, 0, m_material_buffer.get(), 0, VK_WHOLE_SIZE);
-        m_render_descriptor_set.write_storage_buffer(3, 0, m_light_buffer.get(), 0, VK_WHOLE_SIZE);
+        m_render_descriptor_set.write_storage_buffer(3, 0, m_lights.buffer.get(), 0, VK_WHOLE_SIZE);
         m_render_descriptor_set.flush(gpu);
     }
 }
@@ -209,77 +213,6 @@ ObjectHandle RenderStorage::alloc_object() {
     return {idx};
 }
 
-void RenderStorage::set_lights(std::span<const LightData> lights) {
-    m_lights = {lights.begin(), lights.end()};
-
-    auto create_shadow_texture = [&]() -> TextureHandle {
-        gpu_image_t tex;
-        m_gpu->create_image(2048, 2048, VK_FORMAT_D32_SFLOAT,
-            VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-            tex);
-
-        // @todo: messy!
-        {
-            // create the view
-            VkImageViewCreateInfo viewInfo{};
-            viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-            viewInfo.image = tex.image;
-            viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-            viewInfo.format = VK_FORMAT_D32_SFLOAT;
-            viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
-            viewInfo.subresourceRange.baseMipLevel = 0;
-            viewInfo.subresourceRange.levelCount = 1;
-            viewInfo.subresourceRange.baseArrayLayer = 0;
-            viewInfo.subresourceRange.layerCount = 1;
-
-            VK_CHECK(vkCreateImageView(m_gpu->device, &viewInfo, nullptr, &tex.view));
-        }
-
-        auto cmd = m_gpu->begin_single_use_command_buffer();
-        transition_image(cmd, tex.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL);
-        m_gpu->end_single_use_command_buffer(cmd);
-
-        // @todo: we can probably share this. Overall, I think it is kinda stupid to
-        // have all texture be combined-image-samplers. We can probably be smarter by
-        // separating into texture kinds; shadow-textures, resource-textures, ...
-        //
-        // This way, each can have their own sampler. Idk.
-        VkSampler sampler;
-        VkSamplerCreateInfo sampler_info = {};
-        sampler_info.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-        sampler_info.magFilter = VK_FILTER_LINEAR;
-        sampler_info.minFilter = VK_FILTER_LINEAR;
-        sampler_info.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-        sampler_info.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-        sampler_info.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-        sampler_info.anisotropyEnable = VK_FALSE;
-
-        vkCreateSampler(m_gpu->device, &sampler_info, nullptr, &sampler);
-
-        logger.info("created shadow texture: {} v: {} s: {}", (void *)tex.image, (void *)tex.view, (void *)sampler);
-        return alloc_texture(tex.image, tex.view, sampler);
-    };
-
-    for (auto &light : m_lights) {
-        bool is_directional = light.position.w == 0;
-
-        // for now, we create a texture for each directional light.
-        //
-        // @todo: we cannot be doing this every time lights change.
-        // I think it would be reasonable to reserve some, and then re-assign
-        // them when needed.
-        //
-        // @todo: different lights have different needs. For example,
-        // directional lights might want a cascaded shadow map, while point lights
-        // will need 6 textures. Spotlights will only need one.
-        // if (is_directional) {
-        //     light.shadowcast_texture_id = create_shadow_texture().id;
-        // }
-    }
-
-    m_lights_dirty = true;
-}
-
 void RenderStorage::update_object(ObjectHandle handle, const ObjectData &object) {
     u32 idx = m_object_to_idx_map[handle.id];
     BatchId new_batch = object.batch;
@@ -373,6 +306,13 @@ RenderStorage::FlushDependencies RenderStorage::flush(CommandBuffer &cmd) {
     }
     dirty_objects.clear();
 
+    WriteCache<LightData> light_changes;
+    for (auto &handle : m_lights.dirty) {
+        LightData &light = m_lights.data[handle.id];
+        light_changes.insert(handle.id * sizeof(LightData), light);
+    }
+    m_lights.dirty.clear();
+
     FlushDependencies deps;
 
     deps.textures = m_render_descriptor_set.flush(*m_gpu);
@@ -401,22 +341,14 @@ RenderStorage::FlushDependencies RenderStorage::flush(CommandBuffer &cmd) {
         if (!object_changes.empty()) {
             deps.objects = m_object_buffer.multiwrite_with_barrier(cmd.get(), object_changes.write_list());
         }
+        if (!light_changes.empty()) {
+            deps.lights = m_lights.buffer.multiwrite_with_barrier(cmd.get(), light_changes.write_list());
+        }
 
         if (m_writes.global_data_dirty) {
             slice<byte> global_data_slice((byte *)&m_writes.global_data, sizeof(GlobalData));
             deps.global = m_global_buffer.write_with_barrier(cmd.get(), global_data_slice);
             m_writes.global_data_dirty = false;
-        }
-
-        if (m_lights_dirty) {
-            slice<byte> light_data_slice((byte *)m_lights.data(), m_lights.size() * sizeof(LightData));
-            deps.lights = m_light_buffer.write_with_barrier(cmd.get(), light_data_slice, 16);
-
-            u32 size = m_lights.size();
-            auto size_dep = m_light_buffer.write_with_barrier(cmd.get(), slice<byte>((byte *)&size, sizeof(u32)), 0);
-
-            deps.lights.join(size_dep);
-            m_lights_dirty = false;
         }
     }
 

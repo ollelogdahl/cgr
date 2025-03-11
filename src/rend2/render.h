@@ -2,6 +2,7 @@
 
 #include "model.h"
 #include "oc.h"
+#include "rend2/cluster.h"
 #include "rend2/forward_mesh_pass.h"
 #include "rend2/render_handles.h"
 #include "rend2/render_storage.h"
@@ -31,4 +32,6 @@ private:
     GpuBuffer m_draw_buffer;
     ForwardMeshPass m_forward_pass;
     ShadowMeshPass m_shadow_pass;
+
+    ClusterShading m_cluster_shading;
 };

@@ -115,7 +115,9 @@ void Application::init_and_run(const char *scene_file_path, const ApplicationCon
     TracyProfilerRunner tracy_runner;
 
     // fixed perspective projection
-    m4f persp = m4f::perspective(anglef::from_deg(90.0), 1200.0f / 900.0f, 0.1f, 400.0f);
+    f32 znear = 0.1f;
+    f32 zfar = 400.0f;
+    m4f persp = m4f::perspective(anglef::from_deg(90.0), 1200.0f / 900.0f, znear, zfar);
 
     g_log.info("running...");
     while (!glfwWindowShouldClose(m_window)) {
@@ -151,15 +153,14 @@ void Application::init_and_run(const char *scene_file_path, const ApplicationCon
 
             // @todo: how should we do delta-time?
             camera_controller.update(*main_camera, 1.0f / 30.0f);
-
-            // @todo: this should be redesigned later.
-            m_storage->set_lights(render_visitor.collected_lights());
         }
 
         View view = {
             .projection = persp,
             .view = m4f::look_at(main_camera->position(), main_camera->position() + main_camera->forward(), main_camera->up()),
             .position = main_camera->position(),
+            .znear = znear,
+            .zfar = zfar,
         };
 
         m_gpu.frame([&](gpu_t::frame_t &frame) {

@@ -56,7 +56,7 @@ private:
 };
 
 static const RenderStorageConfig config = {
-    .max_objects = 20 * 1024,
+    .max_objects = 30 * 1024,
     .max_vertices = 1 * 1024 * 1024,
     .max_indices = 1 * 1024 * 1024,
     .max_meshes = 1024,
@@ -73,7 +73,8 @@ Renderer::Renderer(gpu_t &gpu, RenderStorage &storage, ShaderCompiler &sc) : m_g
     m_draw_buffer(gpu, max_draws * sizeof(DrawCommand) + 1 * sizeof(u32),
         VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT),
     m_forward_pass(gpu, sc, m_storage, m_draw_buffer),
-    m_shadow_pass(gpu, sc, m_storage, m_draw_buffer) {
+    m_shadow_pass(gpu, sc, m_storage, m_draw_buffer),
+    m_cluster_shading(gpu, sc, 4, 4, 12) {
 
     m_forward_pipeline_layout = m_forward_pass.pipeline_layout();
 }
@@ -93,6 +94,11 @@ void Renderer::render(gpu_t::frame_t &frame, const View &view) {
         .proj = view.projection,
         .view_pos = view.position,
     });
+
+    // @todo: only do this when projection changes.
+    // @todo: view could contain m4fbi instead?
+    m4f inv_proj = m4f::inverse(view.projection);
+    m_cluster_shading.rebuild_clusters(frame.cmd, view.znear, view.zfar, inv_proj);
 
     auto state_dependencies = m_storage.flush(frame.cmd);
 
