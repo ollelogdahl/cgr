@@ -211,6 +211,7 @@ private:
         LightData *data = nullptr;
         SlotAllocator allocator;
 
+        u32 highest_id = 0;
         std::set<LightHandle> dirty;
     } m_lights;
 
@@ -221,6 +222,7 @@ private:
         u32 meshes = 0;
         u32 objects = 0;
         u32 textures = 0;
+        u32 lights = 0;
     } counts;
 
     std::set<ObjectHandle> dirty_objects;

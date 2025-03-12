@@ -1,16 +1,10 @@
 #version 460
 
-// @todo: this is bad utilization!!
-layout(local_size_x = 1) in;
+#include "cluster.glsl"
 
-#define MAX_LIGHTS_PER_CLUSTER 31
+layout(local_size_x = 128) in;
 
-struct ClusterData {
-    vec4 bounds_min;
-    vec4 bounds_max;
-    uint num_lights;
-    uint light_indices[MAX_LIGHTS_PER_CLUSTER];
-};
+#define FLT_MAX 3.402823466e+38
 
 struct ClusterGenPushConstants {
     mat4 inv_proj;
@@ -22,6 +16,7 @@ struct ClusterGenPushConstants {
 };
 
 layout(set = 0, binding = 0) buffer ClusterBuffer {
+    ClusterConstants cluster_constants;
     ClusterData clusters[];
 };
 
@@ -33,44 +28,58 @@ vec3 ndc_to_view(vec3 ndc);
 vec3 line_z_intersect(vec3 p1, vec3 p2, float z);
 
 void main() {
-    uint cluster_index = gl_WorkGroupID.x + (gl_WorkGroupID.y * push.grid_x) +
-                (gl_WorkGroupID.z * push.grid_x * push.grid_y);
+    uint cluster_index = gl_GlobalInvocationID.x;
+
+    if (cluster_index >= push.grid_x * push.grid_y * push.grid_z) {
+        return;
+    }
+
+    uvec3 cluster_pos = uvec3(
+        cluster_index % push.grid_x,
+        (cluster_index / push.grid_x) % push.grid_y,
+        cluster_index / (push.grid_x * push.grid_y)
+    );
 
     // [0, grid) to NDC [-1, 1]
     vec3 grid_size = vec3(push.grid_x, push.grid_y, push.grid_z);
 
-    vec2 cluster_min = (vec2(gl_WorkGroupID.xy) / grid_size.xy) * 2.0 - 1.0;
-    vec2 cluster_max = (vec2(gl_WorkGroupID.xy + 1) / grid_size.xy) * 2.0 - 1.0;
+    cluster_constants.znear = push.znear;
+    cluster_constants.zfar = push.zfar;
+    cluster_constants.grid_x = push.grid_x;
+    cluster_constants.grid_y = push.grid_y;
+    cluster_constants.grid_z = push.grid_z;
+
+    vec2 cluster_min = (vec2(cluster_pos.xy) / grid_size.xy) * 2.0 - 1.0;
+    vec2 cluster_max = (vec2(cluster_pos.xy + uvec2(1, 1)) / grid_size.xy) * 2.0 - 1.0;
 
     // calculate the z values using exponential division
-    float min_z = push.znear * pow(push.zfar / push.znear, float(gl_WorkGroupID.z) / grid_size.z);
-    float max_z = push.znear * pow(push.zfar / push.znear, float(gl_WorkGroupID.z + 1) / grid_size.z);
-
-    vec3 cluster_min_vs = ndc_to_view(vec3(cluster_min, -1));
-    vec3 cluster_max_vs = ndc_to_view(vec3(cluster_max, -1));
+    float min_z = push.znear * pow(push.zfar / push.znear, float(cluster_pos.z) / grid_size.z);
+    float max_z = push.znear * pow(push.zfar / push.znear, float(cluster_pos.z + 1) / grid_size.z);
 
     // eye in view space
     vec3 eye_vs = vec3(0.0, 0.0, 0.0);
 
-    // calculate intersection points
-    vec3 min_near_vs = line_z_intersect(eye_vs, cluster_min_vs, min_z);
-    vec3 max_near_vs = line_z_intersect(eye_vs, cluster_max_vs, min_z);
-    vec3 min_far_vs = line_z_intersect(eye_vs, cluster_min_vs, max_z);
-    vec3 max_far_vs = line_z_intersect(eye_vs, cluster_max_vs, max_z);
+    // calculate the four corners of the cluster in view space
+    vec3 corners_vs[4] = {
+        ndc_to_view(vec3(cluster_min.x, cluster_min.y, -1.0)),
+        ndc_to_view(vec3(cluster_max.x, cluster_min.y, -1.0)),
+        ndc_to_view(vec3(cluster_min.x, cluster_max.y, -1.0)),
+        ndc_to_view(vec3(cluster_max.x, cluster_max.y, -1.0))
+    };
 
-    vec3 corners[4] = {min_near_vs, max_near_vs, min_far_vs, max_far_vs};
+    // extract the 'froxel' corners in view space
+    vec3 cluster_bounds_min = vec3(FLT_MAX);
+    vec3 cluster_bounds_max = vec3(-FLT_MAX);
 
-    vec3 cluster_bounds_min = min_near_vs;
-    vec3 cluster_bounds_max = max_near_vs;
+    for (int i = 0; i < 4; i++) {
+        vec3 near_vs = line_z_intersect(eye_vs, corners_vs[i], min_z);
+        vec3 far_vs = line_z_intersect(eye_vs, corners_vs[i], max_z);
 
-    for (int i = 1; i < 4; i++) {
-        cluster_bounds_min = min(cluster_bounds_min, corners[i]);
-        cluster_bounds_max = max(cluster_bounds_max, corners[i]);
+        cluster_bounds_min = min(cluster_bounds_min, near_vs);
+        cluster_bounds_min = min(cluster_bounds_min, far_vs);
+        cluster_bounds_max = max(cluster_bounds_max, near_vs);
+        cluster_bounds_max = max(cluster_bounds_max, far_vs);
     }
-
-    // create the minimal AABB containing this sub-frustum
-    // vec4 cluster_bounds_min = vec4(min(min_near_vs, min_far_vs), 0.0);
-    // vec4 cluster_bounds_max = vec4(max(max_near_vs, max_far_vs), 0.0);
 
     clusters[cluster_index].bounds_min = vec4(cluster_bounds_min, 0.0);
     clusters[cluster_index].bounds_max = vec4(cluster_bounds_max, 0.0);

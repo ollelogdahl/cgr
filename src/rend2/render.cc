@@ -74,9 +74,17 @@ Renderer::Renderer(gpu_t &gpu, RenderStorage &storage, ShaderCompiler &sc) : m_g
         VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT),
     m_forward_pass(gpu, sc, m_storage, m_draw_buffer),
     m_shadow_pass(gpu, sc, m_storage, m_draw_buffer),
-    m_cluster_shading(gpu, sc, 4, 4, 12) {
+    m_cluster_shading(gpu, sc, ClusterConfig{
+        .grid_x = 2,
+        .grid_y = 2,
+        .grid_z = 2,
+        .light_buffer = m_storage.light_buffer(),
+    }) {
 
     m_forward_pipeline_layout = m_forward_pass.pipeline_layout();
+
+    m_storage.render_descriptor_set().write_storage_buffer(4, 0, m_cluster_shading.cluster_buffer().get(), 0, VK_WHOLE_SIZE);
+    m_storage.render_descriptor_set().flush(gpu);
 }
 
 RenderStorage::ShaderInfo Renderer::create_pipelines_for(Shader &shader) {
@@ -95,10 +103,12 @@ void Renderer::render(gpu_t::frame_t &frame, const View &view) {
         .view_pos = view.position,
     });
 
-    // @todo: only do this when projection changes.
-    // @todo: view could contain m4fbi instead?
-    m4f inv_proj = m4f::inverse(view.projection);
-    m_cluster_shading.rebuild_clusters(frame.cmd, view.znear, view.zfar, inv_proj);
+    {
+        // @todo: only do this when projection changes.
+        // @todo: view could contain m4fbi instead?
+        m4f inv_proj = m4f::inverse(view.projection);
+        m_cluster_shading.rebuild_clusters(frame.cmd, view.znear, view.zfar, inv_proj);
+    }
 
     auto state_dependencies = m_storage.flush(frame.cmd);
 
@@ -126,65 +136,24 @@ void Renderer::render(gpu_t::frame_t &frame, const View &view) {
             VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT);
     }
 
-    // make one shadow pass for each light which casts shadows.
-    /*
-    ImageDependency shadow_dependencies;
-    bool first_light = true;
-    for (auto &light : m_state.lights()) {
-        bool casts_shadow = light.shadowcast_texture_id != -1U;
-
-        if (casts_shadow) {
-
-            if (first_light) {
-                first_light = false;
-            } else {
-                WriteDependency draw_buffer_dependency;
-                draw_buffer_dependency.add(
-                    VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT,
-                    VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT,
-                    m_draw_buffer.get());
-                draw_buffer_dependency.pipeline_barrier(frame.cmd.get(),
-                    VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_WRITE_BIT);
-            }
-
-            TextureSlot &slot = m_state.texture(light.shadowcast_texture_id);
-            RenderTarget target = {
-                .depth_view = slot.view,
-                .extent = {2048, 2048},
-                .clear_first = true,
-            };
-
-            f32 shadow_start_distance = 10.0f;
-            f32 shadow_depth_distance = 20.0f;
-            f32 shadow_width = 20.0f;
-
-            v3f light_dir = light.position.xyz();
-
-            m4f lookat = m4f::look_at(light_dir * -shadow_start_distance, {0, 0, 0}, {0, 1, 0});
-            m4f projection = m4f::orthographic(-shadow_width, shadow_width, -shadow_width, shadow_width, 0.0001, shadow_depth_distance);
-
-            View shadow_view = {
-                .projection = projection,
-                .view = lookat,
-                .position = {0, 0, 0},
-            };
-            m_shadow_pass.record(frame.cmd, target, shadow_view, max_draws);
-
-            shadow_dependencies.add(VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
-                VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, slot.image);
-        }
-    }
-
     {
-        // wait for shadow texture to be written.
-        //  -> this happens after any writes to the draw buffer.
+        // assign items to clusters.
 
-        TracyVkZone(frame.cmd.tracy_ctx(), frame.cmd.get(), "wait-shadow-pass");
+        {
+            TracyVkZone(frame.cmd.tracy_ctx(), frame.cmd.get(), "wait-cluster-shading");
+            WriteDependency dependencies;
+            dependencies.add(
+                VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                VK_ACCESS_2_SHADER_WRITE_BIT,
+                m_cluster_shading.cluster_buffer().get());
+            dependencies.join(state_dependencies.lights);
 
-        shadow_dependencies.pipeline_barrier(frame.cmd.get(),
-            VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT);
+            dependencies.pipeline_barrier(frame.cmd.get(),
+                VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT);
+        }
+
+        m_cluster_shading.assign_items(frame.cmd, view.view);
     }
-    */
 
     {
         // barrier for updates to textures in descriptor set

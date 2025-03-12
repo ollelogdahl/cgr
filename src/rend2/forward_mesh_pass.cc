@@ -4,15 +4,16 @@
 
 #include <tracy/Tracy.hpp>
 
-ForwardMeshPass::ForwardMeshPass(gpu_t &gpu, ShaderCompiler &sc, RenderStorage &state,
+ForwardMeshPass::ForwardMeshPass(gpu_t &gpu, ShaderCompiler &sc, RenderStorage &storage,
     GpuBuffer &draw_buffer)
-: m_gpu(gpu), m_state(state), m_draw_buffer(draw_buffer), m_cull_pass(gpu, sc),
+: m_gpu(gpu), m_state(storage), m_draw_buffer(draw_buffer), m_cull_pass(gpu, sc),
     m_pipeline_query(gpu) {
 
-    m_cull_pass.bind_buffers(state.object_buffer(), draw_buffer, state.mesh_buffer());
+    m_cull_pass.bind_buffers(storage.object_buffer(), draw_buffer, storage.mesh_buffer());
 
     m_pipeline_layout = PipelineLayoutBuilder()
-        .add_descriptor_set(state.render_descriptor_set().layout())
+        .add_descriptor_set(storage.render_descriptor_set().layout())
+        .add_push_constant_range({VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(u32)})
         .build(gpu);
 }
 
@@ -40,6 +41,9 @@ void ForwardMeshPass::record(CommandBuffer &cmd, RenderTarget& target, const Vie
 
     vkCmdSetViewport(cmd.get(), 0, 1, &viewport);
     vkCmdSetScissor(cmd.get(), 0, 1, &scissor);
+
+    vkCmdPushConstants(cmd.get(), m_pipeline_layout,
+        VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(u32), &m_debug);
 
     metrics::gauge_u64("rend2.forward.batches", batches.size());
 

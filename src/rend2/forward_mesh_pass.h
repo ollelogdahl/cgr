@@ -20,6 +20,13 @@ struct IndirectBatch2 {
     u32 count;
 };
 
+enum class DebugMode {
+    None,
+    Unlit,
+    ClusterId,
+    ClusterLights,
+};
+
 class ForwardMeshPass {
 public:
     ForwardMeshPass(gpu_t &gpu, ShaderCompiler &sc,
@@ -27,6 +34,8 @@ public:
         GpuBuffer &draw_buffer);
 
     VkPipelineLayout pipeline_layout() const { return m_pipeline_layout; }
+
+    void set_debug_mode(DebugMode mode) { m_debug = mode; }
 
     void record(CommandBuffer &cmd, RenderTarget& target, const View& view,
         std::span<IndirectBatch2> batches);
@@ -41,4 +50,6 @@ private:
     CullComputePass m_cull_pass;
 
     PipelineQuery m_pipeline_query;
+
+    DebugMode m_debug = DebugMode::None;
 };

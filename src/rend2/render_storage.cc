@@ -91,13 +91,15 @@ RenderStorage::RenderStorage(gpu_t &gpu, const RenderStorageConfig &config)
             .add_binding(1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_VERTEX_BIT)
             .add_binding(2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_FRAGMENT_BIT)
             .add_binding(3, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_FRAGMENT_BIT)
-            .add_variable_binding(4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, config.max_textures);
+            .add_binding(4, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_FRAGMENT_BIT)
+            .add_variable_binding(5, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, config.max_textures);
         ds_builder.create_set(gpu, descriptor_pool, m_render_descriptor_set);
 
         m_render_descriptor_set.write_storage_buffer(0, 0, m_global_buffer.get(), 0, VK_WHOLE_SIZE);
         m_render_descriptor_set.write_storage_buffer(1, 0, m_object_buffer.get(), 0, VK_WHOLE_SIZE);
         m_render_descriptor_set.write_storage_buffer(2, 0, m_material_buffer.get(), 0, VK_WHOLE_SIZE);
         m_render_descriptor_set.write_storage_buffer(3, 0, m_lights.buffer.get(), 0, VK_WHOLE_SIZE);
+        //m_render_descriptor_set.write_storage_buffer(4, 0,
         m_render_descriptor_set.flush(gpu);
     }
 }
@@ -175,7 +177,7 @@ TextureHandle RenderStorage::alloc_texture(VkImage image, VkImageView view, VkSa
 
     counts.textures += 1;
 
-    m_render_descriptor_set.write_combined_image_sampler(4, idx, image, view, sampler);
+    m_render_descriptor_set.write_combined_image_sampler(5, idx, image, view, sampler);
     m_textures[idx] = {image, view, sampler};
 
     return {idx};
@@ -287,6 +289,23 @@ ShaderHandle RenderStorage::store_shader(const ShaderInfo &info) {
     return handle;
 }
 
+LightHandle RenderStorage::alloc_light(const LightData &data) {
+    ZoneScoped;
+    u32 idx = m_lights.allocator.allocate();
+    if (idx == -1U) {
+        logger.error("failed to allocate light");
+        return {-1U};
+    }
+    m_lights.highest_id = std::max(m_lights.highest_id, idx);
+
+    counts.lights += 1;
+
+    m_lights.dirty.insert({idx});
+    m_lights.data[idx] = data;
+
+    return {idx};
+}
+
 void RenderStorage::update_material(MaterialHandle handle, const MaterialData &data) {
     m_writes.materials.insert(handle.id * sizeof(MaterialData), data);
 }
@@ -309,7 +328,7 @@ RenderStorage::FlushDependencies RenderStorage::flush(CommandBuffer &cmd) {
     WriteCache<LightData> light_changes;
     for (auto &handle : m_lights.dirty) {
         LightData &light = m_lights.data[handle.id];
-        light_changes.insert(handle.id * sizeof(LightData), light);
+        light_changes.insert(16 + handle.id * sizeof(LightData), light);
     }
     m_lights.dirty.clear();
 
@@ -343,6 +362,8 @@ RenderStorage::FlushDependencies RenderStorage::flush(CommandBuffer &cmd) {
         }
         if (!light_changes.empty()) {
             deps.lights = m_lights.buffer.multiwrite_with_barrier(cmd.get(), light_changes.write_list());
+            auto size_dep = m_lights.buffer.write_with_barrier(cmd.get(), slice<byte>((byte *)&m_lights.highest_id, sizeof(u32)), 0);
+            deps.lights.join(size_dep);
         }
 
         if (m_writes.global_data_dirty) {

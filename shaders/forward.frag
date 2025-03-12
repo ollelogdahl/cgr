@@ -1,6 +1,9 @@
 #version 450
 #extension GL_EXT_nonuniform_qualifier : require
 
+#include "cluster.glsl"
+#include "color.glsl"
+
 #define M_PI 3.1415926535897932384626433832795
 
 layout(location = 0) in vec3 frag_pos_ws;
@@ -10,6 +13,11 @@ layout(location = 3) in vec3 frag_vertex_color;
 layout(location = 4) in flat uint material_id;
 
 layout(location = 0) out vec4 outColor;
+
+#define DEBUG_NONE 0
+#define DEBUG_UNLIT 1
+#define DEBUG_CLUSTER_ID 2
+#define DEBUG_CLUSTER_LIGHTS 3
 
 struct GlobalData {
     mat4 cam_view;
@@ -47,11 +55,20 @@ layout(set = 0, binding = 2) readonly buffer MaterialBuffer {
 };
 
 layout(set = 0, binding = 3) readonly buffer LightBuffer {
-    uint light_count;
+    uint highest_light;
     LightData lights[];
 };
 
-layout(set = 0, binding = 4) uniform sampler2D textures[];
+layout(set = 0, binding = 4) readonly buffer ClusterBuffer {
+    ClusterConstants cluster_constants;
+    ClusterData clusters[];
+};
+
+layout(set = 0, binding = 5) uniform sampler2D textures[];
+
+layout(push_constant) uniform PushConstants {
+    uint debug_mode;
+};
 
 vec3 fresnel_schlick(float cosTheta, vec3 F0)
 {
@@ -187,6 +204,8 @@ void main() {
     vec3 N = normalize(frag_normal_ws);
     vec3 color = vec3(0.0);
 
+    vec3 position_vs = (global.cam_view * vec4(P, 1.0)).xyz;
+
     // determine if we use textures.
     uint normalmap_idx = materials[material_id].tex_normal;
     if (normalmap_idx != -1) {
@@ -227,12 +246,41 @@ void main() {
         metallic = texture(textures[metallic_idx], frag_uv).r;
     }
 
+    if (debug_mode == DEBUG_UNLIT) {
+        outColor = vec4(albedo, 1.0);
+        return;
+    }
+
+    if (debug_mode == DEBUG_CLUSTER_ID) {
+        vec4 clip_pos = global.cam_proj * vec4(position_vs, 1.0);
+        clip_pos /= clip_pos.w;
+
+        uint cluster_id = cluster_lookup(clip_pos.xyz, position_vs, cluster_constants);
+
+        outColor = vec4(color_random(cluster_id), 1.0);
+        return;
+    }
+
+    if (debug_mode == DEBUG_CLUSTER_LIGHTS) {
+
+        vec4 clip_pos = global.cam_proj * vec4(position_vs, 1.0);
+        clip_pos /= clip_pos.w;
+
+        uint cluster_id = cluster_lookup(clip_pos.xyz, position_vs, cluster_constants);
+
+        uint num_lights = clusters[cluster_id].num_lights;
+        float occupancy = float(num_lights) / 30.0f;
+
+        outColor = vec4(color_range_viridis(occupancy), 1.0);
+        return;
+    }
+
     PbrProperties props = PbrProperties(
             albedo,
             roughness,
             metallic);
 
-    for (uint i = 0; i < light_count; i++) {
+    for (uint i = 0; i < highest_light + 1; i++) {
         LightData light = lights[i];
 
         bool light_is_directional = light.position.w == 0.0;

@@ -91,6 +91,13 @@ void Application::init_and_run(const char *scene_file_path, const ApplicationCon
         .max_lights = 1024,
     });
 
+    auto l1 = m_storage->alloc_light({
+        .position = {0, 1, 0, 1},
+        .color = {1, 1, 1, 1},
+        .falloff_linear = 0.14f,
+        .falloff_quadratic = 0.07f,
+    });
+
     m_renderer = new Renderer(m_gpu, *m_storage, shader_compiler);
     m_render_state = new RenderState(m_gpu, *m_storage, *m_renderer, shader_compiler);
 
@@ -116,7 +123,7 @@ void Application::init_and_run(const char *scene_file_path, const ApplicationCon
 
     // fixed perspective projection
     f32 znear = 0.1f;
-    f32 zfar = 400.0f;
+    f32 zfar = 200.0f;
     m4f persp = m4f::perspective(anglef::from_deg(90.0), 1200.0f / 900.0f, znear, zfar);
 
     g_log.info("running...");
@@ -125,6 +132,20 @@ void Application::init_and_run(const char *scene_file_path, const ApplicationCon
 
         vma_query_metrics(m_gpu);
         gui_metric();
+
+        ImGui::Begin("Debug");
+
+        const char *debug_modes[] = {
+            "none",
+            "unlit",
+            "cluster_id",
+            "cluster_lights",
+        };
+        static int debug_mode = 0;
+        ImGui::Combo("Debug mode", &debug_mode, debug_modes, IM_ARRAYSIZE(debug_modes));
+        ImGui::End();
+
+        m_renderer->forward_pass().set_debug_mode((DebugMode)debug_mode);
 
         tracy_runner.update(input);
 
@@ -152,7 +173,7 @@ void Application::init_and_run(const char *scene_file_path, const ApplicationCon
             }
 
             // @todo: how should we do delta-time?
-            camera_controller.update(*main_camera, 1.0f / 30.0f);
+            camera_controller.update(*main_camera, 1.0f / 15.0f);
         }
 
         View view = {

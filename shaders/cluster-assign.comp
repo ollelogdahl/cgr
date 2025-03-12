@@ -1,0 +1,126 @@
+#version 460
+
+#include "cluster.glsl"
+
+#extension GL_EXT_debug_printf : enable
+
+layout(local_size_x = 128) in;
+
+#define FLT_MAX 3.402823466e+38
+
+struct ClusterAssignPushConstants {
+    mat4 view;
+};
+
+struct LightData {
+    vec4 position;
+    vec4 color;
+    float falloff_linear;
+    float falloff_quadratic;
+};
+
+layout(set = 0, binding = 0) buffer ClusterBuffer {
+    ClusterConstants cluster_constants;
+    ClusterData clusters[];
+};
+
+layout(set = 0, binding = 1) buffer ItemBuffer {
+    // for now, uint is the light id. Later lights could be packed. -1 is empty.
+    uint items_size;
+    uint items[];
+};
+
+layout(set = 0, binding = 2) buffer LightBuffer {
+    uint highest_light;
+    LightData lights[];
+};
+
+layout(push_constant) uniform Constants {
+    ClusterAssignPushConstants push;
+};
+
+bool sphere_aabb_intersect(vec3 sphere_center, float radius, vec3 aabb_min, vec3 aabb_max);
+
+float calculate_light_radius(float linear, float quadratic);
+
+void main() {
+    uint cluster_index = gl_GlobalInvocationID.x;
+
+    if (!cluster_index_valid(cluster_index, cluster_constants)) {
+        return;
+    }
+
+    uint item_insert_idx = cluster_index * MAX_CLUSTER_ITEMS;
+    uint local_light_count = 0;
+
+    clusters[cluster_index].num_lights = 0;
+    clusters[cluster_index].item_start = item_insert_idx;
+    vec3 cluster_min = clusters[cluster_index].bounds_min.xyz;
+    vec3 cluster_max = clusters[cluster_index].bounds_max.xyz;
+
+    uint tmp = 1;
+    for (uint i = 0; i < tmp; ++i) {
+        //vec4 light_world = lights[i].position;
+        vec4 light_world = vec4(0.0, 0.0, 0.0, 1.0);
+
+        bool is_first_first = gl_GlobalInvocationID.x == 0;
+
+        if (is_first_first) {
+            debugPrintfEXT("%u: light_world: (%f, %f, %f, %f)", i, light_world.x, light_world.y, light_world.z, light_world.w);
+        }
+
+        if (light_world.w == 0.0) {
+            continue;
+        }
+
+        vec4 light_view = push.view * light_world;
+        light_view /= light_view.w;
+
+        if (is_first_first) {
+            debugPrintfEXT("%u: light_view: (%f, %f, %f, %f)", i, light_view.x, light_view.y, light_view.z, light_view.w);
+        }
+
+
+        //float light_radius = calculate_light_radius(lights[i].falloff_linear, lights[i].falloff_quadratic);
+        float light_radius = 8.0;
+
+        if (sphere_aabb_intersect(light_view.xyz, light_radius, cluster_min, cluster_max)) {
+            if (local_light_count >= MAX_CLUSTER_ITEMS) {
+                break;
+            }
+            items[item_insert_idx] = i;
+            item_insert_idx++;
+            local_light_count++;
+        }
+    }
+
+    clusters[cluster_index].num_lights = local_light_count;
+}
+
+bool sphere_aabb_intersect(vec3 sphere_center, float radius, vec3 aabb_min, vec3 aabb_max) {
+    vec3 closest_point_in_aabb = clamp(sphere_center, aabb_min, aabb_max);
+    float distance = length(closest_point_in_aabb - sphere_center);
+    return distance < radius;
+}
+
+float calculate_light_radius(float linear, float quadratic) {
+    // Solve the quadratic equation to find the radius of the light
+    const float threshold = 1.0/100.0;
+
+    if (quadratic > 0.0) {
+        // Solve quadratic equation: att = 1/(1 + linear*d + quadratic*d^2) = threshold
+        float a = quadratic;
+        float b = linear;
+        float c = 1.0 - (1.0/threshold);
+        float discriminant = b*b - 4.0*a*c;
+
+        if (discriminant < 0.0) return 1.0; // Fallback
+
+        return (-b + sqrt(discriminant)) / (2.0*a);
+    } else if (linear > 0.0) {
+        // Linear-only attenuation
+        return (1.0/threshold - 1.0) / linear;
+    } else {
+        return 0.0; // Default large radius for non-attenuated lights
+    }
+}

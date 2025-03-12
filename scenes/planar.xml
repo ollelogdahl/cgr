@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<scene>
+    <camera position="0 1 0" />
+    <directional-light color="2 2 2" direction="-1 -1 0" />
+    <transform translate="0 -0.5 -4" rotate="-90 0 0" scale="20 1 20">
+        <model file="assets/plane.obj"
+            mat-color="0.1 0.1 0.1"
+            mat-roughness="0.3"
+            mat-tex-albedo0="assets/tiles133a_color.jpg"
+            mat-tex-normal="assets/tiles133a_normal.jpg"
+            mat-tex-roughness="assets/tiles133a_roughness.jpg"
+        />
+    </transform>
+</scene>
