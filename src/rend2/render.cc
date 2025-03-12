@@ -75,9 +75,9 @@ Renderer::Renderer(gpu_t &gpu, RenderStorage &storage, ShaderCompiler &sc) : m_g
     m_forward_pass(gpu, sc, m_storage, m_draw_buffer),
     m_shadow_pass(gpu, sc, m_storage, m_draw_buffer),
     m_cluster_shading(gpu, sc, ClusterConfig{
-        .grid_x = 2,
-        .grid_y = 2,
-        .grid_z = 2,
+        .grid_x = 6,
+        .grid_y = 6,
+        .grid_z = 12,
         .light_buffer = m_storage.light_buffer(),
     }) {
 

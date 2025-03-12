@@ -123,7 +123,7 @@ void Application::init_and_run(const char *scene_file_path, const ApplicationCon
 
     // fixed perspective projection
     f32 znear = 0.1f;
-    f32 zfar = 200.0f;
+    f32 zfar = 100.0f;
     m4f persp = m4f::perspective(anglef::from_deg(90.0), 1200.0f / 900.0f, znear, zfar);
 
     g_log.info("running...");

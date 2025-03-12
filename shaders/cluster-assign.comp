@@ -58,8 +58,7 @@ void main() {
     vec3 cluster_min = clusters[cluster_index].bounds_min.xyz;
     vec3 cluster_max = clusters[cluster_index].bounds_max.xyz;
 
-    uint tmp = 1;
-    for (uint i = 0; i < tmp; ++i) {
+    for (uint i = 0; i < highest_light + 1; ++i) {
         //vec4 light_world = lights[i].position;
         vec4 light_world = vec4(0.0, 0.0, 0.0, 1.0);
 
@@ -75,22 +74,26 @@ void main() {
 
         vec4 light_view = push.view * light_world;
         light_view /= light_view.w;
+        light_view *= -1;
 
         if (is_first_first) {
             debugPrintfEXT("%u: light_view: (%f, %f, %f, %f)", i, light_view.x, light_view.y, light_view.z, light_view.w);
         }
 
-
-        //float light_radius = calculate_light_radius(lights[i].falloff_linear, lights[i].falloff_quadratic);
-        float light_radius = 8.0;
+        float light_radius = calculate_light_radius(lights[i].falloff_linear, lights[i].falloff_quadratic);
 
         if (sphere_aabb_intersect(light_view.xyz, light_radius, cluster_min, cluster_max)) {
+
+            debugPrintfEXT("%u: light (%f, %f, %f, r: %f) in cluster  (%u) ((%f, %f, %f), (%f, %f, %f))", i, light_view.x, light_view.y, light_view.z, light_radius, cluster_index, cluster_min.x, cluster_min.y, cluster_min.z, cluster_max.x, cluster_max.y, cluster_max.z);
+
             if (local_light_count >= MAX_CLUSTER_ITEMS) {
                 break;
             }
             items[item_insert_idx] = i;
             item_insert_idx++;
             local_light_count++;
+        } else {
+            debugPrintfEXT("%u: light (%f, %f, %f, r: %f) not in cluster  (%u) ((%f, %f, %f), (%f, %f, %f))", i, light_view.x, light_view.y, light_view.z, light_radius, cluster_index, cluster_min.x, cluster_min.y, cluster_min.z, cluster_max.x, cluster_max.y, cluster_max.z);
         }
     }
 
@@ -99,13 +102,13 @@ void main() {
 
 bool sphere_aabb_intersect(vec3 sphere_center, float radius, vec3 aabb_min, vec3 aabb_max) {
     vec3 closest_point_in_aabb = clamp(sphere_center, aabb_min, aabb_max);
-    float distance = length(closest_point_in_aabb - sphere_center);
-    return distance < radius;
+    float distance_sq = dot(sphere_center - closest_point_in_aabb, sphere_center - closest_point_in_aabb);
+    return distance_sq < radius * radius;
 }
 
 float calculate_light_radius(float linear, float quadratic) {
     // Solve the quadratic equation to find the radius of the light
-    const float threshold = 1.0/100.0;
+    const float threshold = 1.0/20.0;
 
     if (quadratic > 0.0) {
         // Solve quadratic equation: att = 1/(1 + linear*d + quadratic*d^2) = threshold
