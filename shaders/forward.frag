@@ -16,8 +16,9 @@ layout(location = 0) out vec4 outColor;
 
 #define DEBUG_NONE 0
 #define DEBUG_UNLIT 1
-#define DEBUG_CLUSTER_ID 2
-#define DEBUG_CLUSTER_LIGHTS 3
+#define DEBUG_SKIP_CLUSTER_SHADING 2
+#define DEBUG_CLUSTER_ID 3
+#define DEBUG_CLUSTER_LIGHTS 4
 
 struct GlobalData {
     mat4 cam_view;
@@ -64,7 +65,12 @@ layout(set = 0, binding = 4) readonly buffer ClusterBuffer {
     ClusterData clusters[];
 };
 
-layout(set = 0, binding = 5) uniform sampler2D textures[];
+layout(set = 0, binding = 5) readonly buffer ClusterItemBuffer {
+    uint cluster_items_size;
+    uint cluster_items[];
+};
+
+layout(set = 0, binding = 6) uniform sampler2D textures[];
 
 layout(push_constant) uniform PushConstants {
     uint debug_mode;
@@ -251,23 +257,17 @@ void main() {
         return;
     }
 
+    vec4 clip_pos = global.cam_proj * vec4(position_vs, 1.0);
+    clip_pos /= clip_pos.w;
+
+    uint cluster_id = cluster_lookup(clip_pos.xyz, position_vs, cluster_constants);
+
     if (debug_mode == DEBUG_CLUSTER_ID) {
-        vec4 clip_pos = global.cam_proj * vec4(position_vs, 1.0);
-        clip_pos /= clip_pos.w;
-
-        uint cluster_id = cluster_lookup(clip_pos.xyz, position_vs, cluster_constants);
-
         outColor = vec4(color_random(cluster_id), 1.0);
         return;
     }
 
     if (debug_mode == DEBUG_CLUSTER_LIGHTS) {
-
-        vec4 clip_pos = global.cam_proj * vec4(position_vs, 1.0);
-        clip_pos /= clip_pos.w;
-
-        uint cluster_id = cluster_lookup(clip_pos.xyz, position_vs, cluster_constants);
-
         uint num_lights = clusters[cluster_id].num_lights;
         float occupancy = float(num_lights) / 30.0f;
 
@@ -280,8 +280,46 @@ void main() {
             roughness,
             metallic);
 
-    for (uint i = 0; i < highest_light + 1; i++) {
-        LightData light = lights[i];
+
+    if (debug_mode == DEBUG_SKIP_CLUSTER_SHADING) {
+        for (uint i = 0; i < highest_light + 1; i++) {
+            LightData light = lights[i];
+
+            bool light_is_directional = light.position.w == 0.0;
+            vec3 light_dir_point = normalize(light.position.xyz - P);
+            vec3 light_dir_dir = normalize(-light.position.xyz);
+            vec3 L = light_is_directional ? light_dir_dir : light_dir_point;
+
+            float distance = length(P - light.position.xyz);
+            float point_attenuation = 1.0 / (1.0 + light.falloff_linear * distance + light.falloff_quadratic * pow(distance, 2.0));
+
+            vec3 radiance_point = (light.color.rgb * light.color.a) * point_attenuation;
+            vec3 radiance_dir = light.color.rgb * light.color.a;
+            vec3 radiance = light_is_directional ? radiance_dir : radiance_point;
+            float shadow = 1.0;
+
+            vec3 result = pbr(
+                    L,
+                    V,
+                    N,
+                    props,
+                    radiance,
+                    shadow
+                );
+
+            color += result;
+        }
+
+        outColor = vec4(color, 1.0);
+        return;
+    }
+
+    // @todo: redo this!
+    for (uint i = 0; i < clusters[cluster_id].num_lights; i++) {
+        uint cluster_item = cluster_items[clusters[cluster_id].item_start + i];
+        uint light_id = cluster_item;
+
+        LightData light = lights[light_id];
 
         bool light_is_directional = light.position.w == 0.0;
         vec3 light_dir_point = normalize(light.position.xyz - P);

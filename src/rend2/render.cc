@@ -75,15 +75,16 @@ Renderer::Renderer(gpu_t &gpu, RenderStorage &storage, ShaderCompiler &sc) : m_g
     m_forward_pass(gpu, sc, m_storage, m_draw_buffer),
     m_shadow_pass(gpu, sc, m_storage, m_draw_buffer),
     m_cluster_shading(gpu, sc, ClusterConfig{
-        .grid_x = 6,
-        .grid_y = 6,
-        .grid_z = 12,
+        .grid_x = 16,
+        .grid_y = 8,
+        .grid_z = 22,
         .light_buffer = m_storage.light_buffer(),
     }) {
 
     m_forward_pipeline_layout = m_forward_pass.pipeline_layout();
 
     m_storage.render_descriptor_set().write_storage_buffer(4, 0, m_cluster_shading.cluster_buffer().get(), 0, VK_WHOLE_SIZE);
+    m_storage.render_descriptor_set().write_storage_buffer(5, 0, m_cluster_shading.cluster_item_buffer().get(), 0, VK_WHOLE_SIZE);
     m_storage.render_descriptor_set().flush(gpu);
 }
 

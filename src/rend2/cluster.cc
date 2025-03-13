@@ -17,6 +17,7 @@ struct alignas(16) ClusterGenPushConstants {
 
 struct alignas(16) ClusterAssignPushConstants {
     m4f view;
+    f32 light_threshold;
 };
 
 struct alignas(16) ClusterConstants {
@@ -127,6 +128,7 @@ void ClusterShading::assign_items(CommandBuffer &cmd, const m4f &view_matrix) {
 
     ClusterAssignPushConstants push_constants = {
         .view = view_matrix,
+        .light_threshold = runtime_config.light_threshold,
     };
 
     VkDescriptorSet sets[] = { m_assign_descriptor_set.get() };

@@ -10,6 +10,7 @@ layout(local_size_x = 128) in;
 
 struct ClusterAssignPushConstants {
     mat4 view;
+    float light_threshold;
 };
 
 struct LightData {
@@ -59,15 +60,7 @@ void main() {
     vec3 cluster_max = clusters[cluster_index].bounds_max.xyz;
 
     for (uint i = 0; i < highest_light + 1; ++i) {
-        //vec4 light_world = lights[i].position;
-        vec4 light_world = vec4(0.0, 0.0, 0.0, 1.0);
-
-        bool is_first_first = gl_GlobalInvocationID.x == 0;
-
-        if (is_first_first) {
-            debugPrintfEXT("%u: light_world: (%f, %f, %f, %f)", i, light_world.x, light_world.y, light_world.z, light_world.w);
-        }
-
+        vec4 light_world = lights[i].position;
         if (light_world.w == 0.0) {
             continue;
         }
@@ -76,15 +69,11 @@ void main() {
         light_view /= light_view.w;
         light_view *= -1;
 
-        if (is_first_first) {
-            debugPrintfEXT("%u: light_view: (%f, %f, %f, %f)", i, light_view.x, light_view.y, light_view.z, light_view.w);
-        }
-
-        float light_radius = calculate_light_radius(lights[i].falloff_linear, lights[i].falloff_quadratic);
+        float light_radius = calculate_light_radius(
+            lights[i].falloff_linear, lights[i].falloff_quadratic
+        );
 
         if (sphere_aabb_intersect(light_view.xyz, light_radius, cluster_min, cluster_max)) {
-
-            debugPrintfEXT("%u: light (%f, %f, %f, r: %f) in cluster  (%u) ((%f, %f, %f), (%f, %f, %f))", i, light_view.x, light_view.y, light_view.z, light_radius, cluster_index, cluster_min.x, cluster_min.y, cluster_min.z, cluster_max.x, cluster_max.y, cluster_max.z);
 
             if (local_light_count >= MAX_CLUSTER_ITEMS) {
                 break;
@@ -92,8 +81,6 @@ void main() {
             items[item_insert_idx] = i;
             item_insert_idx++;
             local_light_count++;
-        } else {
-            debugPrintfEXT("%u: light (%f, %f, %f, r: %f) not in cluster  (%u) ((%f, %f, %f), (%f, %f, %f))", i, light_view.x, light_view.y, light_view.z, light_radius, cluster_index, cluster_min.x, cluster_min.y, cluster_min.z, cluster_max.x, cluster_max.y, cluster_max.z);
         }
     }
 
@@ -108,13 +95,12 @@ bool sphere_aabb_intersect(vec3 sphere_center, float radius, vec3 aabb_min, vec3
 
 float calculate_light_radius(float linear, float quadratic) {
     // Solve the quadratic equation to find the radius of the light
-    const float threshold = 1.0/20.0;
 
     if (quadratic > 0.0) {
         // Solve quadratic equation: att = 1/(1 + linear*d + quadratic*d^2) = threshold
         float a = quadratic;
         float b = linear;
-        float c = 1.0 - (1.0/threshold);
+        float c = 1.0 - (1.0/push.light_threshold);
         float discriminant = b*b - 4.0*a*c;
 
         if (discriminant < 0.0) return 1.0; // Fallback
@@ -122,7 +108,7 @@ float calculate_light_radius(float linear, float quadratic) {
         return (-b + sqrt(discriminant)) / (2.0*a);
     } else if (linear > 0.0) {
         // Linear-only attenuation
-        return (1.0/threshold - 1.0) / linear;
+        return (1.0/push.light_threshold - 1.0) / linear;
     } else {
         return 0.0; // Default large radius for non-attenuated lights
     }

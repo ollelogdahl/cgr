@@ -92,14 +92,14 @@ RenderStorage::RenderStorage(gpu_t &gpu, const RenderStorageConfig &config)
             .add_binding(2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_FRAGMENT_BIT)
             .add_binding(3, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_FRAGMENT_BIT)
             .add_binding(4, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_FRAGMENT_BIT)
-            .add_variable_binding(5, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, config.max_textures);
+            .add_binding(5, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_FRAGMENT_BIT)
+            .add_variable_binding(6, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, config.max_textures);
         ds_builder.create_set(gpu, descriptor_pool, m_render_descriptor_set);
 
         m_render_descriptor_set.write_storage_buffer(0, 0, m_global_buffer.get(), 0, VK_WHOLE_SIZE);
         m_render_descriptor_set.write_storage_buffer(1, 0, m_object_buffer.get(), 0, VK_WHOLE_SIZE);
         m_render_descriptor_set.write_storage_buffer(2, 0, m_material_buffer.get(), 0, VK_WHOLE_SIZE);
         m_render_descriptor_set.write_storage_buffer(3, 0, m_lights.buffer.get(), 0, VK_WHOLE_SIZE);
-        //m_render_descriptor_set.write_storage_buffer(4, 0,
         m_render_descriptor_set.flush(gpu);
     }
 }
@@ -177,7 +177,7 @@ TextureHandle RenderStorage::alloc_texture(VkImage image, VkImageView view, VkSa
 
     counts.textures += 1;
 
-    m_render_descriptor_set.write_combined_image_sampler(5, idx, image, view, sampler);
+    m_render_descriptor_set.write_combined_image_sampler(6, idx, image, view, sampler);
     m_textures[idx] = {image, view, sampler};
 
     return {idx};

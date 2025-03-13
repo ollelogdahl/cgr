@@ -23,6 +23,7 @@ struct IndirectBatch2 {
 enum class DebugMode {
     None,
     Unlit,
+    SkipClusterShading,
     ClusterId,
     ClusterLights,
 };

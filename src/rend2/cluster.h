@@ -41,6 +41,8 @@ public:
         u32 num_lights;
     };
 
+    void set_light_threshold(f32 v) { runtime_config.light_threshold = v; }
+
     u32 num_clusters() const { return m_config.grid_x * m_config.grid_y * m_config.grid_z; }
 
     // can be called only when projection changes.
@@ -52,6 +54,7 @@ public:
     void assign_items(CommandBuffer &cmd, const m4f &view_matrix);
 
     GpuBuffer &cluster_buffer() { return m_cluster_buffer; }
+    GpuBuffer &cluster_item_buffer() { return m_items_buffer; }
 private:
     gpu_t &m_gpu;
 
@@ -62,6 +65,10 @@ private:
 
     DescriptorSet m_gen_descriptor_set;
     DescriptorSet m_assign_descriptor_set;
+
+    struct {
+        f32 light_threshold = 1.0 / 40.0f;
+    } runtime_config;
 
     VkPipelineLayout m_gen_pipeline_layout;
     VkPipelineLayout m_assign_pipeline_layout;

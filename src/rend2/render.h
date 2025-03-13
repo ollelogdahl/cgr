@@ -21,6 +21,7 @@ public:
     RenderStorage::ShaderInfo create_pipelines_for(Shader &shader);
 
     ForwardMeshPass &forward_pass() { return m_forward_pass; }
+    ClusterShading &cluster_shading() { return m_cluster_shading; }
 
     // render
     void render(gpu_t::frame_t &frame, const View &view);

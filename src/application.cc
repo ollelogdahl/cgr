@@ -91,12 +91,22 @@ void Application::init_and_run(const char *scene_file_path, const ApplicationCon
         .max_lights = 1024,
     });
 
-    auto l1 = m_storage->alloc_light({
-        .position = {0, 1, 0, 1},
-        .color = {1, 1, 1, 1},
-        .falloff_linear = 0.14f,
-        .falloff_quadratic = 0.07f,
-    });
+    // add lots of lights in a grid
+    usize grid_dim = 4;
+    for (usize i = 0; i < grid_dim; ++i) {
+        for (usize j = 0; j < grid_dim; ++j) {
+            for (usize k = 0; k < grid_dim; ++k) {
+                float spacing = 20.0f;
+                v4f position = {i * spacing - (spacing * grid_dim / 2), j * spacing, k * spacing - (spacing * grid_dim / 2), 1};
+                m_storage->alloc_light({
+                    .position = position,
+                    .color = {1, 1, 1, 1},
+                    .falloff_linear = 0.14f,
+                    .falloff_quadratic = 0.07f,
+                });
+            }
+        }
+    }
 
     m_renderer = new Renderer(m_gpu, *m_storage, shader_compiler);
     m_render_state = new RenderState(m_gpu, *m_storage, *m_renderer, shader_compiler);
@@ -138,11 +148,18 @@ void Application::init_and_run(const char *scene_file_path, const ApplicationCon
         const char *debug_modes[] = {
             "none",
             "unlit",
+            "skip_cluster_shading",
             "cluster_id",
             "cluster_lights",
         };
         static int debug_mode = 0;
         ImGui::Combo("Debug mode", &debug_mode, debug_modes, IM_ARRAYSIZE(debug_modes));
+
+        static i32 threshold_divisor = 40;
+        ImGui::DragInt("Light Threshold divisor", &threshold_divisor, 1.0f, 1, 1000);
+
+        m_renderer->cluster_shading().set_light_threshold(1.0f / threshold_divisor);
+
         ImGui::End();
 
         m_renderer->forward_pass().set_debug_mode((DebugMode)debug_mode);
