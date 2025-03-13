@@ -14,7 +14,6 @@ void DescriptorSet::init(gpu_t &gpu, VkDescriptorPool pool, VkDescriptorSetLayou
 }
 
 void DescriptorSet::write_combined_image_sampler(u32 binding, u32 array_index, VkImage image, VkImageView view, VkSampler sampler) {
-    fmt::println("Writing combined image sampler to binding {} array index {}", binding, array_index);
     m_writer.write_combined_image_sampler(binding, array_index, view, sampler);
 
     m_dependency.add_image(

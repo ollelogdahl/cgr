@@ -2,9 +2,8 @@
 
 #include "cluster.glsl"
 
-#extension GL_EXT_debug_printf : enable
-
-layout(local_size_x = 128) in;
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_ballot : require
 
 #define FLT_MAX 3.402823466e+38
 
@@ -27,8 +26,8 @@ layout(set = 0, binding = 0) buffer ClusterBuffer {
 
 layout(set = 0, binding = 1) buffer ItemBuffer {
     // for now, uint is the light id. Later lights could be packed. -1 is empty.
-    uint items_size;
-    uint items[];
+    uint cluster_items_size;
+    uint cluster_items[];
 };
 
 layout(set = 0, binding = 2) buffer LightBuffer {
@@ -41,50 +40,106 @@ layout(push_constant) uniform Constants {
 };
 
 bool sphere_aabb_intersect(vec3 sphere_center, float radius, vec3 aabb_min, vec3 aabb_max);
-
 float calculate_light_radius(float linear, float quadratic);
+bool light_intersects_cluster(uint light_id, vec3 cluster_min, vec3 cluster_max);
+bool light_intersects_cluster_batched(uint batch_light_id, vec3 cluster_min, vec3 cluster_max);
+
+uint hash_fnv1a_init();
+uint hash_fnv1a_next(uint hash, uint value);
+
+layout(local_size_x = 128) in;
+
+shared LightData shared_lights[128];
+shared float shared_light_radii[128];
 
 void main() {
     uint cluster_index = gl_GlobalInvocationID.x;
+    uint local_index = gl_LocalInvocationID.x;
 
     if (!cluster_index_valid(cluster_index, cluster_constants)) {
         return;
     }
 
-    uint item_insert_idx = cluster_index * MAX_CLUSTER_ITEMS;
-    uint local_light_count = 0;
+    uint cluster_item_count = 0;
+    uint cluster_item_offset = cluster_index * MAX_CLUSTER_ITEMS;
 
-    clusters[cluster_index].num_lights = 0;
-    clusters[cluster_index].item_start = item_insert_idx;
     vec3 cluster_min = clusters[cluster_index].bounds_min.xyz;
     vec3 cluster_max = clusters[cluster_index].bounds_max.xyz;
 
-    for (uint i = 0; i < highest_light + 1; ++i) {
-        vec4 light_world = lights[i].position;
-        if (light_world.w == 0.0) {
-            continue;
+    // Process lights in batches
+    for (uint batch_start = 0; batch_start <= highest_light; batch_start += 128) {
+        // Calculate how many lights in this batch
+
+        uint light_batch_count = 0;
+        if (subgroupElect()) {
+            light_batch_count = min(128u, highest_light + 1 - batch_start);
+        }
+        light_batch_count = subgroupBroadcastFirst(light_batch_count);
+
+        // Cooperatively cache this batch of lights and calculate their radii
+        // Here we can also perform an early cull if the light is outside the view cube.
+
+
+        if (local_index < light_batch_count) {
+            uint light_id = batch_start + local_index;
+
+            shared_lights[local_index] = lights[light_id];
+
+            shared_light_radii[local_index] = calculate_light_radius(
+                shared_lights[local_index].falloff_linear,
+                shared_lights[local_index].falloff_quadratic
+            );
         }
 
-        vec4 light_view = push.view * light_world;
-        light_view /= light_view.w;
-        light_view *= -1;
+        barrier();
 
-        float light_radius = calculate_light_radius(
-            lights[i].falloff_linear, lights[i].falloff_quadratic
-        );
-
-        if (sphere_aabb_intersect(light_view.xyz, light_radius, cluster_min, cluster_max)) {
-
-            if (local_light_count >= MAX_CLUSTER_ITEMS) {
+        // Process this batch of lights
+        for (uint i = 0; i < light_batch_count; i++) {
+            uint light_id = batch_start + i;
+            if (cluster_item_count >= MAX_CLUSTER_ITEMS) {
                 break;
             }
-            items[item_insert_idx] = i;
-            item_insert_idx++;
-            local_light_count++;
+
+            if (light_intersects_cluster_batched(i, cluster_min, cluster_max)) {
+                cluster_items[cluster_item_offset + cluster_item_count] = light_id;
+                cluster_item_count++;
+            }
+        }
+        barrier();
+
+        if (cluster_item_count >= MAX_CLUSTER_ITEMS) {
+            break;
         }
     }
 
-    clusters[cluster_index].num_lights = local_light_count;
+    clusters[cluster_index].item_start = cluster_item_offset;
+    clusters[cluster_index].num_lights = cluster_item_count;
+}
+
+bool light_intersects_cluster_batched(uint batch_light_id, vec3 cluster_min, vec3 cluster_max) {
+    vec4 light_world = shared_lights[batch_light_id].position;
+    if (light_world.w == 0.0) return false;
+
+    vec4 light_view = push.view * light_world;
+    light_view /= light_view.w;
+    light_view *= -1;
+
+    return sphere_aabb_intersect(light_view.xyz, shared_light_radii[batch_light_id], cluster_min, cluster_max);
+}
+
+bool light_intersects_cluster(uint light_id, vec3 cluster_min, vec3 cluster_max) {
+    vec4 light_world = lights[light_id].position;
+    if (light_world.w == 0.0) return false;
+
+    vec4 light_view = push.view * light_world;
+    light_view /= light_view.w;
+    light_view *= -1;
+
+    float light_radius = calculate_light_radius(
+        lights[light_id].falloff_linear, lights[light_id].falloff_quadratic
+    );
+
+    return sphere_aabb_intersect(light_view.xyz, light_radius, cluster_min, cluster_max);
 }
 
 bool sphere_aabb_intersect(vec3 sphere_center, float radius, vec3 aabb_min, vec3 aabb_max) {
@@ -112,4 +167,13 @@ float calculate_light_radius(float linear, float quadratic) {
     } else {
         return 0.0; // Default large radius for non-attenuated lights
     }
+}
+
+uint hash_fnv1a_init() {
+    return 0x811c9dc5;
+}
+uint hash_fnv1a_next(uint hash, uint value) {
+    hash ^= value;
+    hash *= 0x01000193;
+    return hash;
 }

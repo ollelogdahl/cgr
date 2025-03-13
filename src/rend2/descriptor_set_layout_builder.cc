@@ -45,11 +45,6 @@ VkDescriptorSetLayout DescriptorSetLayoutBuilder::build(gpu_t &gpu) {
     VkDescriptorSetLayout layout;
     VK_CHECK(vkCreateDescriptorSetLayout(gpu.device, &layout_info, nullptr, &layout));
 
-    fmt::println("created descriptor set layout {}", (void *)layout);
-    for (auto &binding : bindings) {
-        fmt::println("  binding {} type {} count {} stages {}", binding.binding, (u32)binding.descriptorType, binding.descriptorCount, (u32)binding.stageFlags);
-    }
-
     return layout;
 }
 
@@ -71,8 +66,6 @@ void DescriptorSetLayoutBuilder::create_set(gpu_t &gpu, VkDescriptorPool pool, D
 
     VkDescriptorSet set_handle;
     VK_CHECK(vkAllocateDescriptorSets(gpu.device, &alloc_info, &set_handle));
-
-    fmt::println("created descriptor set {}", (void *)set_handle);
 
     set.m_set = set_handle;
     set.m_layout = layout;
