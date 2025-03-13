@@ -16,15 +16,10 @@ public:
     }
 
     void visit(sg::point_light_t &point_light) override {
-        v4f p1 = v4f{point_light.position.x, point_light.position.y, point_light.position.z, 1};
+        v4f p1 = v4f{0, 0, 0, 1};
         v3f position = (p1 * transform_stack.back()).xyz();
 
-        m_lights.push_back(LightData{
-            .position = p1,
-            .color = {point_light.color.x, point_light.color.y, point_light.color.z, 1},
-            .falloff_linear = point_light.linear,
-            .falloff_quadratic = point_light.quadratic,
-        });
+        point_light.set_position(position);
     }
 
     void visit(sg::directional_light_t &directional_light) override {

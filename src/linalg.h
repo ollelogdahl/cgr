@@ -204,6 +204,10 @@ struct v3f {
     }
 
     v4f constexpr to_homogeneous() const;
+
+    bool operator==(const v3f &other) const {
+        return x == other.x && y == other.y && z == other.z;
+    }
 };
 
 struct v4f {
@@ -313,6 +317,15 @@ struct m4f {
     m4f static constexpr normalize_unit_range(const m4f &mat);
 
     m4f static constexpr inverse(const m4f &mat);
+
+    bool operator==(const m4f &other) const {
+        for (int i = 0; i < 16; i++) {
+            if (m[i] != other.m[i]) {
+                return false;
+            }
+        }
+        return true;
+    }
 };
 
 // 3x4 matrix useful to store affine transformations

@@ -253,3 +253,11 @@ void RenderState::update_transform(ObjectHandle handle, const m4f &t) {
     assign_packed_affine_transformation(o.transform, t);
     m_storage.update_object(handle, o);
 }
+
+LightHandle RenderState::add_light(const LightData &data) {
+    return m_storage.alloc_light(data);
+}
+
+void RenderState::update_light(LightHandle handle, const LightData &data) {
+    m_storage.update_light(handle, data);
+}

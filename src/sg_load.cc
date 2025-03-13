@@ -158,19 +158,30 @@ sg::node_t *parse_point_light(RenderState &render_state, sg::scene_t &scene, tin
 
     auto color_attr = elem->Attribute("color");
     auto position_attr = elem->Attribute("position");
+    auto intensity_attr = elem->Attribute("intensity");
+    auto falloff_attr = elem->Attribute("falloff");
 
     if (color_attr) {
         auto color = parse_attr_color3(std::string_view(color_attr));
-        point_light->color = color;
-    } else {
-        point_light->color = v3f{1, 1, 1};
+        point_light->set_color(color);
+    }
+
+    if (intensity_attr) {
+        auto intensity = std::strtof(intensity_attr, nullptr);
+        point_light->set_intensity(intensity);
     }
 
     if (position_attr) {
         auto position = parse_attr_v3f(std::string_view(position_attr));
-        point_light->position = position;
-    } else {
-        point_light->position = v3f{0, 0, 0};
+        point_light->set_position(position);
+    }
+
+    if (falloff_attr) {
+        auto falloff = parse_attr_list_f32(std::string_view(falloff_attr));
+        if (falloff.size() == 2) {
+            point_light->set_falloff_linear(falloff[0]);
+            point_light->set_falloff_quadratic(falloff[1]);
+        }
     }
 
     return point_light;

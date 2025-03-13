@@ -306,6 +306,11 @@ LightHandle RenderStorage::alloc_light(const LightData &data) {
     return {idx};
 }
 
+void RenderStorage::update_light(LightHandle handle, const LightData &data) {
+    m_lights.dirty.insert(handle);
+    m_lights.data[handle.id] = data;
+}
+
 void RenderStorage::update_material(MaterialHandle handle, const MaterialData &data) {
     m_writes.materials.insert(handle.id * sizeof(MaterialData), data);
 }
@@ -380,6 +385,7 @@ RenderStorage::FlushDependencies RenderStorage::flush(CommandBuffer &cmd) {
     metrics::gauge_u32("rend2.state.meshes", counts.meshes);
     metrics::gauge_u32("rend2.state.textures", counts.textures);
     metrics::gauge_u32("rend2.state.objects", counts.objects);
+    metrics::gauge_u32("rend2.state.lights", counts.lights);
 
     return deps;
 }

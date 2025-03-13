@@ -62,7 +62,7 @@ static const RenderStorageConfig config = {
     .max_meshes = 1024,
     .max_materials = 20 * 1024,
     .max_textures = 1024,
-    .max_lights = 1024,
+    .max_lights = 1024 * 1024,
 };
 static const u32 max_draws = config.max_objects;
 

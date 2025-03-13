@@ -9,6 +9,7 @@
 
 #include "rend2/render_handles.h"
 #include "rend2/render_state.h"
+#include "rend2/render_storage.h"
 
 #include <tracy/Tracy.hpp>
 
@@ -179,16 +180,58 @@ protected:
 
 class point_light_t : public node_t {
 public:
+    point_light_t(RenderState &state) : m_state(state) {
+        m_data.position = {0, 0, 0, 1};
+        m_data.color = {1, 1, 1, 1};
+        m_data.falloff_linear = 0.14f;
+        m_data.falloff_quadratic = 0.07f;
+        m_handle = m_state.add_light(m_data);
+    }
     virtual ~point_light_t() = default;
 
-    v3f position;
-    v3f color;
-    f32 linear;
-    f32 quadratic;
+    void set_color(const v3f &color) {
+        if (color != m_data.color.xyz()) {
+            m_data.color.x = color.x;
+            m_data.color.y = color.y;
+            m_data.color.z = color.z;
+            m_state.update_light(m_handle, m_data);
+        }
+    }
+    void set_intensity(f32 intensity) {
+        if (intensity != m_data.color.w) {
+            m_data.color.w = intensity;
+            m_state.update_light(m_handle, m_data);
+        }
+    }
+
+    void set_position(const v3f &position) {
+        if (position != m_data.position.xyz()) {
+            m_data.position = position.to_homogeneous();
+            m_state.update_light(m_handle, m_data);
+        }
+    }
+
+    void set_falloff_linear(f32 falloff) {
+        if (falloff != m_data.falloff_linear) {
+            m_data.falloff_linear = falloff;
+            m_state.update_light(m_handle, m_data);
+        }
+    }
+
+    void set_falloff_quadratic(f32 falloff) {
+        if (falloff != m_data.falloff_quadratic) {
+            m_data.falloff_quadratic = falloff;
+            m_state.update_light(m_handle, m_data);
+        }
+    }
 
     void accept(node_visitor_t &visitor) {
         visitor.visit(*this);
     }
+private:
+    RenderState &m_state;
+    LightData m_data;
+    LightHandle m_handle;
 };
 
 class directional_light_t : public node_t {
@@ -310,16 +353,34 @@ public:
     }
 
     void set_mesh(MeshHandle mesh) {
-        m_state.assign_geometry(m_handle, mesh);
+        if (m_data.mesh != mesh) {
+            m_data.mesh = mesh;
+            m_state.assign_geometry(m_handle, mesh);
+        }
     }
 
     void set_material(Material &material) {
-        m_state.assign_material(m_handle, material.handle());
-        m_state.assign_shader(m_handle, material.shader());
+        if (m_data.material != material.handle()) {
+            m_data.material = material.handle();
+            m_state.assign_material(m_handle, material.handle());
+            m_state.assign_shader(m_handle, material.shader());
+        }
     }
 
     void set_transform(const m4f &transform) {
-        m_state.update_transform(m_handle, transform);
+        // oh yeah the transform is packed.
+        bool equal = true;
+        for (int i = 0; i < 12; i++) {
+            if (m_data.transform[i] != transform.m[i]) {
+                equal = false;
+                break;
+            }
+        }
+
+        if (!equal) {
+            memcpy(m_data.transform, transform.m, sizeof(m_data.transform));
+            m_state.update_transform(m_handle, transform);
+        }
     }
 
     void accept(node_visitor_t &visitor) override {
@@ -331,6 +392,7 @@ public:
     }
 private:
     RenderState &m_state;
+    ObjectData m_data;
     ObjectHandle m_handle;
 };
 
@@ -453,14 +515,18 @@ public:
     }
 
     DECL_CREATOR(group, group_t, storage.groups)
-    DECL_CREATOR(point_light, point_light_t, storage.point_lights)
     DECL_CREATOR(directional_light, directional_light_t, storage.directional_lights)
     DECL_CREATOR(transform, transform_t, storage.transforms)
     DECL_CREATOR(camera, camera_t, storage.cameras)
 #undef DECL_CREATOR
 
+    point_light_t *create_point_light() {
+        auto ptr = new point_light_t(m_render_state);
+        return ptr;
+    }
+
     geometry_t *create_geometry(MeshHandle mesh) {
-        auto ptr = new geometry_t(m_render_state); // storage.geometries.alloc_make(m_render_state);
+        auto ptr = new geometry_t(m_render_state);
         ptr->set_mesh(mesh);
         ptr->set_material(m_default_material);
         return ptr;

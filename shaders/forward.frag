@@ -269,7 +269,7 @@ void main() {
 
     if (debug_mode == DEBUG_CLUSTER_LIGHTS) {
         uint num_lights = clusters[cluster_id].num_lights;
-        float occupancy = float(num_lights) / 30.0f;
+        float occupancy = float(num_lights) / MAX_CLUSTER_ITEMS;
 
         outColor = vec4(color_range_viridis(occupancy), 1.0);
         return;
@@ -314,7 +314,6 @@ void main() {
         return;
     }
 
-    // @todo: redo this!
     for (uint i = 0; i < clusters[cluster_id].num_lights; i++) {
         uint cluster_item = cluster_items[clusters[cluster_id].item_start + i];
         uint light_id = cluster_item;

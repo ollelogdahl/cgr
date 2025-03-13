@@ -4,7 +4,6 @@
 #include "rend2/buffer.h"
 #include "rend2/descriptor_set.h"
 #include "rend2/shader_compiler.h"
-#define MAX_LIGHTS_PER_CLUSTER 31
 
 // Clustered Forward Shading
 // https://www.cse.chalmers.se/~uffe/clustered_shading_preprint.pdf

@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<scene>
+    <camera position="0 1 0" />
+    <transform translate="0 -1 0" scale="160 1 160">
+        <model file="assets/plane.obj"
+            mat-color="0.1 0.1 0.1"
+            mat-roughness="0.3"
+            mat-tex-albedo0="assets/tiles133a_color.jpg"
+            mat-tex-normal="assets/tiles133a_normal.jpg"
+            mat-tex-roughness="assets/tiles133a_roughness.jpg"
+        />
+    </transform>
+    <grid count="100 1 100" spacing="4 1 4">
+        <model file="assets/cube.obj"
+            mat-color="0.4 0.1 0.1"
+            mat-roughness="0.3"
+        />
+        <transform translate="0 1.5 0">
+            <point-light color="0.3 0.8 0.3" intensity="10" falloff="-0.2:0.6" />
+        </transform>
+    </grid>
+</scene>

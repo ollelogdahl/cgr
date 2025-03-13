@@ -50,7 +50,7 @@ void gpu_t::frame(std::function<void(frame_t &)> fn) {
 
                 swapchain = swapchain_builder_t(pdev, device, surface, queue_families.graphics, queue_families.present)
                     .set_desired_format({.format = VK_FORMAT_B8G8R8A8_UNORM, .colorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR})
-                    .set_desired_present_modes({VK_PRESENT_MODE_MAILBOX_KHR, VK_PRESENT_MODE_FIFO_RELAXED_KHR, VK_PRESENT_MODE_FIFO_KHR})
+                    .set_desired_present_modes(present_modes_in_order_of_preference)
                     .set_desired_extent(width, height)
                     .add_image_usage(VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT)
                     .set_old_swapchain(swapchain)
