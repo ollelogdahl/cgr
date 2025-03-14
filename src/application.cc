@@ -141,7 +141,7 @@ void Application::init_and_run(const char *scene_file_path, const ApplicationCon
             "none",
             "unlit",
             "skip_cluster_shading",
-            "cluster_id",
+            "cluster_scalar_read",
             "cluster_lights",
             "cluster_hash",
         };

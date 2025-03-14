@@ -95,6 +95,8 @@ void main() {
 
         // Process this batch of lights
         for (uint i = 0; i < light_batch_count; i++) {
+            if (cluster_item_count >= MAX_CLUSTER_ITEMS) break;
+
             uint light_id = batch_start + i;
 
             vec4 packed = shared_lights[i];

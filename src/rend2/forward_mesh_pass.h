@@ -24,7 +24,7 @@ enum class DebugMode {
     None,
     Unlit,
     SkipClusterShading,
-    ClusterId,
+    ClusterScalarRead,
     ClusterLights,
     ClusterHash,
 };

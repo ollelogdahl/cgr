@@ -20,7 +20,7 @@ layout(location = 0) out vec4 outColor;
 #define DEBUG_NONE 0
 #define DEBUG_UNLIT 1
 #define DEBUG_SKIP_CLUSTER_SHADING 2
-#define DEBUG_CLUSTER_ID 3
+#define DEBUG_CLUSTER_SCALAR_READ 3
 #define DEBUG_CLUSTER_LIGHTS 4
 #define DEBUG_CLUSTER_HASH 5
 
@@ -266,10 +266,10 @@ void main() {
 
     uint cluster_id = cluster_lookup(clip_pos.xyz, position_vs, cluster_constants);
 
-    if (debug_mode == DEBUG_CLUSTER_ID) {
-        outColor = vec4(color_random(cluster_id), 1.0);
-        return;
-    }
+    // if (debug_mode == DEBUG_CLUSTER_ID) {
+    //     outColor = vec4(color_random(cluster_id), 1.0);
+    //     return;
+    // }
 
     if (debug_mode == DEBUG_CLUSTER_LIGHTS) {
         uint num_lights = clusters[cluster_id].hash_and_num_lights & 0xFF;
@@ -330,16 +330,14 @@ void main() {
     uint hash = hash_and_num_lights >> 8;
     uint num_lights = hash_and_num_lights & 0xFF;
 
-    // @todo: this should use the hash but.
-    /*
-    bool use_scalar_reads = subgroupAllEqual(clusters[cluster_id].item_start);
+    bool use_scalar_reads = subgroupAllEqual(hash);
 
-    if (use_scalar_reads) {
+    if (debug_mode == DEBUG_CLUSTER_SCALAR_READ && use_scalar_reads) {
         for (uint i = 0; i < num_lights; i++) {
             vec3 light_position;
             float light_falloff_linear;
             float light_falloff_quadratic;
-            vec3 light_color;
+            vec4 light_color;
             if (subgroupElect()) {
                 uint cluster_item = cluster_items[clusters[cluster_id].item_start + i];
                 uint light_id = cluster_item;
@@ -348,7 +346,7 @@ void main() {
                 light_position = light.position.xyz;
                 light_falloff_linear = light.falloff_linear;
                 light_falloff_quadratic = light.falloff_quadratic;
-                light_color = light.color.rgb;
+                light_color = light.color;
             }
             light_position = subgroupBroadcastFirst(light_position);
             light_falloff_linear = subgroupBroadcastFirst(light_falloff_linear);
@@ -360,7 +358,7 @@ void main() {
             float distance = length(P - light_position);
             float attenuation = 1.0 / (1.0 + light_falloff_linear * distance + light_falloff_quadratic * pow(distance, 2.0));
 
-            vec3 radiance = light_color * attenuation;
+            vec3 radiance = (light_color.xyz * light_color.a) * attenuation;
 
             vec3 result = pbr(
                 L,
@@ -372,26 +370,21 @@ void main() {
             );
 
             color += result;
-            color += vec3(0, 0.2, 0);
         }
-    } else */ {
+        color += vec3(0, 0.1, 0);
+    } else {
         for (uint i = 0; i < num_lights; i++) {
             uint cluster_item = cluster_items[clusters[cluster_id].item_start + i];
             uint light_id = cluster_item;
 
             LightData light = lights[light_id];
 
-            bool light_is_directional = light.position.w == 0.0;
-            vec3 light_dir_point = normalize(light.position.xyz - P);
-            vec3 light_dir_dir = normalize(-light.position.xyz);
-            vec3 L = light_is_directional ? light_dir_dir : light_dir_point;
+            vec3 L = normalize(light.position.xyz - P);
 
             float distance = length(P - light.position.xyz);
-            float point_attenuation = 1.0 / (1.0 + light.falloff_linear * distance + light.falloff_quadratic * pow(distance, 2.0));
+            float attenuation = 1.0 / (1.0 + light.falloff_linear * distance + light.falloff_quadratic * pow(distance, 2.0));
 
-            vec3 radiance_point = (light.color.rgb * light.color.a) * point_attenuation;
-            vec3 radiance_dir = light.color.rgb * light.color.a;
-            vec3 radiance = light_is_directional ? radiance_dir : radiance_point;
+            vec3 radiance = (light.color.rgb * light.color.a) * attenuation;
             float shadow = 1.0;
 
             vec3 result = pbr(
