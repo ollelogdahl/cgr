@@ -16,7 +16,8 @@ public:
             auto right = v3f::cross(forward, object.up());
             auto up = object.up();
 
-            object.set_position(object.position() + forward * relative.z + right * relative.x + up * relative.y);
+            v3f change = forward * relative.z + right * relative.x + up * relative.y;
+            object.set_position(object.position() + change);
         };
 
         auto rotate = [&](anglef pitch, anglef yaw) {
@@ -40,7 +41,7 @@ public:
         };
 
         v3f relative = eqwasd();
-        move_relative(relative * dt);
+        move_relative(relative * m_speed * dt);
 
         if (m_input->mouse_left_pressed()) {
             m_input->disable_cursor();
@@ -92,5 +93,5 @@ private:
     f64 m_mouse_x, m_mouse_y;
 
     f32 m_sensitivity = 0.1;
-    f32 m_speed = 0.1;
+    f32 m_speed = 12.0;
 };

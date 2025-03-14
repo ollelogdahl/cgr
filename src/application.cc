@@ -125,9 +125,15 @@ void Application::init_and_run(const char *scene_file_path, const ApplicationCon
     f32 zfar = 200.0f;
     m4f persp = m4f::perspective(anglef::from_deg(90.0), (f32)width / (f32)height, znear, zfar);
 
+    double last_time = glfwGetTime();
+
     g_log.info("running...");
     while (!glfwWindowShouldClose(m_window)) {
         perf_metrics.update();
+
+        double current_time = glfwGetTime();
+        float delta_time = static_cast<float>(current_time - last_time);
+        last_time = current_time;
 
         m_gui_renderer->new_frame();
 
@@ -183,7 +189,7 @@ void Application::init_and_run(const char *scene_file_path, const ApplicationCon
             }
 
             // @todo: how should we do delta-time?
-            camera_controller.update(*main_camera, 1.0f / 15.0f);
+            camera_controller.update(*main_camera, delta_time);
         }
 
         View view = {
