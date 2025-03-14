@@ -98,6 +98,20 @@ RenderStorage::ShaderInfo Renderer::create_pipelines_for(Shader &shader) {
 void Renderer::render(gpu_t::frame_t &frame, const View &view) {
     ZoneScoped;
 
+    WriteDependency pre_cluster_build_dependencies;
+    WriteDependency pre_cluster_assign_dependencies;
+    WriteDependency pre_forward_dependencies;
+
+    // wait for last frame to read mutable data
+    pre_cluster_build_dependencies.add(
+        VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+        VK_ACCESS_2_SHADER_READ_BIT,
+        m_cluster_shading.cluster_buffer().get());
+    pre_cluster_assign_dependencies.add(
+        VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+        VK_ACCESS_2_SHADER_READ_BIT,
+        m_cluster_shading.cluster_item_buffer().get());
+
     m_storage.update_global({
         .view = view.view,
         .proj = view.projection,
@@ -105,62 +119,48 @@ void Renderer::render(gpu_t::frame_t &frame, const View &view) {
     });
 
     {
+        pre_cluster_build_dependencies.pipeline_barrier(frame.cmd.get(),
+            VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_WRITE_BIT);
+
         // @todo: only do this when projection changes.
         // @todo: view could contain m4fbi instead?
         m4f inv_proj = m4f::inverse(view.projection);
         m_cluster_shading.rebuild_clusters(frame.cmd, view.znear, view.zfar, inv_proj);
+
+        pre_cluster_assign_dependencies.add(
+            VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+            VK_ACCESS_2_SHADER_WRITE_BIT,
+            m_cluster_shading.cluster_buffer().get());
+        
+        pre_forward_dependencies.add(
+            VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+            VK_ACCESS_2_SHADER_WRITE_BIT,
+            m_cluster_shading.cluster_buffer().get());
     }
 
     auto state_dependencies = m_storage.flush(frame.cmd);
 
-    // @todo: move this!
-    // We invoke a compute shader which performs copies from the Object Buffer to
-    // the Draw Buffer. It only copies if the objects are visible.
-    // Therefore, we need to pass some cull information in a ubo or something.
-    // This is actually recording to a different command buffer (and queue potentially)
+    pre_cluster_assign_dependencies.join(state_dependencies.objects);
 
-    // @todo: consider different shaders! This is tricky. We want a DrawIndirect command for
-    // each shader, and we don't want them to wait. Therefore, we need to either
-    //      1. Partition the draw buffer by shader
-    //      2. Have a separate draw buffer for each shader
-    //
-    // We maybe also should separate the object buffers by shader. This would make things
-    // WAAAY easier i think. In that case, the culling and stuff does not need to care about
-    // those details.
-    {
-        TracyVkZone(frame.cmd.tracy_ctx(), frame.cmd.get(), "wait-state-change");
-        WriteDependency dependencies;
-        dependencies.join(state_dependencies.objects);
-        dependencies.join(state_dependencies.meshes);
-
-        dependencies.pipeline_barrier(frame.cmd.get(),
-            VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT);
-    }
+    pre_forward_dependencies.join(state_dependencies.objects);
+    pre_forward_dependencies.join(state_dependencies.meshes);
 
     {
         // assign items to clusters.
-
-        {
-            TracyVkZone(frame.cmd.tracy_ctx(), frame.cmd.get(), "wait-cluster-shading");
-            WriteDependency dependencies;
-            dependencies.add(
-                VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-                VK_ACCESS_2_SHADER_WRITE_BIT,
-                m_cluster_shading.cluster_buffer().get());
-            dependencies.join(state_dependencies.lights);
-
-            dependencies.pipeline_barrier(frame.cmd.get(),
-                VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT);
-        }
+        pre_cluster_assign_dependencies.pipeline_barrier(frame.cmd.get(),
+            VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT);
 
         m_cluster_shading.assign_items(frame.cmd, view.view);
+
+        pre_forward_dependencies.add(
+            VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+            VK_ACCESS_2_SHADER_WRITE_BIT,
+            m_cluster_shading.cluster_item_buffer().get());
     }
 
     {
-        // barrier for updates to textures in descriptor set
-        state_dependencies.textures.pipeline_barrier(
-            VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT,
-            frame.cmd);
+        pre_forward_dependencies.pipeline_barrier(frame.cmd.get(),
+            VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT);
     }
 
     {

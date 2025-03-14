@@ -65,15 +65,16 @@ void main() {
 
     uint hash = hash_fnv1a_init();
 
-    uint local_index = gl_SubgroupInvocationID;
-    for (uint batch_start = 0; batch_start <= highest_light; batch_start += gl_SubgroupSize) {
+    uint local_index = gl_LocalInvocationID.x;
+    for (uint batch_start = 0; batch_start <= highest_light; batch_start += 128) {
         // Calculate how many lights in this batch
 
-        uint light_batch_count = min(gl_SubgroupSize, highest_light + 1 - batch_start);
+        uint light_batch_count = min(128, highest_light + 1 - batch_start);
 
         // Cooperatively cache this batch of lights and calculate their radii
         // Here we can also perform an early cull if the light is outside the frustum.
-        {
+        memoryBarrierShared();
+        if (local_index < light_batch_count) {
             uint light_id = batch_start + local_index;
 
             vec4 position_ws = lights[light_id].position;
@@ -89,6 +90,7 @@ void main() {
             shared_lights[local_index] = vec4(position_vs, radius);
         }
 
+        memoryBarrierShared();
         barrier();
 
         // Process this batch of lights

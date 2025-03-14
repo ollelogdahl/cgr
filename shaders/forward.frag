@@ -273,7 +273,7 @@ void main() {
 
     if (debug_mode == DEBUG_CLUSTER_LIGHTS) {
         uint num_lights = clusters[cluster_id].hash_and_num_lights & 0xFF;
-        float occupancy = float(num_lights) / MAX_CLUSTER_ITEMS;
+        float occupancy = float(num_lights) / 30;
 
         outColor = vec4(color_range_viridis(occupancy), 1.0);
         return;

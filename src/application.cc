@@ -117,10 +117,13 @@ void Application::init_and_run(const char *scene_file_path, const ApplicationCon
 
     PerfMetrics perf_metrics(m_gpu);
 
+    i32 width, height;
+    glfwGetFramebufferSize(m_window, &width, &height);
+
     // fixed perspective projection
     f32 znear = 0.1f;
     f32 zfar = 200.0f;
-    m4f persp = m4f::perspective(anglef::from_deg(90.0), 1200.0f / 900.0f, znear, zfar);
+    m4f persp = m4f::perspective(anglef::from_deg(90.0), (f32)width / (f32)height, znear, zfar);
 
     g_log.info("running...");
     while (!glfwWindowShouldClose(m_window)) {
