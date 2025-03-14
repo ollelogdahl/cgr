@@ -331,6 +331,7 @@ void main() {
     uint num_lights = hash_and_num_lights & 0xFF;
 
     // @todo: this should use the hash but.
+    /*
     bool use_scalar_reads = subgroupAllEqual(clusters[cluster_id].item_start);
 
     if (use_scalar_reads) {
@@ -373,7 +374,7 @@ void main() {
             color += result;
             color += vec3(0, 0.2, 0);
         }
-    } else {
+    } else */ {
         for (uint i = 0; i < num_lights; i++) {
             uint cluster_item = cluster_items[clusters[cluster_id].item_start + i];
             uint light_id = cluster_item;

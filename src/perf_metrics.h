@@ -79,7 +79,7 @@ public:
         ImGui::Begin("Performance Metrics");
 
         if (ImGui::CollapsingHeader("FPS", ImGuiTreeNodeFlags_DefaultOpen)) {
-            ImGui::Text("% 3.1f (avg: % 3.1f, min: % 3.1f, max: % 3.1f)", fps.current, fps.avg, fps.min_in_history, fps.max_in_history);
+            ImGui::Text("%5.1f (avg: %5.1f, min: %5.1f, max: %5.1f)", fps.current, fps.avg, fps.min_in_history, fps.max_in_history);
 
             // Draw FPS graph
             ImGui::PlotLines("FPS History",

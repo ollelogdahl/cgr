@@ -42,15 +42,13 @@ layout(push_constant) uniform Constants {
 bool sphere_aabb_intersect(vec3 sphere_center, float radius, vec3 aabb_min, vec3 aabb_max);
 float calculate_light_radius(float linear, float quadratic);
 bool light_intersects_cluster(uint light_id, vec3 cluster_min, vec3 cluster_max);
-bool light_intersects_cluster_batched(uint batch_light_id, vec3 cluster_min, vec3 cluster_max);
 
 uint hash_fnv1a_init();
 uint hash_fnv1a_next(uint hash, uint value);
 
 layout(local_size_x = 128) in;
 
-shared LightData shared_lights[128];
-shared float shared_light_radii[128];
+shared vec4 shared_lights[128];
 
 void main() {
     uint cluster_index = gl_GlobalInvocationID.x;
@@ -75,13 +73,21 @@ void main() {
 
         // Cooperatively cache this batch of lights and calculate their radii
         // Here we can also perform an early cull if the light is outside the frustum.
-        uint light_id = batch_start + local_index;
+        {
+            uint light_id = batch_start + local_index;
 
-        shared_lights[local_index] = lights[light_id];
-        shared_light_radii[local_index] = calculate_light_radius(
-            lights[light_id].falloff_linear,
-            lights[light_id].falloff_quadratic
-        );
+            vec4 position_ws = lights[light_id].position;
+            vec3 position_vs = vec3(push.view * position_ws);
+            position_vs *= -1;
+
+            float radius = calculate_light_radius(
+                lights[light_id].falloff_linear,
+                lights[light_id].falloff_quadratic
+            );
+
+            vec4 packed_light = vec4(position_vs, radius);
+            shared_lights[local_index] = vec4(position_vs, radius);
+        }
 
         barrier();
 
@@ -89,7 +95,8 @@ void main() {
         for (uint i = 0; i < light_batch_count; i++) {
             uint light_id = batch_start + i;
 
-            if (light_intersects_cluster_batched(i, cluster_min, cluster_max)) {
+            vec4 packed = shared_lights[i];
+            if (sphere_aabb_intersect(packed.xyz, packed.w, cluster_min, cluster_max)) {
                 cluster_items[cluster_item_offset + cluster_item_count] = light_id;
                 cluster_item_count++;
 
@@ -105,17 +112,6 @@ void main() {
 
     clusters[cluster_index].item_start = cluster_item_offset;
     clusters[cluster_index].hash_and_num_lights = hash_and_num_lights;
-}
-
-bool light_intersects_cluster_batched(uint batch_light_id, vec3 cluster_min, vec3 cluster_max) {
-    vec4 light_world = shared_lights[batch_light_id].position;
-    if (light_world.w == 0.0) return false;
-
-    vec4 light_view = push.view * light_world;
-    light_view /= light_view.w;
-    light_view *= -1;
-
-    return sphere_aabb_intersect(light_view.xyz, shared_light_radii[batch_light_id], cluster_min, cluster_max);
 }
 
 bool light_intersects_cluster(uint light_id, vec3 cluster_min, vec3 cluster_max) {
