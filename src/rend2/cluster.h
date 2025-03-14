@@ -37,7 +37,7 @@ public:
         v4f bounds_min;
         v4f bounds_max;
         u32 item_start;
-        u32 num_lights;
+        u32 hash_and_num_lights;
     };
 
     void set_light_threshold(f32 v) { runtime_config.light_threshold = v; }

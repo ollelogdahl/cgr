@@ -65,6 +65,8 @@ void main() {
     vec3 cluster_min = clusters[cluster_index].bounds_min.xyz;
     vec3 cluster_max = clusters[cluster_index].bounds_max.xyz;
 
+    uint hash = hash_fnv1a_init();
+
     uint local_index = gl_SubgroupInvocationID;
     for (uint batch_start = 0; batch_start <= highest_light; batch_start += gl_SubgroupSize) {
         // Calculate how many lights in this batch
@@ -73,28 +75,13 @@ void main() {
 
         // Cooperatively cache this batch of lights and calculate their radii
         // Here we can also perform an early cull if the light is outside the frustum.
-        bool is_valid = local_index < light_batch_count;
-
         uint light_id = batch_start + local_index;
 
-        float radius = 0.0;
-        if (is_valid) {
-            is_valid = is_valid && lights[light_id].position.w != 0.0;
-        }
-
-        uvec4 valids = subgroupBallot(is_valid);
-        if (subgroupBallotBitCount(valids) == 0) continue;
-
-        light_batch_count = subgroupBallotBitCount(valids);
-
-        uint insert_idx = subgroupBallotExclusiveBitCount(valids);
-        if (is_valid) {
-            shared_lights[insert_idx] = lights[light_id];
-            shared_light_radii[insert_idx] = calculate_light_radius(
-                lights[light_id].falloff_linear,
-                lights[light_id].falloff_quadratic
-            );
-        }
+        shared_lights[local_index] = lights[light_id];
+        shared_light_radii[local_index] = calculate_light_radius(
+            lights[light_id].falloff_linear,
+            lights[light_id].falloff_quadratic
+        );
 
         barrier();
 
@@ -105,13 +92,19 @@ void main() {
             if (light_intersects_cluster_batched(i, cluster_min, cluster_max)) {
                 cluster_items[cluster_item_offset + cluster_item_count] = light_id;
                 cluster_item_count++;
+
+                hash = hash_fnv1a_next(hash, light_id);
             }
         }
         barrier();
     }
 
+    hash = hash_fnv1a_next(hash, cluster_item_count);
+
+    uint hash_and_num_lights = hash << 8 | cluster_item_count;
+
     clusters[cluster_index].item_start = cluster_item_offset;
-    clusters[cluster_index].num_lights = cluster_item_count;
+    clusters[cluster_index].hash_and_num_lights = hash_and_num_lights;
 }
 
 bool light_intersects_cluster_batched(uint batch_light_id, vec3 cluster_min, vec3 cluster_max) {

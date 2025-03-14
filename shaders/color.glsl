@@ -50,19 +50,38 @@ vec3 rgb = vec3(0.0);
     return rgb + m;
 }
 
-vec3 color_random(uint x) {
-    float h1 = mod(float(x) * 0.618033988749895, 1.0);
-    float h2 = mod(float(x) * 0.618033988749895 * 1.618033988749895, 1.0);
-    float h3 = mod(float(x) * 0.618033988749895 * 1.618033988749895 * 1.618033988749895, 1.0);
-
-    // Create HSV color with controlled parameters
-    vec3 hsv = vec3(
-        h1,                    // hue: full range
-        mix(0.7, 1.0, h2),    // saturation: 0.5 to 1.0
-        mix(0.7, 1.0, h3)     // value: 0.7 to 1.0
-    );
-
-    return color_hsv_to_rgb(hsv);
+vec3 color_random(uint seed) {
+    // Constants for a good hash function
+    const uint OFFSET_BASIS = 2166136261u;
+    const uint FNV_PRIME = 16777619u;
+    
+    // FNV-1a hash for better distribution
+    uint hash = OFFSET_BASIS;
+    
+    // Process each byte of the seed
+    for (int i = 0; i < 4; i++) {
+        uint byte = (seed >> (i * 8)) & 0xFFu;
+        hash ^= byte;
+        hash *= FNV_PRIME;
+    }
+    
+    // Gold Noise technique - using irrational numbers to distribute values
+    float phi = 1.61803398874989484820459; // Golden ratio
+    float pi = 3.14159265358979323846264;  // Pi
+    float e = 2.71828182845904523536029;   // Euler's number
+    
+    // Generate RGB components that are visually distinct
+    float r = fract(cos(float(hash) * phi) * 43758.5453);
+    float g = fract(cos(float(hash) * pi) * 43758.5453);
+    float b = fract(cos(float(hash) * e) * 43758.5453);
+    
+    // Ensure minimum brightness
+    float minBrightness = 0.2;
+    r = max(r, minBrightness);
+    g = max(g, minBrightness);
+    b = max(b, minBrightness);
+    
+    return vec3(r, g, b);
 }
 
 vec3 color_range_viridis(float x) {

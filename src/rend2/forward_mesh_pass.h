@@ -26,6 +26,7 @@ enum class DebugMode {
     SkipClusterShading,
     ClusterId,
     ClusterLights,
+    ClusterHash,
 };
 
 class ForwardMeshPass {

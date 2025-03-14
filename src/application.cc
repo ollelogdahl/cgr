@@ -140,6 +140,7 @@ void Application::init_and_run(const char *scene_file_path, const ApplicationCon
             "skip_cluster_shading",
             "cluster_id",
             "cluster_lights",
+            "cluster_hash",
         };
         static int debug_mode = 0;
         ImGui::Combo("Debug mode", &debug_mode, debug_modes, IM_ARRAYSIZE(debug_modes));

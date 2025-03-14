@@ -4,7 +4,7 @@ struct ClusterData {
     vec4 bounds_min;
     vec4 bounds_max;
     uint item_start;
-    uint num_lights;
+    uint hash_and_num_lights;
 };
 struct ClusterConstants {
     float znear;

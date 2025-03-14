@@ -1,5 +1,8 @@
 #version 450
 #extension GL_EXT_nonuniform_qualifier : require
+#extension GL_KHR_shader_subgroup_basic : enable
+#extension GL_KHR_shader_subgroup_vote : enable
+#extension GL_KHR_shader_subgroup_ballot : enable
 
 #include "cluster.glsl"
 #include "color.glsl"
@@ -19,6 +22,7 @@ layout(location = 0) out vec4 outColor;
 #define DEBUG_SKIP_CLUSTER_SHADING 2
 #define DEBUG_CLUSTER_ID 3
 #define DEBUG_CLUSTER_LIGHTS 4
+#define DEBUG_CLUSTER_HASH 5
 
 struct GlobalData {
     mat4 cam_view;
@@ -268,10 +272,17 @@ void main() {
     }
 
     if (debug_mode == DEBUG_CLUSTER_LIGHTS) {
-        uint num_lights = clusters[cluster_id].num_lights;
+        uint num_lights = clusters[cluster_id].hash_and_num_lights & 0xFF;
         float occupancy = float(num_lights) / MAX_CLUSTER_ITEMS;
 
         outColor = vec4(color_range_viridis(occupancy), 1.0);
+        return;
+    }
+
+    if (debug_mode == DEBUG_CLUSTER_HASH) {
+        uint hash = clusters[cluster_id].hash_and_num_lights >> 8;
+
+        outColor = vec4(color_random(hash), 1.0);
         return;
     }
 
@@ -314,36 +325,85 @@ void main() {
         return;
     }
 
-    for (uint i = 0; i < clusters[cluster_id].num_lights; i++) {
-        uint cluster_item = cluster_items[clusters[cluster_id].item_start + i];
-        uint light_id = cluster_item;
+    // scalar read optimization
+    uint hash_and_num_lights = clusters[cluster_id].hash_and_num_lights;
+    uint hash = hash_and_num_lights >> 8;
+    uint num_lights = hash_and_num_lights & 0xFF;
 
-        LightData light = lights[light_id];
+    // @todo: this should use the hash but.
+    bool use_scalar_reads = subgroupAllEqual(clusters[cluster_id].item_start);
 
-        bool light_is_directional = light.position.w == 0.0;
-        vec3 light_dir_point = normalize(light.position.xyz - P);
-        vec3 light_dir_dir = normalize(-light.position.xyz);
-        vec3 L = light_is_directional ? light_dir_dir : light_dir_point;
+    if (use_scalar_reads) {
+        for (uint i = 0; i < num_lights; i++) {
+            vec3 light_position;
+            float light_falloff_linear;
+            float light_falloff_quadratic;
+            vec3 light_color;
+            if (subgroupElect()) {
+                uint cluster_item = cluster_items[clusters[cluster_id].item_start + i];
+                uint light_id = cluster_item;
 
-        float distance = length(P - light.position.xyz);
-        float point_attenuation = 1.0 / (1.0 + light.falloff_linear * distance + light.falloff_quadratic * pow(distance, 2.0));
+                LightData light = lights[light_id];
+                light_position = light.position.xyz;
+                light_falloff_linear = light.falloff_linear;
+                light_falloff_quadratic = light.falloff_quadratic;
+                light_color = light.color.rgb;
+            }
+            light_position = subgroupBroadcastFirst(light_position);
+            light_falloff_linear = subgroupBroadcastFirst(light_falloff_linear);
+            light_falloff_quadratic = subgroupBroadcastFirst(light_falloff_quadratic);
+            light_color = subgroupBroadcastFirst(light_color);
 
-        vec3 radiance_point = (light.color.rgb * light.color.a) * point_attenuation;
-        vec3 radiance_dir = light.color.rgb * light.color.a;
-        vec3 radiance = light_is_directional ? radiance_dir : radiance_point;
-        float shadow = 1.0;
+            vec3 L = normalize(light_position - P);
 
-        vec3 result = pbr(
+            float distance = length(P - light_position);
+            float attenuation = 1.0 / (1.0 + light_falloff_linear * distance + light_falloff_quadratic * pow(distance, 2.0));
+
+            vec3 radiance = light_color * attenuation;
+
+            vec3 result = pbr(
                 L,
                 V,
                 N,
                 props,
                 radiance,
-                shadow
+                1.0
             );
 
-        color += result;
-    }
+            color += result;
+            color += vec3(0, 0.2, 0);
+        }
+    } else {
+        for (uint i = 0; i < num_lights; i++) {
+            uint cluster_item = cluster_items[clusters[cluster_id].item_start + i];
+            uint light_id = cluster_item;
 
+            LightData light = lights[light_id];
+
+            bool light_is_directional = light.position.w == 0.0;
+            vec3 light_dir_point = normalize(light.position.xyz - P);
+            vec3 light_dir_dir = normalize(-light.position.xyz);
+            vec3 L = light_is_directional ? light_dir_dir : light_dir_point;
+
+            float distance = length(P - light.position.xyz);
+            float point_attenuation = 1.0 / (1.0 + light.falloff_linear * distance + light.falloff_quadratic * pow(distance, 2.0));
+
+            vec3 radiance_point = (light.color.rgb * light.color.a) * point_attenuation;
+            vec3 radiance_dir = light.color.rgb * light.color.a;
+            vec3 radiance = light_is_directional ? radiance_dir : radiance_point;
+            float shadow = 1.0;
+
+            vec3 result = pbr(
+                    L,
+                    V,
+                    N,
+                    props,
+                    radiance,
+                    shadow
+                );
+
+            color += result;
+        }
+    }
     outColor = vec4(color, 1.0);
 }

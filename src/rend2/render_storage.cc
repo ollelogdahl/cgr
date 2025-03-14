@@ -73,7 +73,7 @@ RenderStorage::RenderStorage(gpu_t &gpu, const RenderStorageConfig &config)
     // create the descriptor pool & set
     {
         VkDescriptorPoolSize pool_sizes[] = {
-            { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 4 },
+            { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 6 },
             { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, config.max_textures },
         };
 

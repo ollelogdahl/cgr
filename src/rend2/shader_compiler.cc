@@ -44,7 +44,7 @@ ShaderModule ShaderCompiler::compile(const char *glsl_path) {
 
     // @todo: make it easy to set flags and stuff
 
-    auto cmd = fmt::format("{} {} --target-env=vulkan1.3 -I . -O -o {} {}", m_glslc_path,
+    auto cmd = fmt::format("{} {} --target-env=vulkan1.3 --target-spv=spv1.5 -I . -O -o {} {}", m_glslc_path,
         debug_info, tmp_path, glsl_path);
 
     // @todo: use exec instead of system.
