@@ -208,6 +208,10 @@ vec3 shuler_perturb_normal(sampler2D bumpmap, vec3 N, vec3 V, vec2 texcoord) {
     return normalize(TBN * pn);
 }
 
+float point_light_attenuation(float dist, float falloff_linear, float falloff_quadratic) {
+    return 1.0 / (1.0 + falloff_linear * dist + falloff_quadratic * pow(dist, 2.0));
+}
+
 void main() {
     vec3 P = frag_pos_ws;
     vec3 V = normalize(global.cam_pos - frag_pos_ws);
@@ -301,10 +305,10 @@ void main() {
             vec3 light_dir_dir = normalize(-light.position.xyz);
             vec3 L = light_is_directional ? light_dir_dir : light_dir_point;
 
-            float distance = length(P - light.position.xyz);
-            float point_attenuation = 1.0 / (1.0 + light.falloff_linear * distance + light.falloff_quadratic * pow(distance, 2.0));
+            float dist = length(P - light.position.xyz);
+            float attenuation = point_light_attenuation(dist, light.falloff_linear, light.falloff_quadratic);
 
-            vec3 radiance_point = (light.color.rgb * light.color.a) * point_attenuation;
+            vec3 radiance_point = (light.color.rgb * light.color.a) * attenuation;
             vec3 radiance_dir = light.color.rgb * light.color.a;
             vec3 radiance = light_is_directional ? radiance_dir : radiance_point;
             float shadow = 1.0;
@@ -355,8 +359,8 @@ void main() {
 
             vec3 L = normalize(light_position - P);
 
-            float distance = length(P - light_position);
-            float attenuation = 1.0 / (1.0 + light_falloff_linear * distance + light_falloff_quadratic * pow(distance, 2.0));
+            float dist = length(P - light_position);
+            float attenuation = point_light_attenuation(dist, light_falloff_linear, light_falloff_quadratic);
 
             vec3 radiance = (light_color.xyz * light_color.a) * attenuation;
 
@@ -381,8 +385,8 @@ void main() {
 
             vec3 L = normalize(light.position.xyz - P);
 
-            float distance = length(P - light.position.xyz);
-            float attenuation = 1.0 / (1.0 + light.falloff_linear * distance + light.falloff_quadratic * pow(distance, 2.0));
+            float dist = length(P - light.position.xyz);
+            float attenuation = point_light_attenuation(dist, light.falloff_linear, light.falloff_quadratic);
 
             vec3 radiance = (light.color.rgb * light.color.a) * attenuation;
             float shadow = 1.0;
