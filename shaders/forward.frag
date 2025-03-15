@@ -3,6 +3,7 @@
 #extension GL_KHR_shader_subgroup_basic : enable
 #extension GL_KHR_shader_subgroup_vote : enable
 #extension GL_KHR_shader_subgroup_ballot : enable
+#extension GL_KHR_shader_subgroup_arithmetic : enable
 
 #include "cluster.glsl"
 #include "color.glsl"
@@ -35,6 +36,8 @@ struct MaterialData {
     vec4 emission;
     float roughness;
     float metallic;
+
+    float tex_scale;
 
     uint tex_albedo0;
     uint tex_albedo1;
@@ -212,6 +215,26 @@ float point_light_attenuation(float dist, float falloff_linear, float falloff_qu
     return 1.0 / (1.0 + falloff_linear * dist + falloff_quadratic * pow(dist, 2.0));
 }
 
+vec3 point_light_shade(vec3 P, vec3 N, vec3 V, LightData light, PbrProperties props) {
+    vec3 L = normalize(light.position.xyz - P);
+
+    float dist = length(P - light.position.xyz);
+    float attenuation = point_light_attenuation(dist, light.falloff_linear, light.falloff_quadratic);
+
+    vec3 radiance = (light.color.rgb * light.color.a) * attenuation;
+
+    vec3 result = pbr(
+        L,
+        V,
+        N,
+        props,
+        radiance,
+        1.0
+    );
+
+    return result;
+}
+
 void main() {
     vec3 P = frag_pos_ws;
     vec3 V = normalize(global.cam_pos - frag_pos_ws);
@@ -220,10 +243,12 @@ void main() {
 
     vec3 position_vs = (global.cam_view * vec4(P, 1.0)).xyz;
 
+    vec2 tex_uv = frag_uv * materials[material_id].tex_scale;
+
     // determine if we use textures.
     uint normalmap_idx = materials[material_id].tex_normal;
     if (normalmap_idx != -1) {
-        N = shuler_perturb_normal(textures[normalmap_idx], N, V, frag_uv);
+        N = shuler_perturb_normal(textures[normalmap_idx], N, V, tex_uv);
     }
 
     uint albedo0_idx = materials[material_id].tex_albedo0;
@@ -235,12 +260,12 @@ void main() {
         bool multitex = albedo0_idx != -1 && albedo1_idx != -1 && albedo2_idx != -1;
 
         if (multitex) {
-            vec3 a0 = texture(textures[albedo0_idx], frag_uv).rgb * frag_vertex_color.x;
-            vec3 a1 = texture(textures[albedo1_idx], frag_uv).rgb * frag_vertex_color.y;
-            vec3 a2 = texture(textures[albedo2_idx], frag_uv).rgb * frag_vertex_color.z;
+            vec3 a0 = texture(textures[albedo0_idx], tex_uv).rgb * frag_vertex_color.x;
+            vec3 a1 = texture(textures[albedo1_idx], tex_uv).rgb * frag_vertex_color.y;
+            vec3 a2 = texture(textures[albedo2_idx], tex_uv).rgb * frag_vertex_color.z;
             albedo = a0 + a1 + a2;
         } else {
-            albedo = texture(textures[albedo0_idx], frag_uv).rgb;
+            albedo = texture(textures[albedo0_idx], tex_uv).rgb;
         }
     } else {
         albedo = materials[material_id].color.rgb;
@@ -253,11 +278,11 @@ void main() {
     float metallic = materials[material_id].metallic;
 
     if (roughness_idx != -1) {
-        roughness = texture(textures[roughness_idx], frag_uv).r;
+        roughness = texture(textures[roughness_idx], tex_uv).r;
     }
 
     if (metallic_idx != -1) {
-        metallic = texture(textures[metallic_idx], frag_uv).r;
+        metallic = texture(textures[metallic_idx], tex_uv).r;
     }
 
     if (debug_mode == DEBUG_UNLIT) {
@@ -334,73 +359,68 @@ void main() {
     uint hash = hash_and_num_lights >> 8;
     uint num_lights = hash_and_num_lights & 0xFF;
 
-    bool use_scalar_reads = subgroupAllEqual(hash);
+    if (debug_mode == DEBUG_CLUSTER_SCALAR_READ) {
 
-    if (debug_mode == DEBUG_CLUSTER_SCALAR_READ && use_scalar_reads) {
-        for (uint i = 0; i < num_lights; i++) {
-            vec3 light_position;
-            float light_falloff_linear;
-            float light_falloff_quadratic;
-            vec4 light_color;
-            if (subgroupElect()) {
+        // if entire subgroup in tne same cluster, we can read only once
+        bool subgroup_in_cluster = subgroupAllEqual(hash);
+        if (subgroup_in_cluster) {
+            uint first_cluster_item = subgroupBroadcastFirst(cluster_id);
+            uint item_count = subgroupBroadcastFirst(num_lights);
+            uint last_cluster_item = first_cluster_item + item_count;
+
+            for (uint i = first_cluster_item; i < last_cluster_item; i++) {
+                uint cluster_item = cluster_items[i];
+                uint light_id = cluster_item;
+
+                LightData light = lights[light_id];
+
+                color += point_light_shade(P, N, V, light, props);
+            }
+            color += vec3(0, 0.1, 0);
+        } else {
+            for (uint i = 0; i < num_lights; i++) {
                 uint cluster_item = cluster_items[clusters[cluster_id].item_start + i];
                 uint light_id = cluster_item;
 
                 LightData light = lights[light_id];
-                light_position = light.position.xyz;
-                light_falloff_linear = light.falloff_linear;
-                light_falloff_quadratic = light.falloff_quadratic;
-                light_color = light.color;
+
+                color += point_light_shade(P, N, V, light, props);
             }
-            light_position = subgroupBroadcastFirst(light_position);
-            light_falloff_linear = subgroupBroadcastFirst(light_falloff_linear);
-            light_falloff_quadratic = subgroupBroadcastFirst(light_falloff_quadratic);
-            light_color = subgroupBroadcastFirst(light_color);
+            /*
+            // split across multiple clusters. Light using all anyways :D
+            uint first_cluster_item = clusters[cluster_id].item_start;
+            uint last_cluster_item = first_cluster_item + num_lights;
 
-            vec3 L = normalize(light_position - P);
+            // find minimum and maximum cluster item
+            uint min_cluster_item = subgroupMin(first_cluster_item);
+            uint max_cluster_item = subgroupMax(last_cluster_item);
 
-            float dist = length(P - light_position);
-            float attenuation = point_light_attenuation(dist, light_falloff_linear, light_falloff_quadratic);
+            for (uint i = min_cluster_item; i < max_cluster_item; i++) {
+                uint cluster_item = cluster_items[i];
+                uint light_id = cluster_item;
 
-            vec3 radiance = (light_color.xyz * light_color.a) * attenuation;
+                LightData light = lights[light_id];
 
-            vec3 result = pbr(
-                L,
-                V,
-                N,
-                props,
-                radiance,
-                1.0
-            );
-
-            color += result;
+                if (i >= first_cluster_item && i < last_cluster_item) {
+                    color += point_light_shade(P, N, V, light, props);
+                }
+            }
+            */
         }
-        color += vec3(0, 0.1, 0);
-    } else {
+
+        outColor = vec4(color, 1.0);
+        return;
+    }
+    
+    // vector read
+    {
         for (uint i = 0; i < num_lights; i++) {
             uint cluster_item = cluster_items[clusters[cluster_id].item_start + i];
             uint light_id = cluster_item;
 
             LightData light = lights[light_id];
 
-            vec3 L = normalize(light.position.xyz - P);
-
-            float dist = length(P - light.position.xyz);
-            float attenuation = point_light_attenuation(dist, light.falloff_linear, light.falloff_quadratic);
-
-            vec3 radiance = (light.color.rgb * light.color.a) * attenuation;
-            float shadow = 1.0;
-
-            vec3 result = pbr(
-                    L,
-                    V,
-                    N,
-                    props,
-                    radiance,
-                    shadow
-                );
-
-            color += result;
+            color += point_light_shade(P, N, V, light, props);
         }
     }
     outColor = vec4(color, 1.0);

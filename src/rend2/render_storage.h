@@ -32,6 +32,7 @@ struct alignas(16) MaterialData {
     v4f emission;
     f32 roughness;
     f32 metallic;
+    f32 tex_scale;
 
     TextureHandle tex_albedo0;
     TextureHandle tex_albedo1;
@@ -74,7 +75,7 @@ struct alignas(16) LightData {
     f32 falloff_quadratic;
 
     // nice we can put this here! :D
-    u32 shadowcast_texture_id = -1U;
+    TextureHandle shadowcast_texture_id;
 
     u32 _pad[1];
 };
@@ -111,6 +112,8 @@ public:
 
     MaterialHandle alloc_material(const MaterialData &);
     TextureHandle alloc_texture(VkImage image, VkImageView view, VkSampler sampler);
+
+    TextureHandle reserve_contiguous_textures(u32 count);
 
     ObjectHandle alloc_object();
 
@@ -173,6 +176,11 @@ public:
     TextureSlot &texture(TextureHandle handle) { return m_textures[handle.id]; }
 
     std::span<const ShaderInfo> shaders() { return m_shaders; }
+
+
+    void for_each_point_light(std::function<bool(LightHandle, LightData &)>);
+
+
 private:
 
     gpu_t *m_gpu;

@@ -5,6 +5,7 @@
 struct RenderTarget {
     VkImageView color_view;
     VkImageView depth_view;
+    VkOffset2D offset = {0, 0};
     VkExtent2D extent;
     bool clear_first;
 

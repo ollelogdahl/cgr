@@ -320,6 +320,17 @@ void RenderStorage::update_global(const GlobalData &data) {
     m_writes.global_data_dirty = true;
 }
 
+void RenderStorage::for_each_point_light(std::function<bool(LightHandle, LightData &)> fn) {
+    for (u32 i = 0; i < m_lights.highest_id; ++i) {
+        if (m_lights.allocator.is_occupied(i)) {
+            bool dirty = fn({i}, m_lights.data[i]);
+            if (dirty) {
+                m_lights.dirty.insert({i});
+            }
+        }
+    }
+}
+
 RenderStorage::FlushDependencies RenderStorage::flush(CommandBuffer &cmd) {
     ZoneScoped;
 

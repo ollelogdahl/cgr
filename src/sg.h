@@ -64,6 +64,12 @@ public:
         m_data.metallic = metallic;
         m_state.update_material(m_handle, m_data);
     }
+
+    void set_texture_scale(f32 scale) {
+        m_data.tex_scale = scale;
+        m_state.update_material(m_handle, m_data);
+    }
+
     void set_shader(ShaderHandle shader) {
         m_shader = shader;
     }
@@ -104,13 +110,6 @@ private:
     MaterialHandle m_handle;
     ShaderHandle m_shader;
     RenderState &m_state;
-
-    TextureHandle m_tex_albedo0;
-    TextureHandle m_tex_albedo1;
-    TextureHandle m_tex_albedo2;
-    TextureHandle m_tex_normal;
-    TextureHandle m_tex_metallic;
-    TextureHandle m_tex_roughness;
 };
 
 class node_t {
@@ -491,6 +490,8 @@ public:
         m_default_material.set_roughness(0.5f);
         m_default_material.set_metallic(0.0f);
         m_default_material.set_shader(default_shader);
+
+        m_default_material.set_texture_scale(1.0f);
     }
 
     void add(node_t *node) {

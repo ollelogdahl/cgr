@@ -40,8 +40,7 @@ layout(push_constant) uniform Constants {
 };
 
 bool sphere_aabb_intersect(vec3 sphere_center, float radius, vec3 aabb_min, vec3 aabb_max);
-float calculate_light_radius(float linear, float quadratic);
-bool light_intersects_cluster(uint light_id, vec3 cluster_min, vec3 cluster_max);
+float calculate_light_radius(float linear, float quadratic, float intensity);
 
 uint hash_fnv1a_init();
 uint hash_fnv1a_next(uint hash, uint value);
@@ -77,13 +76,19 @@ void main() {
         if (local_index < light_batch_count) {
             uint light_id = batch_start + local_index;
 
-            vec4 position_ws = lights[light_id].position;
+            LightData light = lights[light_id];
+
+            vec4 position_ws = light.position;
             vec3 position_vs = vec3(push.view * position_ws);
             position_vs *= -1;
 
+            float intensity = distance(light.color.rgb, vec3(0.0))
+                * light.color.a;
+
             float radius = calculate_light_radius(
-                lights[light_id].falloff_linear,
-                lights[light_id].falloff_quadratic
+                light.falloff_linear,
+                light.falloff_quadratic,
+                intensity
             );
 
             vec4 packed_light = vec4(position_vs, radius);
@@ -118,35 +123,22 @@ void main() {
     clusters[cluster_index].hash_and_num_lights = hash_and_num_lights;
 }
 
-bool light_intersects_cluster(uint light_id, vec3 cluster_min, vec3 cluster_max) {
-    vec4 light_world = lights[light_id].position;
-    if (light_world.w == 0.0) return false;
-
-    vec4 light_view = push.view * light_world;
-    light_view /= light_view.w;
-    light_view *= -1;
-
-    float light_radius = calculate_light_radius(
-        lights[light_id].falloff_linear, lights[light_id].falloff_quadratic
-    );
-
-    return sphere_aabb_intersect(light_view.xyz, light_radius, cluster_min, cluster_max);
-}
-
 bool sphere_aabb_intersect(vec3 sphere_center, float radius, vec3 aabb_min, vec3 aabb_max) {
     vec3 closest_point_in_aabb = clamp(sphere_center, aabb_min, aabb_max);
     float distance_sq = dot(sphere_center - closest_point_in_aabb, sphere_center - closest_point_in_aabb);
     return distance_sq < radius * radius;
 }
 
-float calculate_light_radius(float linear, float quadratic) {
+float calculate_light_radius(float linear, float quadratic, float intensity) {
     // Solve the quadratic equation to find the radius of the light
+
+    float effective_threshold = push.light_threshold / max(intensity, 0.001);
 
     if (quadratic > 0.0) {
         // Solve quadratic equation: att = 1/(1 + linear*d + quadratic*d^2) = threshold
         float a = quadratic;
         float b = linear;
-        float c = 1.0 - (1.0/push.light_threshold);
+        float c = 1.0 - (1.0/effective_threshold);
         float discriminant = b*b - 4.0*a*c;
 
         if (discriminant < 0.0) return 1.0; // Fallback
@@ -154,9 +146,9 @@ float calculate_light_radius(float linear, float quadratic) {
         return (-b + sqrt(discriminant)) / (2.0*a);
     } else if (linear > 0.0) {
         // Linear-only attenuation
-        return (1.0/push.light_threshold - 1.0) / linear;
+        return (1.0/effective_threshold - 1.0) / linear;
     } else {
-        return 0.0; // Default large radius for non-attenuated lights
+        return 0.0;
     }
 }
 

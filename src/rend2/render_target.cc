@@ -42,7 +42,7 @@ VkViewport RenderTarget::viewport() const {
 }
 VkRect2D RenderTarget::scissor() const {
     return {
-        .offset = {0, 0},
+        .offset = offset,
         .extent = extent,
     };
 }

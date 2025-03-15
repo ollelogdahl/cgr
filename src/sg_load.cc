@@ -415,6 +415,8 @@ sg::Material &parse_material(RenderState &state, sg::scene_t &scene, tinyxml2::X
     auto mat_roughness_attr = elem->Attribute("mat-roughness");
     auto mat_metallic_attr = elem->Attribute("mat-metallic");
 
+    auto mat_tex_scale_attr = elem->Attribute("mat-tex-scale");
+
     auto mat_tex_albedo0_attr = elem->Attribute("mat-tex-albedo0");
     auto mat_tex_albedo1_attr = elem->Attribute("mat-tex-albedo1");
     auto mat_tex_albedo2_attr = elem->Attribute("mat-tex-albedo2");
@@ -429,6 +431,7 @@ sg::Material &parse_material(RenderState &state, sg::scene_t &scene, tinyxml2::X
     any_material_attr_set |= mat_diffuse_attr != nullptr;
     any_material_attr_set |= mat_roughness_attr != nullptr;
     any_material_attr_set |= mat_metallic_attr != nullptr;
+    any_material_attr_set |= mat_tex_scale_attr != nullptr;
     any_material_attr_set |= mat_tex_albedo0_attr != nullptr;
     any_material_attr_set |= mat_tex_albedo1_attr != nullptr;
     any_material_attr_set |= mat_tex_albedo2_attr != nullptr;
@@ -445,6 +448,7 @@ sg::Material &parse_material(RenderState &state, sg::scene_t &scene, tinyxml2::X
         material->set_emission(scene.default_material().emission());
         material->set_roughness(scene.default_material().roughness());
         material->set_metallic(scene.default_material().metallic());
+        material->set_texture_scale(1.0f);
 
         if (mat_diffuse_attr) {
             material->set_color(parse_attr_color4(std::string_view(mat_diffuse_attr)));
@@ -454,6 +458,10 @@ sg::Material &parse_material(RenderState &state, sg::scene_t &scene, tinyxml2::X
         }
         if (mat_metallic_attr) {
             material->set_metallic(std::strtof(mat_metallic_attr, nullptr));
+        }
+
+        if (mat_tex_scale_attr) {
+            material->set_texture_scale(std::strtof(mat_tex_scale_attr, nullptr));
         }
 
         if (mat_tex_albedo0_attr) {

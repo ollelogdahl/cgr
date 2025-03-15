@@ -98,6 +98,67 @@ RenderStorage::ShaderInfo Renderer::create_pipelines_for(Shader &shader) {
 void Renderer::render(gpu_t::frame_t &frame, const View &view) {
     ZoneScoped;
 
+    /*
+    RenderTarget alloc_shadowtex(u32 size_factor);
+
+    struct ShadowRenderTask {
+        RenderTarget target;
+        View view;
+    };
+    std::vector<ShadowRenderTask> shadow_render_tasks;
+
+    m_storage.for_each_point_light([&](LightHandle _, LightData &light) {
+        // determine detail level based on distance to camera.
+        f32 dist_sq = view.position.square_distance(light.position.xyz());
+
+        u32 size_factor = 5; // 512x512
+
+        auto tex_handle = m_storage.reserve_contiguous_textures(6);
+
+        const v3f forwards[] = {
+            {1, 0, 0},
+            {-1, 0, 0},
+            {0, 1, 0},
+            {0, -1, 0},
+            {0, 0, 1},
+            {0, 0, -1},
+        };
+        const v3f ups[] = {
+            {0, 1, 0},
+            {0, 1, 0},
+            {0, 0, 1},
+            {0, 0, -1},
+            {0, 1, 0},
+            {0, 1, 0},
+        };
+
+        for (uint i = 0; i < 6; ++i) {
+            f32 near = 0.1;
+            f32 far = 10.0;
+
+            m4f view = m4f::look_at(
+                light.position.xyz(), light.position.xyz() + forwards[i], ups[i]);
+            m4f proj = m4f::perspective(anglef::from_deg(90), 1.0f, near, far);
+
+            auto target = alloc_shadowtex(size_factor);
+
+            shadow_render_tasks.push_back({
+                .target = target,
+                .view = {
+                    .projection = proj,
+                    .view = view,
+                    .position = light.position.xyz(),
+                    .znear = near,
+                    .zfar = far,
+                },
+            });
+        }
+
+        light.shadowcast_texture_id = tex_handle;
+        return true;
+    });
+    */
+
     WriteDependency pre_cluster_build_dependencies;
     WriteDependency pre_cluster_assign_dependencies;
     WriteDependency pre_forward_dependencies;
