@@ -24,7 +24,7 @@ void gpu_t::frame(std::function<void(frame_t &)> fn) {
 
     vmaSetCurrentFrameIndex(allocator, frame_index);
 
-    const auto timeout = 1000000000;
+    const u64 timeout = -1ULL;
     {
         ZoneScopedN("graphics-wait-ready");
         VK_CHECK(vkWaitForFences(device, 1, &current_frame.in_flight, VK_TRUE, timeout));

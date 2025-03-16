@@ -24,14 +24,14 @@ struct ClusterConfig {
     u32 grid_y = 9;
     u32 grid_z = 24;
 
-    u32 max_items_per_cluster = 256;
-
     const GpuBuffer &light_buffer;
 };
 
 class ClusterShading {
 public:
     ClusterShading(gpu_t &gpu, ShaderCompiler &sc, const ClusterConfig &config);
+
+    static const u32 MAX_LIGHTS_PER_CLUSTER = 255;
 
     struct alignas(16) ClusterData {
         v4f bounds_min;
@@ -50,7 +50,7 @@ public:
     void rebuild_clusters(CommandBuffer &cmd, f32 znear, f32 zfar, const m4f &m_inv_proj);
 
     // @todo: how do we upload items to here? We reuse lights from RenderStorage for now.
-    void assign_items(CommandBuffer &cmd, const m4f &view_matrix);
+    void assign_items(CommandBuffer &cmd, const m4f &view_proj, const m4f &view_matrix);
 
     GpuBuffer &cluster_buffer() { return m_cluster_buffer; }
     GpuBuffer &cluster_item_buffer() { return m_items_buffer; }

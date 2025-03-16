@@ -17,6 +17,7 @@ struct alignas(16) ClusterGenPushConstants {
 
 struct alignas(16) ClusterAssignPushConstants {
     m4f view;
+    v4f frustum_planes[6];
     f32 light_threshold;
 };
 
@@ -33,13 +34,16 @@ u32 cluster_buffer_size(const ClusterConfig &config) {
 }
 u32 items_buffer_size(const ClusterConfig &config) {
     return (config.grid_x * config.grid_y * config.grid_z)
-        * config.max_items_per_cluster * sizeof(u32) + sizeof(u32);
+        * ClusterShading::MAX_LIGHTS_PER_CLUSTER * sizeof(u32) + sizeof(u32);
 }
 
 ClusterShading::ClusterShading(gpu_t &gpu, ShaderCompiler &sc, const ClusterConfig &config)
 : m_gpu(gpu), m_config(config),
     m_cluster_buffer(gpu, cluster_buffer_size(config), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT),
     m_items_buffer(gpu, items_buffer_size(config), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT) {
+
+    set_object_name(gpu, VK_OBJECT_TYPE_BUFFER, m_cluster_buffer.get(), "cluster-buffer");
+    set_object_name(gpu, VK_OBJECT_TYPE_BUFFER, m_items_buffer.get(), "cluster-items-buffer");
 
     metrics::gauge_u32("rend2.clusters.count", num_clusters());
 
@@ -98,6 +102,9 @@ ClusterShading::ClusterShading(gpu_t &gpu, ShaderCompiler &sc, const ClusterConf
 
     m_gen_pipeline = create_compute_pipeline(gpu, m_gen_pipeline_layout, cluster_gen);
     m_assign_pipeline = create_compute_pipeline(gpu, m_assign_pipeline_layout, cluster_assign);
+
+    set_object_name(gpu, VK_OBJECT_TYPE_PIPELINE, m_gen_pipeline, "cluster-gen");
+    set_object_name(gpu, VK_OBJECT_TYPE_PIPELINE, m_assign_pipeline, "cluster-assign");
 }
 
 void ClusterShading::rebuild_clusters(CommandBuffer &cmd, f32 znear, f32 zfar, const m4f &m_inv_proj) {
@@ -123,13 +130,15 @@ void ClusterShading::rebuild_clusters(CommandBuffer &cmd, f32 znear, f32 zfar, c
     vkCmdDispatch(cmd.get(), group_count, 1, 1);
 }
 
-void ClusterShading::assign_items(CommandBuffer &cmd, const m4f &view_matrix) {
+void ClusterShading::assign_items(CommandBuffer &cmd, const m4f &view_proj, const m4f &view_matrix) {
     TracyVkZone(cmd.tracy_ctx(), cmd.get(), "assign-items");
 
     ClusterAssignPushConstants push_constants = {
         .view = view_matrix,
+        .frustum_planes = {},
         .light_threshold = runtime_config.light_threshold,
     };
+    m4f::extract_planes(view_proj, push_constants.frustum_planes);
 
     VkDescriptorSet sets[] = { m_assign_descriptor_set.get() };
 

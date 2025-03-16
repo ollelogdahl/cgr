@@ -42,6 +42,14 @@ RenderStorage::RenderStorage(gpu_t &gpu, const RenderStorageConfig &config)
         SlotAllocator(config.max_lights)
     ) {
 
+    set_object_name(gpu, VK_OBJECT_TYPE_BUFFER, m_object_buffer.get(), "object-buffer");
+    set_object_name(gpu, VK_OBJECT_TYPE_BUFFER, m_vertex_buffer.get(), "vertex-buffer");
+    set_object_name(gpu, VK_OBJECT_TYPE_BUFFER, m_index_buffer.get(), "index-buffer");
+    set_object_name(gpu, VK_OBJECT_TYPE_BUFFER, m_material_buffer.get(), "material-buffer");
+    set_object_name(gpu, VK_OBJECT_TYPE_BUFFER, m_mesh_buffer.get(), "mesh-buffer");
+    set_object_name(gpu, VK_OBJECT_TYPE_BUFFER, m_global_buffer.get(), "global-buffer");
+    set_object_name(gpu, VK_OBJECT_TYPE_BUFFER, m_lights.buffer.get(), "light-buffer");
+
     u64 gpu_total_size_bytes = m_object_buffer.size() + m_vertex_buffer.size() + m_index_buffer.size() +
         m_material_buffer.size() + m_mesh_buffer.size() + m_global_buffer.size();
     metrics::gauge_u64("rend2.state.gpu_size", gpu_total_size_bytes, "b");

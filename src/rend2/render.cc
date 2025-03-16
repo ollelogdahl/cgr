@@ -14,6 +14,39 @@
 #include "rend2/vku.h"
 #include "tracy/Tracy.hpp"
 
+class TrackedResourceID {
+public:
+    inline constexpr TrackedResourceID(const char *s, size_t n) {
+        const u64 fnv1a_offset_basis = 0xcbf29ce484222325;
+        const u64 fnv1a_prime = 0x00000100000001b3;
+
+        m_hash = fnv1a_offset_basis;
+
+        for (size_t i = 0; i < n; ++i) {
+            m_hash ^= (u64)s[i];
+            m_hash *= fnv1a_prime;
+        }
+    }
+private:
+    u64 m_hash;
+};
+
+inline constexpr TrackedResourceID operator ""_tr(const char *s, size_t n) {
+    return TrackedResourceID(s, n);
+}
+
+class ResourceTracker {
+public:
+    void declare_buffer(TrackedResourceID id, VkBuffer buffer /* range */);
+    void declare_image(TrackedResourceID id, VkImage image /* range */);
+
+    void compute_write(TrackedResourceID resource);
+    void compute_read(TrackedResourceID resource);
+
+    void graphics_read(TrackedResourceID resource);
+private:
+};
+
 class ImageDependency {
 public:
     ImageDependency() = default;
@@ -80,6 +113,8 @@ Renderer::Renderer(gpu_t &gpu, RenderStorage &storage, ShaderCompiler &sc) : m_g
         .grid_z = 22,
         .light_buffer = m_storage.light_buffer(),
     }) {
+
+    set_object_name(gpu, VK_OBJECT_TYPE_BUFFER, m_draw_buffer.get(), "draw-buffer");
 
     m_forward_pipeline_layout = m_forward_pass.pipeline_layout();
 
@@ -192,7 +227,7 @@ void Renderer::render(gpu_t::frame_t &frame, const View &view) {
             VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
             VK_ACCESS_2_SHADER_WRITE_BIT,
             m_cluster_shading.cluster_buffer().get());
-        
+
         pre_forward_dependencies.add(
             VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
             VK_ACCESS_2_SHADER_WRITE_BIT,
@@ -211,7 +246,8 @@ void Renderer::render(gpu_t::frame_t &frame, const View &view) {
         pre_cluster_assign_dependencies.pipeline_barrier(frame.cmd.get(),
             VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT);
 
-        m_cluster_shading.assign_items(frame.cmd, view.view);
+        m4f vp = view.view * view.projection;
+        m_cluster_shading.assign_items(frame.cmd, vp, view.view);
 
         pre_forward_dependencies.add(
             VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
@@ -221,7 +257,7 @@ void Renderer::render(gpu_t::frame_t &frame, const View &view) {
 
     {
         pre_forward_dependencies.pipeline_barrier(frame.cmd.get(),
-            VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT);
+            VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT);
     }
 
     {
@@ -423,6 +459,8 @@ VkPipeline make_render_pipeline(gpu_t &gpu, VkPipelineLayout layout, Shader shad
     if (vkCreateGraphicsPipelines(gpu.device, VK_NULL_HANDLE, 1, &pipeline_info, nullptr, &pipeline) != VK_SUCCESS) {
         // gpu_log.error("failed to create graphics pipeline");
     }
+
+    set_object_name(gpu, VK_OBJECT_TYPE_PIPELINE, pipeline, "render-forward");
 
     return pipeline;
 }

@@ -108,6 +108,7 @@ void gpu_t::init(GLFWwindow *window, const gpu_create_options_t &options) {
 
             // optional
             extensions.push_back(VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME);
+            extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
 
             createInfo.enabledExtensionCount = extensions.size();
             createInfo.ppEnabledExtensionNames = extensions.data();

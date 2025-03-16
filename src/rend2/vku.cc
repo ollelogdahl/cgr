@@ -31,7 +31,6 @@ VkPipeline create_compute_pipeline(gpu_t &gpu, VkPipelineLayout layout, const Sh
 }
 
 void set_object_name(gpu_t &gpu, VkObjectType type, void *handle, std::string name) {
-    /*
     // allocate the name like crazy!
     char *name_copy = new char[name.size() + 1];
     memcpy(name_copy, name.c_str(), name.size());
@@ -40,6 +39,9 @@ void set_object_name(gpu_t &gpu, VkObjectType type, void *handle, std::string na
     name_info.objectType = type;
     name_info.objectHandle = (u64)handle;
     name_info.pObjectName = name_copy;
-    vkSetDebugUtilsObjectNameEXT(gpu.device, &name_info);
-     */
+
+    auto func = (PFN_vkSetDebugUtilsObjectNameEXT)vkGetInstanceProcAddr(gpu.instance, "vkSetDebugUtilsObjectNameEXT");
+    if (func) {
+        func(gpu.device, &name_info);
+    }
 }

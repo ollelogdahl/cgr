@@ -1,4 +1,4 @@
-#define MAX_CLUSTER_ITEMS 256
+#define MAX_CLUSTER_ITEMS 255
 
 struct ClusterData {
     vec4 bounds_min;

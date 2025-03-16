@@ -362,11 +362,14 @@ void main() {
     if (debug_mode == DEBUG_CLUSTER_SCALAR_READ) {
 
         // if entire subgroup in tne same cluster, we can read only once
-        bool subgroup_in_cluster = subgroupAllEqual(hash);
-        if (subgroup_in_cluster) {
-            uint first_cluster_item = subgroupBroadcastFirst(cluster_id);
-            uint item_count = subgroupBroadcastFirst(num_lights);
-            uint last_cluster_item = first_cluster_item + item_count;
+        bool subgroup_same_hash = subgroupAllEqual(hash);
+        if (subgroup_same_hash) {
+            // this should make it scalar?
+            uint group_cluster_id = subgroupBroadcastFirst(cluster_id);
+            uint group_num_lights = subgroupBroadcastFirst(num_lights);
+
+            uint first_cluster_item = clusters[group_cluster_id].item_start;
+            uint last_cluster_item = first_cluster_item + group_num_lights;
 
             for (uint i = first_cluster_item; i < last_cluster_item; i++) {
                 uint cluster_item = cluster_items[i];
@@ -386,32 +389,12 @@ void main() {
 
                 color += point_light_shade(P, N, V, light, props);
             }
-            /*
-            // split across multiple clusters. Light using all anyways :D
-            uint first_cluster_item = clusters[cluster_id].item_start;
-            uint last_cluster_item = first_cluster_item + num_lights;
-
-            // find minimum and maximum cluster item
-            uint min_cluster_item = subgroupMin(first_cluster_item);
-            uint max_cluster_item = subgroupMax(last_cluster_item);
-
-            for (uint i = min_cluster_item; i < max_cluster_item; i++) {
-                uint cluster_item = cluster_items[i];
-                uint light_id = cluster_item;
-
-                LightData light = lights[light_id];
-
-                if (i >= first_cluster_item && i < last_cluster_item) {
-                    color += point_light_shade(P, N, V, light, props);
-                }
-            }
-            */
         }
 
         outColor = vec4(color, 1.0);
         return;
     }
-    
+
     // vector read
     {
         for (uint i = 0; i < num_lights; i++) {

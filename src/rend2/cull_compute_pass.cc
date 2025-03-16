@@ -63,6 +63,8 @@ CullComputePass::CullComputePass(gpu_t &gpu, ShaderCompiler &sc)
         sc.compile("shaders/cull-lod.comp")
     });
     m_pipeline = create_compute_pipeline(gpu, m_pipeline_layout, shader);
+
+    set_object_name(gpu, VK_OBJECT_TYPE_PIPELINE, m_pipeline, "cull-lod");
 }
 
 void CullComputePass::bind_buffers(const GpuBuffer &object_buffer, const GpuBuffer &draw_buffer, const GpuBuffer &mesh_buffer) {
