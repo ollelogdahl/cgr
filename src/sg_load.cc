@@ -162,7 +162,7 @@ sg::node_t *parse_point_light(RenderState &render_state, sg::scene_t &scene, tin
     auto falloff_attr = elem->Attribute("falloff");
 
     if (color_attr) {
-        auto color = parse_attr_color3(std::string_view(color_attr));
+        auto color = parse_attr_color3(std::string_view(color_attr)).normalized();
         point_light->set_color(color);
     }
 
