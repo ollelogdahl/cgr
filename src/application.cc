@@ -122,7 +122,7 @@ void Application::init_and_run(const char *scene_file_path, const ApplicationCon
 
     // fixed perspective projection
     f32 znear = 0.1f;
-    f32 zfar = 200.0f;
+    f32 zfar = 300.0f;
     m4f persp = m4f::perspective(anglef::from_deg(90.0), (f32)width / (f32)height, znear, zfar);
 
     double last_time = glfwGetTime();
@@ -169,12 +169,13 @@ void Application::init_and_run(const char *scene_file_path, const ApplicationCon
         {
             ZoneScopedN("update");
 
-            // m_current_scene->accept(camera_movement_visitor);
-            m_current_scene->accept(update_visitor);
+            {
+                ZoneScopedN("update-visitor");
+                m_current_scene->accept(update_visitor);
+            }
 
             {
                 ZoneScopedN("render-visitor");
-                render_visitor.reset_lights();
                 m_current_scene->accept(render_visitor);
                 main_camera = &render_visitor.main_camera();
             }

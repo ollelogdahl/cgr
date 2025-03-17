@@ -4,7 +4,7 @@ namespace sg {
 
 void scene_t::clear() {
     // delete all nodes.
-    nodes.clear();
+    m_root.clear_children();
 
     // deallocate nodes.
     storage.groups.clear();

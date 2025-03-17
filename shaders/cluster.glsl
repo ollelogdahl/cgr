@@ -1,5 +1,7 @@
 #define MAX_CLUSTER_ITEMS 255
 
+#define ClusterHashAndCount uint
+
 struct ClusterData {
     vec4 bounds_min;
     vec4 bounds_max;
@@ -13,6 +15,15 @@ struct ClusterConstants {
     uint grid_y;
     uint grid_z;
 };
+
+ClusterHashAndCount cluter_hash_and_count(uint hash, uint count) {
+    return hash << 8 | count;
+}
+
+void cluster_unpack_hash_and_count(ClusterHashAndCount hash_and_count, out uint hash, out uint count) {
+    hash = hash_and_count >> 8;
+    count = hash_and_count & 0xFF;
+}
 
 bool cluster_index_valid(uint cluster_index, ClusterConstants constants) {
     return cluster_index < constants.grid_x * constants.grid_y * constants.grid_z;

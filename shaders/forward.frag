@@ -294,24 +294,19 @@ void main() {
     clip_pos /= clip_pos.w;
 
     uint cluster_id = cluster_lookup(clip_pos.xyz, position_vs, cluster_constants);
-
-    // if (debug_mode == DEBUG_CLUSTER_ID) {
-    //     outColor = vec4(color_random(cluster_id), 1.0);
-    //     return;
-    // }
+    uint cluster_hash;
+    uint cluster_num_lights;
+    cluster_unpack_hash_and_count(clusters[cluster_id].hash_and_num_lights, cluster_hash, cluster_num_lights);
 
     if (debug_mode == DEBUG_CLUSTER_LIGHTS) {
-        uint num_lights = clusters[cluster_id].hash_and_num_lights & 0xFF;
-        float occupancy = float(num_lights) / 30;
+        float occupancy = float(cluster_num_lights) / MAX_CLUSTER_ITEMS;
 
         outColor = vec4(color_range_viridis(occupancy), 1.0);
         return;
     }
 
     if (debug_mode == DEBUG_CLUSTER_HASH) {
-        uint hash = clusters[cluster_id].hash_and_num_lights >> 8;
-
-        outColor = vec4(color_random(hash), 1.0);
+        outColor = vec4(color_random(cluster_hash), 1.0);
         return;
     }
 
@@ -319,7 +314,6 @@ void main() {
             albedo,
             roughness,
             metallic);
-
 
     if (debug_mode == DEBUG_SKIP_CLUSTER_SHADING) {
         for (uint i = 0; i < highest_light + 1; i++) {
@@ -354,19 +348,14 @@ void main() {
         return;
     }
 
-    // scalar read optimization
-    uint hash_and_num_lights = clusters[cluster_id].hash_and_num_lights;
-    uint hash = hash_and_num_lights >> 8;
-    uint num_lights = hash_and_num_lights & 0xFF;
-
     if (debug_mode == DEBUG_CLUSTER_SCALAR_READ) {
 
         // if entire subgroup in tne same cluster, we can read only once
-        bool subgroup_same_hash = subgroupAllEqual(hash);
+        bool subgroup_same_hash = subgroupAllEqual(cluster_hash);
         if (subgroup_same_hash) {
             // this should make it scalar?
             uint group_cluster_id = subgroupBroadcastFirst(cluster_id);
-            uint group_num_lights = subgroupBroadcastFirst(num_lights);
+            uint group_num_lights = subgroupBroadcastFirst(cluster_num_lights);
 
             uint first_cluster_item = clusters[group_cluster_id].item_start;
             uint last_cluster_item = first_cluster_item + group_num_lights;
@@ -381,7 +370,7 @@ void main() {
             }
             color += vec3(0, 0.1, 0);
         } else {
-            for (uint i = 0; i < num_lights; i++) {
+            for (uint i = 0; i < cluster_num_lights; i++) {
                 uint cluster_item = cluster_items[clusters[cluster_id].item_start + i];
                 uint light_id = cluster_item;
 
@@ -397,7 +386,7 @@ void main() {
 
     // vector read
     {
-        for (uint i = 0; i < num_lights; i++) {
+        for (uint i = 0; i < cluster_num_lights; i++) {
             uint cluster_item = cluster_items[clusters[cluster_id].item_start + i];
             uint light_id = cluster_item;
 

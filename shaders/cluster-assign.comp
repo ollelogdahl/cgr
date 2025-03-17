@@ -120,11 +120,9 @@ void main() {
 
     hash = hash_fnv1a_next(hash, cluster_item_count);
 
-    uint hash_and_num_lights = hash << 8 | cluster_item_count;
-
     if (cluster_index_valid(cluster_index, cluster_constants)) {
         clusters[cluster_index].item_start = cluster_item_offset;
-        clusters[cluster_index].hash_and_num_lights = hash_and_num_lights;
+        clusters[cluster_index].hash_and_num_lights = cluter_hash_and_count(hash, cluster_item_count);
     }
 }
 

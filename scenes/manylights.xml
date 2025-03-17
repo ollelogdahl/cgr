@@ -11,7 +11,7 @@
             mat-tex-roughness="assets/tiles133a_roughness.jpg"
         />
     </transform>
-    <grid count="100 1 100" spacing="8 1 8">
+    <grid count="100 1 100" spacing="5 1 5">
         <model file="assets/cube.obj"
             mat-color="0.4 0.1 0.1"
             mat-roughness="0.3"

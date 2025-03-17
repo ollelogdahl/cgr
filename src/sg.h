@@ -129,15 +129,32 @@ public:
     void update() {
         if (m_update_callback) {
             m_update_callback(*this);
+            m_dirty = true;
         }
     }
     void set_update_callback(update_callback_t callback) {
         m_update_callback = callback;
     }
 
+    bool is_dirty() const {
+        return m_dirty;
+    }
+    void mark_dirty() {
+        m_dirty = true;
+        if (m_parent) {
+            m_parent->mark_dirty();
+        }
+    }
+    void unmark_dirty() {
+        m_dirty = false;
+    }
+
 protected:
     update_callback_t m_update_callback = nullptr;
     aabb_t m_aabb;
+    node_t *m_parent = nullptr;
+    bool m_dirty = true;
+    friend class group_t;
 };
 
 class node_visitor_t {
@@ -157,6 +174,7 @@ public:
     virtual ~group_t() = default;
 
     void add(node_t *node) {
+        node->m_parent = this;
         m_children.push_back(node);
     }
     void accept_children(node_visitor_t &visitor) {
@@ -171,6 +189,10 @@ public:
 
     const std::vector<node_t *> &children() const {
         return m_children;
+    }
+
+    void clear_children() {
+        m_children.clear();
     }
 
 protected:
@@ -265,12 +287,9 @@ class transform_t : public group_t {
 public:
     virtual ~transform_t() = default;
 
-    bool is_dirty() {
-        return m_dirty;
-    }
 
     m4f get_local_matrix() {
-        if (m_dirty) {
+        if (is_dirty()) {
             auto rot = m4f::rotate(m_rotation_x, v3f{1, 0, 0})
                 * m4f::rotate(m_rotation_y, v3f{0, 1, 0})
                 * m4f::rotate(m_rotation_z, v3f{0, 0, 1});
@@ -286,7 +305,7 @@ public:
         m_rotation_y = initial_transform.rotation_y;
         m_rotation_z = initial_transform.rotation_z;
         m_scale = initial_transform.scale;
-        m_dirty = true;
+        mark_dirty();
     }
 
     void accept(node_visitor_t &visitor) override {
@@ -305,14 +324,14 @@ public:
 
     void set_translation(const v3f &translation) {
         this->m_translation = translation;
-        m_dirty = true;
+        mark_dirty();
     }
 
     void set_euler_rotation(const v3f &euler_deg) {
         m_rotation_x = anglef::from_deg(euler_deg.x);
         m_rotation_y = anglef::from_deg(euler_deg.y);
         m_rotation_z = anglef::from_deg(euler_deg.z);
-        m_dirty = true;
+        mark_dirty();
     }
 
     v3f euler_rotation() {
@@ -321,7 +340,7 @@ public:
 
     void set_scale(const v3f &scale) {
         this->m_scale = scale;
-        m_dirty = true;
+        mark_dirty();
     }
 
 private:
@@ -331,7 +350,6 @@ private:
     v3f m_scale = {1, 1, 1};
     anglef m_rotation_y = anglef::zero();
     anglef m_rotation_z = anglef::zero();
-    bool m_dirty = true;
 
     struct {
         v3f translation = {0, 0, 0};
@@ -495,12 +513,10 @@ public:
     }
 
     void add(node_t *node) {
-        nodes.push_back(node);
+        m_root.add(node);
     }
     void accept(node_visitor_t &visitor) {
-        for (auto &node : nodes) {
-            node->accept(visitor);
-        }
+        m_root.accept(visitor);
     }
 
     void clear();
@@ -542,7 +558,7 @@ public:
     }
 
 private:
-    std::vector<node_t *> nodes;
+    group_t m_root;
 
     // @note: this is only some of the data. The important part is that
     //
