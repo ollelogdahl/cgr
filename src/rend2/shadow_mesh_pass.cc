@@ -1,7 +1,7 @@
 #include "shadow_mesh_pass.h"
 #include "rend2/pipeline_layout_builder.h"
 #include "rend2/shader_compiler.h"
-#include <vulkan/vulkan_core.h>
+
 
 #include <tracy/Tracy.hpp>
 

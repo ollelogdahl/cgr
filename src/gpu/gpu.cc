@@ -7,9 +7,9 @@
 
 #include <vector>
 
-#include <vulkan/vulkan.h>
+#include <volk/volk.h>
 #include <GLFW/glfw3.h>
-#include <vulkan/vulkan_core.h>
+
 
 #include <tracy/Tracy.hpp>
 

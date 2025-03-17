@@ -2,7 +2,7 @@
 
 #include "imgui/imgui_impl_glfw.h"
 #include "imgui/imgui_impl_vulkan.h"
-#include <vulkan/vulkan_core.h>
+
 
 ImGuiRenderer::ImGuiRenderer(gpu_t &gpu) : gpu(&gpu) {
     // creating the context does not have anything to do with

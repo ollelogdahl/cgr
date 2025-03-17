@@ -4,7 +4,7 @@
 #include "gpu.h"
 
 #include <span>
-#include <vulkan/vulkan_core.h>
+
 #include <vma/vk_mem_alloc.h>
 
 // this is very specific. But we will try it out!
@@ -64,9 +64,25 @@ public:
     GpuBuffer(gpu_t &gpu, u32 size, VkBufferUsageFlags usage, BufferType type = BufferType::Common, const char *name = "");
     ~GpuBuffer();
 
-    // no move
-    GpuBuffer(GpuBuffer &&) = delete;
-    GpuBuffer &operator=(GpuBuffer &&) = delete;
+    // move but no copy
+    GpuBuffer(GpuBuffer &&other) noexcept {
+        *this = std::move(other);
+    }
+    GpuBuffer &operator=(GpuBuffer &&other) noexcept {
+        m_gpu = other.m_gpu;
+        m_buffer = other.m_buffer;
+        m_allocation = other.m_allocation;
+        m_allocation_info = other.m_allocation_info;
+        m_mapped = other.m_mapped;
+        m_usage = other.m_usage;
+        m_type = other.m_type;
+
+        other.m_buffer = VK_NULL_HANDLE;
+        other.m_allocation = VK_NULL_HANDLE;
+        other.m_mapped = nullptr;
+
+        return *this;
+    }
 
     // immediate write to the entire buffer.
     // precond: data.len = size
@@ -107,6 +123,13 @@ public:
     usize size() const { return m_allocation_info.size; }
 
     VkBuffer get() const { return m_buffer; }
+
+    VkDeviceAddress get_buffer_device_address() const {
+        VkBufferDeviceAddressInfo info{};
+        info.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO;
+        info.buffer = m_buffer;
+        return vkGetBufferDeviceAddress(m_gpu->device, &info);
+    }
 private:
     void ensure_staging_buffer_size(u32 size);
 

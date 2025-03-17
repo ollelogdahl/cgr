@@ -28,9 +28,8 @@ private:
 
     gpu_t m_gpu;
 
-    RenderStorage *m_storage;
-    RenderState *m_render_state;
     Renderer *m_renderer;
+    RenderStorage *m_storage;
     ImGuiRenderer *m_gui_renderer;
 
     GLFWwindow *m_window;

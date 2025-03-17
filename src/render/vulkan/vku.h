@@ -1,7 +1,7 @@
 #pragma once
 
 #include <fmt/format.h>
-#include <vulkan/vulkan.h>
+#include <volk/volk.h>
 
 #define VK_CHECK(...) do { VkResult result = __VA_ARGS__; if (result != VK_SUCCESS) { \
     panic("vulkan api error: {}", result); } } while(0)

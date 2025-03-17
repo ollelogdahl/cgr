@@ -3,13 +3,14 @@
 #include "gpu.h"
 #include "oc.h"
 #include "linalg.h"
+#include "rend2/acceleration.h"
 #include "rend2/command_buffer.h"
 #include "rend2/randomalloc.h"
 #include "rend2/slotalloc.h"
 #include "rend2/descriptor_set.h"
 #include "rend2/buffer.h"
 #include <set>
-#include <vulkan/vulkan_core.h>
+
 
 #include "render_handles.h"
 
@@ -180,10 +181,13 @@ public:
 
     void for_each_point_light(std::function<bool(LightHandle, LightData &)>);
 
+    AccelerationBuilder &acceleration_builder() { return m_acceleration_builder; }
 
 private:
 
     gpu_t *m_gpu;
+
+    AccelerationBuilder m_acceleration_builder;
 
     // objects are fun! They lie both on the CPU and the GPU.
     GpuBuffer m_object_buffer;

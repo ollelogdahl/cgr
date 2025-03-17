@@ -4,9 +4,9 @@
 #include "vks.h"
 
 #include <set>
-#include <vulkan/vulkan_core.h>
 
 #include <tracy/Tracy.hpp>
+#include <volk/volk.h>
 
 std::vector<VkPresentModeKHR> present_modes_in_order_of_preference = {
     VK_PRESENT_MODE_MAILBOX_KHR,
@@ -37,6 +37,8 @@ static const char *VK_LAYER_KHRONOS_validation = "VK_LAYER_KHRONOS_validation";
 void gpu_t::init(GLFWwindow *window, const gpu_create_options_t &options) {
     this->window = window;
 
+    VK_CHECK(volkInitialize());
+
 
     const char *validation_layers[] = {
         VK_LAYER_KHRONOS_validation
@@ -45,6 +47,10 @@ void gpu_t::init(GLFWwindow *window, const gpu_create_options_t &options) {
 
     std::vector<const char *> required_device_extensions = {
         VK_KHR_SWAPCHAIN_EXTENSION_NAME,
+        VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME,
+        VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME,
+        VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME,
+        VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME,
         // VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME, @note: core in 1.3
         // VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME, @note: core in 1.3
     };
@@ -122,6 +128,9 @@ void gpu_t::init(GLFWwindow *window, const gpu_create_options_t &options) {
             return;
         }
         gpu_log.info("vulkan instance created");
+
+
+        volkLoadInstance(instance);
     }
 
     // setup the debug logger
@@ -284,9 +293,18 @@ void gpu_t::init(GLFWwindow *window, const gpu_create_options_t &options) {
 
         createInfo.pEnabledFeatures = &enabled_features;
 
+        VkPhysicalDeviceAccelerationStructureFeaturesKHR acceleration_structure_features{};
+        acceleration_structure_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR;
+        acceleration_structure_features.pNext = nullptr;
+        acceleration_structure_features.accelerationStructure = VK_TRUE;
+
+        VkPhysicalDeviceRayTracingPipelineFeaturesKHR raytracing_features{};
+        raytracing_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR;
+        raytracing_features.pNext = &acceleration_structure_features;
+
         VkPhysicalDeviceSynchronization2Features synchronization2_feature {
             .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES,
-            .pNext = nullptr,
+            .pNext = &raytracing_features,
             .synchronization2 = VK_TRUE,
         };
 
@@ -303,6 +321,7 @@ void gpu_t::init(GLFWwindow *window, const gpu_create_options_t &options) {
         vulkan12_feature.runtimeDescriptorArray = VK_TRUE;
         vulkan12_feature.descriptorBindingVariableDescriptorCount = VK_TRUE;
         vulkan12_feature.descriptorBindingPartiallyBound = VK_TRUE;
+        vulkan12_feature.bufferDeviceAddress = VK_TRUE;
         vulkan12_feature.pNext = &dynamic_rendering_feature;
 
         createInfo.pNext = &vulkan12_feature;
@@ -366,8 +385,8 @@ void gpu_t::init(GLFWwindow *window, const gpu_create_options_t &options) {
     }
 
     VmaVulkanFunctions vulkanFunctions = {};
-    vulkanFunctions.vkGetInstanceProcAddr = &vkGetInstanceProcAddr;
-    vulkanFunctions.vkGetDeviceProcAddr = &vkGetDeviceProcAddr;
+    vulkanFunctions.vkGetInstanceProcAddr = vkGetInstanceProcAddr;
+    vulkanFunctions.vkGetDeviceProcAddr = vkGetDeviceProcAddr;
 
     static const char *tracy_mempool_name = "vma";
 
@@ -384,7 +403,7 @@ void gpu_t::init(GLFWwindow *window, const gpu_create_options_t &options) {
     allocatorInfo.physicalDevice = pdev;
     allocatorInfo.device = device;
     allocatorInfo.instance = instance;
-    allocatorInfo.flags = VMA_ALLOCATOR_CREATE_EXT_MEMORY_BUDGET_BIT;
+    allocatorInfo.flags = VMA_ALLOCATOR_CREATE_EXT_MEMORY_BUDGET_BIT | VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT;
     allocatorInfo.pAllocationCallbacks = nullptr;
     allocatorInfo.pDeviceMemoryCallbacks = cbs;
     allocatorInfo.pVulkanFunctions = &vulkanFunctions;

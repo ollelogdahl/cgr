@@ -1,7 +1,7 @@
 #include "gpu.h"
 
 #include "log.h"
-#include <vulkan/vulkan_core.h>
+
 extern logger_t gpu_log;
 
 

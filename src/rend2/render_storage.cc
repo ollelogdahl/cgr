@@ -11,7 +11,7 @@
 #include "log.h"
 
 #include <tracy/Tracy.hpp>
-#include <vulkan/vulkan_core.h>
+
 
 const u32 vertex_size = 9 * sizeof(f32);
 const u32 index_size = sizeof(u32);
@@ -20,12 +20,19 @@ logger_t logger = logger_t("renderstorage");
 
 RenderStorage::RenderStorage(gpu_t &gpu, const RenderStorageConfig &config)
 :
-    // @todo: make some into storage buffers instead
+    // @todo: make some into uniform buffers instead?
+    //
+    // also, this is messuy.
+    //
+    // @note: vertex and index data requires device addressing, as they are used in acceleration structures.
     m_gpu(&gpu),
+    m_acceleration_builder(gpu),
     m_object_buffer(gpu, config.max_objects * sizeof(ObjectData), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT),
     m_object_data(new ObjectData[config.max_objects]),
-    m_vertex_buffer(gpu, config.max_vertices * vertex_size, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT),
-    m_index_buffer(gpu, config.max_indices * index_size, VK_BUFFER_USAGE_INDEX_BUFFER_BIT),
+    m_vertex_buffer(gpu, config.max_vertices * vertex_size,
+        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR),
+    m_index_buffer(gpu, config.max_indices * index_size,
+        VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR),
     m_material_buffer(gpu, config.max_materials * sizeof(MaterialData), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT),
     m_mesh_buffer(gpu, config.max_meshes * sizeof(MeshData), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT),
     m_global_buffer(gpu, sizeof(GlobalData), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT),

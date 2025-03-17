@@ -2,7 +2,7 @@
 #include "oc.h"
 #include "vk/swapchain.h"
 #include <GLFW/glfw3.h>
-#include <vulkan/vulkan_core.h>
+
 class VulkanGlfwRenderContext {
 public:
     struct CreateOptions {

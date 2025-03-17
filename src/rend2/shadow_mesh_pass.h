@@ -6,7 +6,7 @@
 #include "rend2/render_target.h"
 #include "rend2/shader_compiler.h"
 #include "rend2/view.h"
-#include <vulkan/vulkan_core.h>
+
 
 class ShadowMeshPass {
 public:

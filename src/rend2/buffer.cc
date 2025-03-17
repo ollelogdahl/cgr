@@ -1,6 +1,6 @@
 #include "buffer.h"
 #include "gpu.h"
-#include <vulkan/vulkan_core.h>
+
 
 // @note: optimization.
 //
@@ -21,6 +21,10 @@ GpuBuffer::GpuBuffer(gpu_t &gpu, u32 size, VkBufferUsageFlags usage, BufferType 
     // for uniform buffers.
     VmaAllocationCreateInfo alloc_info{};
     alloc_info.usage = VMA_MEMORY_USAGE_AUTO;
+
+    // if (usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT) {
+    //     alloc_info.flags |= VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT;
+    // }
 
     switch(type) {
     case BufferType::Common:

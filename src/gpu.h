@@ -1,7 +1,7 @@
 #pragma once
 
 #include <deque>
-#include <vulkan/vulkan.h>
+#include <volk/volk.h>
 #include <GLFW/glfw3.h>
 
 #include "oc.h"
@@ -10,7 +10,7 @@
 
 #include <vector>
 #include <functional>
-#include <vulkan/vulkan_core.h>
+
 
 #include <tracy/TracyVulkan.hpp>
 

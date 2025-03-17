@@ -93,13 +93,12 @@ void Application::init_and_run(const char *scene_file_path, const ApplicationCon
     });
 
     m_renderer = new Renderer(m_gpu, *m_storage, shader_compiler);
-    m_render_state = new RenderState(m_gpu, *m_storage, *m_renderer, shader_compiler);
 
     m_gui_renderer = new ImGuiRenderer(m_gpu);
 
     // m_current_scene = m_loader.
-    m_current_scene = make_ref<sg::scene_t>(*m_render_state);
-    sg::load(*m_render_state, scene_file_path, *m_current_scene);
+    m_current_scene = make_ref<sg::scene_t>(m_renderer->state());
+    sg::load(m_renderer->state(), scene_file_path, *m_current_scene);
 
 
 
@@ -107,7 +106,7 @@ void Application::init_and_run(const char *scene_file_path, const ApplicationCon
     m_current_scene->reset_to_initial_state();
 
     // renderer visitor
-    RenderVisitor render_visitor(*m_render_state);
+    RenderVisitor render_visitor(m_renderer->state());
 
     update_visitor_t update_visitor;
 

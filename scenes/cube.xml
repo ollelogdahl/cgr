@@ -1,9 +1,14 @@
 <?xml version="1.0" encoding="utf-8" ?>
 <scene>
     <camera position="0 2 0" />
-    <directional-light color="2 2 2" direction="-1 -1 0" />
-    <transform scale="0.02 0.02 0.02">
-        <model file="assets/dragon.obj"
+    <transform translate="0 8 0">
+        <point-light intensity="10" />
+    </transform>
+    <transform translate="2 4 0">
+        <point-light color="1 0.4 0" intensity="10" />
+    </transform>
+    <transform scale="8 8 8">
+        <model file="assets/house1.obj"
             mat-color="0.1 0.1 0.1"
             mat-roughness="0.3"
         />

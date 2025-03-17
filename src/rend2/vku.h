@@ -5,7 +5,7 @@
 #include "gpu.h"
 #include "rend2/command_buffer.h"
 #include "rend2/shader_compiler.h"
-#include <vulkan/vulkan_core.h>
+
 
 VkFence create_fence(gpu_t &gpu, bool signal = true);
 VkSemaphore create_semaphore(gpu_t &gpu);

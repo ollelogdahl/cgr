@@ -4,7 +4,7 @@
 #include "rend2/pipeline_layout_builder.h"
 #include "rend2/shader_compiler.h"
 #include "rend2/vku.h"
-#include <vulkan/vulkan_core.h>
+
 
 struct alignas(16) ClusterGenPushConstants {
     m4f inv_proj;

@@ -15,30 +15,37 @@ CCFILES_VENDOR = $(shell find vendor/ -type f -name *.cc)
 
 CC_OFILES_SRC_DEV = $(patsubst src/%.cc,${ODIR_DEV}/src/%.cc.o,$(CCFILES_SRC))
 CC_OFILES_VENDOR_DEV = $(patsubst vendor/%.cc,${ODIR_DEV}/vendor/%.cc.o,$(CCFILES_VENDOR))
+C_OFILES_VENDOR_DEV = $(patsubst vendor/%.c,${ODIR_DEV}/vendor/%.c.o,$(CFILES_VENDOR))
 
 CC_OFILES_SRC_RELEASE = $(patsubst src/%.cc,${ODIR_REL}/src/%.cc.o,$(CCFILES_SRC))
 CC_OFILES_VENDOR_RELEASE = $(patsubst vendor/%.cc,${ODIR_REL}/vendor/%.cc.o,$(CCFILES_VENDOR))
+C_OFILES_VENDOR_RELEASE = $(patsubst vendor/%.c,${ODIR_REL}/vendor/%.c.o,$(CFILES_VENDOR))
 
 CC_OFILES_SRC_MEM = $(patsubst src/%.cc,${ODIR_MEM}/src/%.cc.o,$(CCFILES_SRC))
 CC_OFILES_VENDOR_MEM = $(patsubst vendor/%.cc,${ODIR_MEM}/vendor/%.cc.o,$(CCFILES_VENDOR))
+C_OFILES_VENDOR_MEM = $(patsubst vendor/%.c,${ODIR_MEM}/vendor/%.c.o,$(CFILES_VENDOR))
 
 CCFILES_TRACY = vendor/tracy/TracyClient.cpp
 CC_OFILES_TRACY = $(ODIR_DEV)/vendor/TracyClient.cpp.o
 
-OFILES_DEV = $(CC_OFILES_TRACY) $(CC_OFILES_VENDOR_DEV) $(CC_OFILES_SRC_DEV)
-OFILES_RELEASE = $(CC_OFILES_VENDOR_RELEASE) $(CC_OFILES_SRC_RELEASE)
-OFILES_MEM = $(CC_OFILES_VENDOR_MEM) $(CC_OFILES_SRC_MEM)
+OFILES_DEV = $(CC_OFILES_TRACY) $(CC_OFILES_VENDOR_DEV) $(CC_OFILES_SRC_DEV) $(C_OFILES_VENDOR_DEV)
+OFILES_RELEASE = $(CC_OFILES_VENDOR_RELEASE) $(CC_OFILES_SRC_RELEASE) $(C_OFILES_VENDOR_RELEASE)
+OFILES_MEM = $(CC_OFILES_VENDOR_MEM) $(CC_OFILES_SRC_MEM) $(C_OFILES_VENDOR_MEM)
 
 CCFLAGS_COMMON = -std=c++2a -Wall -Wextra -Werror -Ivendor/include -Isrc -I. -g \
 	-Wno-nullability-completeness -Wno-unused-parameter -Wno-unused-variable -Wno-unused-function -Wno-unused-private-field \
 	-Wno-missing-field-initializers \
 	-march=native					\
 	-Ivendor/tracy
-LDFLAGS_COMMON = -ldl -lglfw -lvulkan -lz -pthread
+LDFLAGS_COMMON = -ldl -lglfw -lz -pthread
 
 CCFLAGS_DEV = $(CCFLAGS_COMMON) -DDEBUG -O3 -DTRACY_ENABLE -DTRACY_CALLSTACK=2
 CCFLAGS_RELEASE = $(CCFLAGS_COMMON) -DRELEASE -O3
 CCFLAGS_MEM = $(CCFLAGS_COMMON) -DVALIDATE -O0 -fsanitize=undefined -fsanitize=address
+
+CCFLAGS_VENDOR_DEV = $(CCFLAGS_COMMON) -DDEBUG -O3
+CCFLAGS_VENDOR_RELEASE = $(CCFLAGS_COMMON) -DRELEASE -O3
+CCFLAGS_VENDOR_MEM = $(CCFLAGS_COMMON) -DVALIDATE -O0
 
 LDFLAGS_DEV = $(LDFLAGS_COMMON)
 LDFLAGS_RELEASE = $(LDFLAGS_COMMON)
@@ -75,7 +82,7 @@ $(ODIR_DEV)/src/%.cc.o: src/%.cc $(HFILES_VENDOR) $(HFILES_SRC)
 $(ODIR_DEV)/vendor/%.cc.o: vendor/%.cc $(HFILES_VENDOR)
 	@mkdir -p $(dir $@)
 	@echo "CC $<"
-	@$(CXX) -c -o $@ $< $(CCFLAGS_DEV)
+	@$(CXX) -c -o $@ $< $(CCFLAGS_VENDOR_DEV)
 
 $(ODIR_REL)/cgr: $(OFILES_RELEASE)
 	@mkdir -p $(dir $@)
@@ -90,7 +97,7 @@ $(ODIR_REL)/src/%.cc.o: src/%.cc $(HFILES_VENDOR) $(HFILES_SRC)
 $(ODIR_REL)/vendor/%.cc.o: vendor/%.cc $(HFILES_VENDOR)
 	@mkdir -p $(dir $@)
 	@echo "CC $<"
-	@$(CXX) -c -o $@ $< $(CCFLAGS_RELEASE)
+	@$(CXX) -c -o $@ $< $(CCFLAGS_VENDOR_RELEASE)
 
 $(ODIR_MEM)/cgr: $(OFILES_MEM)
 	@mkdir -p $(dir $@)
@@ -105,7 +112,7 @@ $(ODIR_MEM)/src/%.cc.o: src/%.cc $(HFILES_VENDOR) $(HFILES_SRC)
 $(ODIR_MEM)/vendor/%.cc.o: vendor/%.cc $(HFILES_VENDOR)
 	@mkdir -p $(dir $@)
 	@echo "CC $<"
-	@$(CXX) -c -o $@ $< $(CCFLAGS_MEM)
+	@$(CXX) -c -o $@ $< $(CCFLAGS_VENDOR_MEM)
 
 $(CC_OFILES_TRACY): vendor/tracy/TracyClient.cpp
 	@mkdir -p $(dir $@)

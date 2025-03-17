@@ -1,7 +1,8 @@
 #pragma once
 
 #include "oc.h"
-#include <vulkan/vulkan_core.h>
+
+#include <volk/volk.h>
 #include <tracy/TracyVulkan.hpp>
 
 struct gpu_t;

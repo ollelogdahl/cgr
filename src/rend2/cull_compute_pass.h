@@ -4,7 +4,7 @@
 #include "rend2/buffer.h"
 #include "rend2/command_buffer.h"
 #include "rend2/descriptor_set.h"
-#include <vulkan/vulkan_core.h>
+
 
 #include "shader_compiler.h"
 

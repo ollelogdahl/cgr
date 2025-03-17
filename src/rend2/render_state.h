@@ -1,6 +1,7 @@
 #pragma once
 
 #include "model.h"
+#include "rend2/command_buffer.h"
 #include "rend2/render_handles.h"
 #include "rend2/render_storage.h"
 #include "rend2/shader_compiler.h"
@@ -37,8 +38,14 @@ template <> struct std::hash<LoadTextureProperties> {
 // to GPU stored resources.
 class RenderState {
 public:
-    RenderState(gpu_t &gpu, RenderStorage &storage, Renderer &rend, ShaderCompiler &sc)
-    : m_gpu(gpu), m_storage(storage), m_renderer(rend), m_shader_compiler(sc) {}
+    RenderState(gpu_t &gpu, RenderStorage &storage, ShaderCompiler &sc)
+    : m_gpu(gpu), m_storage(storage), m_shader_compiler(sc) {}
+
+    // delete copy and move
+    RenderState(const RenderState &) = delete;
+    RenderState &operator=(const RenderState &) = delete;
+    RenderState(RenderState &&) = delete;
+    RenderState &operator=(RenderState &&) = delete;
 
     MeshHandle add_mesh(const Mesh &);
     MaterialHandle add_material(const MaterialData &data);
@@ -59,11 +66,27 @@ public:
 
     LightHandle add_light(const LightData &data);
     void update_light(LightHandle handle, const LightData &data);
+
+    void finalize_before_render(CommandBuffer &cmd);
+
+    // @todo: clean this up, this sucks!
+    void set_forward_pipeline_layout(VkPipelineLayout layout) {
+        m_forward_pipeline_layout = layout;
+    }
 private:
+    struct BlasBuildTask {
+        MeshHandle handle;
+        MeshData data;
+        u32 num_vertices;
+    };
+
     gpu_t &m_gpu;
     RenderStorage &m_storage;
-    Renderer &m_renderer;
     ShaderCompiler &m_shader_compiler;
+
+    VkPipelineLayout m_forward_pipeline_layout;
+
+    std::vector<BlasBuildTask> m_blas_tasks;
 
     std::unordered_map<LoadShaderProperties, ShaderHandle> m_shader_cache;
     std::unordered_map<LoadTextureProperties, TextureHandle> m_texture_cache;

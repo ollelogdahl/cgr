@@ -1,7 +1,7 @@
 #pragma once
 
 #include "gpu.h"
-#include <vulkan/vulkan_core.h>
+
 
 class ShaderCompiler;
 
