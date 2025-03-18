@@ -9,9 +9,41 @@
 
 #include <algorithm>
 
+#include <tracy/Tracy.hpp>
+
 static logger_t logger = logger_t("renderstate");
 
 static VkPipeline make_render_pipeline(gpu_t &gpu, VkPipelineLayout layout, Shader shader);
+
+std::vector<byte> interleave_vertex_attributes(
+    const std::span<const v3f> &vertices,
+    const std::span<const v3f> &normals,
+    const std::span<const v2f> &uvs,
+    const std::span<const u32> &colors) {
+
+    bool uv_present = uvs.size() > 0;
+    bool color_present = colors.size() > 0;
+    auto interleaved = std::vector<byte>(vertices.size() * 9 * sizeof(f32));
+    for (size_t i = 0; i < vertices.size(); i++) {
+        auto &v = vertices[i];
+        auto &n = normals[i];
+
+        memcpy(&interleaved[i * 9 * sizeof(f32)], &v, sizeof(v));
+        memcpy(&interleaved[i * 9 * sizeof(f32) + 3 * sizeof(f32)], &n, sizeof(n));
+
+        if (uv_present) {
+            auto &t = uvs[i];
+            memcpy(&interleaved[i * 9 * sizeof(f32) + 6 * sizeof(f32)], &t, sizeof(t));
+        }
+
+        if (color_present) {
+            auto &c = colors[i];
+            memcpy(&interleaved[i * 9 * sizeof(f32) + 8 * sizeof(f32)], &c, sizeof(c));
+        }
+    }
+
+    return interleaved;
+}
 
 MeshHandle RenderState::add_mesh(const Mesh &mesh) {
     // 1. interleave vertex properties.
@@ -20,27 +52,7 @@ MeshHandle RenderState::add_mesh(const Mesh &mesh) {
     // @todo: Using manual vertex fetching, we could actually support different
     // types of vertex data. This could be really nice, as we could save memory.
     // According to some sources, manual fetching is not too slow.
-
-    bool uv_present = mesh.uvs.size() > 0;
-    bool color_present = mesh.colors.size() > 0;
-    auto interleaved = std::vector<byte>(mesh.vertices.size() * 9 * sizeof(f32));
-    for (size_t i = 0; i < mesh.vertices.size(); i++) {
-        auto &v = mesh.vertices[i];
-        auto &n = mesh.normals[i];
-
-        memcpy(&interleaved[i * 9 * sizeof(f32)], &v, sizeof(v));
-        memcpy(&interleaved[i * 9 * sizeof(f32) + 3 * sizeof(f32)], &n, sizeof(n));
-
-        if (uv_present) {
-            auto &t = mesh.uvs[i];
-            memcpy(&interleaved[i * 9 * sizeof(f32) + 6 * sizeof(f32)], &t, sizeof(t));
-        }
-
-        if (color_present) {
-            auto &c = mesh.colors[i];
-            memcpy(&interleaved[i * 9 * sizeof(f32) + 8 * sizeof(f32)], &c, sizeof(c));
-        }
-    }
+    auto interleaved = interleave_vertex_attributes(mesh.vertices, mesh.normals, mesh.uvs, mesh.colors);
 
     auto vertex_handle = m_storage.alloc_vertices(slice<byte>(interleaved));
 
@@ -91,22 +103,73 @@ MeshHandle RenderState::add_mesh(const Mesh &mesh) {
 
 void RenderState::finalize_before_render(CommandBuffer &cmd) {
     for (auto &m : m_blas_tasks) {
-        for (auto i = 0; i < 4; ++i) {
-            auto &lod = m.data.lods[i];
-            m_storage.acceleration_builder().build_blas(
-                cmd,
-                m_storage.vertex_buffer(),
-                m_storage.index_buffer(),
-                0,
-                lod.index_start,
-                m.num_vertices,
-                lod.index_count,
-                9 * sizeof(f32));
-        }
+        auto &lod = m.data.lods[0];
+        auto blas = m_storage.acceleration_builder().build_blas(
+            cmd,
+            m_storage.vertex_buffer(),
+            m_storage.index_buffer(),
+            0,
+            lod.index_start,
+            m.num_vertices,
+            lod.index_count,
+            9 * sizeof(f32));
+
+        m_mesh_to_blas[m.handle] = std::move(blas);
+    }
+    m_blas_tasks.clear();
+
+    if (!m_objects_needing_tlas_update.empty()) {
+        update_tlas(cmd);
     }
 
-    m_blas_tasks.clear();
     m_storage.acceleration_builder().await_build(cmd);
+}
+
+void RenderState::mark_object_for_tlas_update(ObjectHandle object) {
+    m_objects_needing_tlas_update.insert(object);
+}
+
+void RenderState::update_tlas(CommandBuffer &cmd) {
+    ZoneScopedN("update-tlas");
+
+    std::vector<AccelerationBuilder::AccelerationInstance> instances;
+
+    // For simplicity, we'll rebuild the entire TLAS with all objects
+    // A more optimized approach would only update changed objects
+    m_storage.for_all_objects([&](ObjectHandle handle) {
+        auto object_data = m_storage.object_data(handle);
+
+        // Skip objects without a mesh
+        if (object_data.mesh.id == -1U) {
+            return;
+        }
+
+        // Check if we have a BLAS for this mesh
+        auto blas_it = m_mesh_to_blas.find(object_data.mesh);
+        if (blas_it == m_mesh_to_blas.end()) {
+            return;
+        }
+
+        AccelerationBuilder::AccelerationInstance instance {
+            .blas = &blas_it->second,
+            .custom_index = handle.id,
+            .transform = {},
+        };
+        memcpy(instance.transform, object_data.transform, 12 * sizeof(f32));
+
+        instances.push_back(instance);
+    });
+
+    if (!m_tlas_initialized) {
+        auto &tlas = m_storage.tlas();
+        tlas = m_storage.acceleration_builder().build_tlas(cmd, instances);
+        m_tlas_initialized = true;
+    } else {
+        auto &tlas = m_storage.tlas();
+        tlas = m_storage.acceleration_builder().rebuild_tlas(cmd, tlas, instances);
+    }
+
+    m_objects_needing_tlas_update.clear();
 }
 
 MaterialHandle RenderState::add_material(const MaterialData &data) {
@@ -242,6 +305,8 @@ ObjectHandle RenderState::add_object() {
     // each object has a unique transform for now
     auto object = m_storage.alloc_object();
 
+    mark_object_for_tlas_update(object);
+
     return object;
 }
 
@@ -249,18 +314,24 @@ void RenderState::assign_geometry(ObjectHandle handle, MeshHandle mesh) {
     auto old = m_storage.object_data(handle);
     old.mesh = mesh;
     m_storage.update_object(handle, old);
+
+    mark_object_for_tlas_update(handle);
 }
 
 void RenderState::assign_material(ObjectHandle handle, MaterialHandle material) {
     auto old = m_storage.object_data(handle);
     old.material = material;
     m_storage.update_object(handle, old);
+
+    mark_object_for_tlas_update(handle);
 }
 
 void RenderState::assign_shader(ObjectHandle handle, ShaderHandle shader) {
     auto old = m_storage.object_data(handle);
     old.batch = shader.id;
     m_storage.update_object(handle, old);
+
+    mark_object_for_tlas_update(handle);
 }
 
 void assign_packed_affine_transformation(f32 *dest, const m4f &m) {

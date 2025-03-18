@@ -2,7 +2,10 @@
 
 void descriptor_writer_t::clear() {
     image_infos.clear();
+    buffer_infos.clear();
     writes.clear();
+    acceleration_structure_infos.clear();
+    acceleration_structures.clear();
 }
 
 void descriptor_writer_t::update_set(gpu_t &gpu, VkDescriptorSet set) {
@@ -67,6 +70,29 @@ void descriptor_writer_t::write_storage_buffer(u32 binding, u32 array_index, VkB
     write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     write.descriptorCount = 1;
     write.pBufferInfo = &buffer_info;
+
+    writes.push_back(write);
+}
+
+void descriptor_writer_t::write_acceleration_structure(u32 binding, u32 array_index, VkAccelerationStructureKHR acceleration_structure) {
+
+    auto &acc = acceleration_structures.emplace_back(acceleration_structure);
+
+    VkWriteDescriptorSetAccelerationStructureKHR acceleration_structure_info = {};
+    acceleration_structure_info.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR;
+    acceleration_structure_info.accelerationStructureCount = 1;
+    acceleration_structure_info.pAccelerationStructures = &acc;
+
+    auto &acc_info = acceleration_structure_infos.emplace_back(acceleration_structure_info);
+
+    VkWriteDescriptorSet write = {};
+    write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    write.pNext = &acc_info;
+    write.dstSet = VK_NULL_HANDLE;
+    write.dstBinding = binding;
+    write.dstArrayElement = array_index;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
+    write.descriptorCount = 1;
 
     writes.push_back(write);
 }

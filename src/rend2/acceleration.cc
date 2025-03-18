@@ -48,7 +48,8 @@ AccelerationBLAS AccelerationBuilder::build_blas(
 
     // Create the acceleration structure buffer
     GpuBuffer as_buffer(m_gpu, size_info.accelerationStructureSize,
-        VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR);
+        VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR |
+        VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
 
     // Create the acceleration structure
     VkAccelerationStructureCreateInfoKHR create_info{};
@@ -111,7 +112,7 @@ AccelerationBLAS AccelerationBuilder::build_blas(
     barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2;
     barrier.srcStageMask = VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR;
     barrier.srcAccessMask = VK_ACCESS_2_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
-    barrier.dstAccessMask = VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR;
+    barrier.dstStageMask = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT_KHR;
     barrier.dstAccessMask = VK_ACCESS_2_ACCELERATION_STRUCTURE_READ_BIT_KHR;
 
     m_barriers.push_back(barrier);
@@ -124,11 +125,14 @@ void AccelerationBuilder::await_build(CommandBuffer &cmd) {
 
     VkDependencyInfoKHR dependency{};
     dependency.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO_KHR;
+    dependency.bufferMemoryBarrierCount = m_buffer_barriers.size();
+    dependency.pBufferMemoryBarriers = m_buffer_barriers.data();
     dependency.memoryBarrierCount = m_barriers.size();
     dependency.pMemoryBarriers = m_barriers.data();
 
     vkCmdPipelineBarrier2(cmd.get(), &dependency);
 
+    m_buffer_barriers.clear();
     m_barriers.clear();
 
     // @todo: i think we are free now also to destroy scratch buffers.
@@ -139,4 +143,159 @@ void AccelerationBuilder::await_build(CommandBuffer &cmd) {
     //  2. Recycle single buffer.
     //  3. Keep a list of scratch buffers (balance 1/2)
     //  4. New, but recycle if too much memory.
+}
+
+AccelerationTLAS AccelerationBuilder::build_tlas(
+    CommandBuffer &cmd,
+    const std::vector<AccelerationInstance> &instances
+) {
+    TracyVkZone(cmd.tracy_ctx(), cmd.get(), "build-tlas");
+
+    // @todo: wait for the previous commands to finish ...
+
+    // Create a buffer to store the instances
+    std::vector<VkAccelerationStructureInstanceKHR> instances_data(instances.size());
+
+    GpuBuffer instance_buffer(m_gpu,
+        instances_data.size() * sizeof(VkAccelerationStructureInstanceKHR),
+        VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR |
+        VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+
+    for (size_t i = 0; i < instances.size(); ++i) {
+
+        VkAccelerationStructureDeviceAddressInfoKHR device_address_info{};
+        device_address_info.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR;
+        device_address_info.accelerationStructure = instances[i].blas->acc;
+
+        auto &instance = instances[i];
+        auto &dst = instances_data[i];
+
+        memcpy(dst.transform.matrix, instance.transform, 12 * sizeof(f32));
+        dst.instanceCustomIndex = instance.custom_index;
+        dst.mask = 0xFF;
+        dst.instanceShaderBindingTableRecordOffset = 0;
+        dst.flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
+        dst.accelerationStructureReference =
+            vkGetAccelerationStructureDeviceAddressKHR(m_gpu.device, &device_address_info);
+    }
+
+    fmt::println("after creating instances");
+
+    auto instance_buffer_dep = instance_buffer.write_with_barrier(cmd.get(), slice<byte>(
+        (byte*)instances_data.data(),
+        instances_data.size() * sizeof(VkAccelerationStructureInstanceKHR)));
+
+    // Figure out the size info
+    VkAccelerationStructureBuildSizesInfoKHR size_info{};
+    {
+        VkAccelerationStructureGeometryKHR geometry{};
+        geometry.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
+        geometry.geometryType = VK_GEOMETRY_TYPE_INSTANCES_KHR;
+        geometry.flags = VK_GEOMETRY_OPAQUE_BIT_KHR;
+        geometry.geometry.instances.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR;
+        geometry.geometry.instances.arrayOfPointers = VK_FALSE;
+        geometry.geometry.instances.data.deviceAddress = instance_buffer.get_buffer_device_address();
+
+        VkAccelerationStructureBuildGeometryInfoKHR build_info{};
+        build_info.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
+        build_info.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
+        build_info.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
+        build_info.geometryCount = 1;
+        build_info.pGeometries = &geometry;
+
+        size_info.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR;
+
+        u32 primitive_count = instances.size();
+        vkGetAccelerationStructureBuildSizesKHR(
+            m_gpu.device,
+            VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR,
+            &build_info,
+            &primitive_count,
+            &size_info
+        );
+    }
+
+    // Create the acceleration structure buffer
+    GpuBuffer as_buffer(m_gpu, size_info.accelerationStructureSize,
+        VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
+        VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR);
+
+    // Create the acceleration structure
+    VkAccelerationStructureCreateInfoKHR create_info{};
+    create_info.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR;
+    create_info.buffer = as_buffer.get();
+    create_info.size = size_info.accelerationStructureSize;
+    create_info.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
+
+    VkAccelerationStructureKHR acceleration_structure;
+    vkCreateAccelerationStructureKHR(m_gpu.device, &create_info, nullptr, &acceleration_structure);
+
+    // Build the acceleration structure
+    VkAccelerationStructureGeometryKHR geometry{};
+    geometry.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
+    geometry.geometryType = VK_GEOMETRY_TYPE_INSTANCES_KHR;
+    geometry.flags = VK_GEOMETRY_OPAQUE_BIT_KHR;
+    geometry.geometry.instances.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR;
+    geometry.geometry.instances.arrayOfPointers = VK_FALSE;
+    geometry.geometry.instances.data.deviceAddress = instance_buffer.get_buffer_device_address();
+
+    VkAccelerationStructureBuildGeometryInfoKHR build_info{};
+    build_info.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
+    build_info.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
+    build_info.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
+    build_info.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
+    build_info.dstAccelerationStructure = acceleration_structure;
+    build_info.geometryCount = 1;
+    build_info.pGeometries = &geometry;
+
+    // Create scratch buffer
+    GpuBuffer scratch_buffer(m_gpu, size_info.buildScratchSize,
+        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+
+    build_info.scratchData.deviceAddress = scratch_buffer.get_buffer_device_address();
+
+    VkAccelerationStructureBuildRangeInfoKHR build_range_info{};
+    build_range_info.primitiveCount = instances.size();
+    build_range_info.primitiveOffset = 0;
+    build_range_info.firstVertex = 0;
+    build_range_info.transformOffset = 0;
+
+    const VkAccelerationStructureBuildRangeInfoKHR* build_range_infos[] = { &build_range_info };
+
+    fmt::println("building TLAS acceleration structure");
+
+    vkCmdBuildAccelerationStructuresKHR(
+        cmd.get(),
+        1,
+        &build_info,
+        build_range_infos
+    );
+
+    VkMemoryBarrier2 barrier{};
+    barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2;
+    barrier.srcStageMask = VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR;
+    barrier.srcAccessMask = VK_ACCESS_2_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
+    barrier.dstStageMask = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT_KHR;
+    barrier.dstAccessMask = VK_ACCESS_2_ACCELERATION_STRUCTURE_READ_BIT_KHR;
+
+    // wait for the instance data write
+
+    m_barriers.push_back(barrier);
+
+    return { acceleration_structure, std::move(as_buffer) };
+}
+
+AccelerationTLAS AccelerationBuilder::rebuild_tlas(
+    CommandBuffer &cmd,
+    AccelerationTLAS &tlas,
+    const std::vector<AccelerationInstance> &instances
+) {
+    // For an update, we'll just build a new TLAS for simplicity
+    // Can be optimized later using VK_BUILD_ACCELERATION_STRUCTURE_MODE_UPDATE_KHR
+
+    // First, destroy the old TLAS
+    vkDestroyAccelerationStructureKHR(m_gpu.device, tlas.acc, nullptr);
+
+    // Then build a new one
+    return build_tlas(cmd, instances);
 }

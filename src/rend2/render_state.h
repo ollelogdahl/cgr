@@ -6,6 +6,8 @@
 #include "rend2/render_storage.h"
 #include "rend2/shader_compiler.h"
 
+#include <set>
+
 struct LoadShaderProperties {
     const char *glsl_vert_path;
     const char *glsl_frag_path;
@@ -74,6 +76,9 @@ public:
         m_forward_pipeline_layout = layout;
     }
 private:
+    void mark_object_for_tlas_update(ObjectHandle handle);
+    void update_tlas(CommandBuffer &cmd);
+
     struct BlasBuildTask {
         MeshHandle handle;
         MeshData data;
@@ -87,6 +92,10 @@ private:
     VkPipelineLayout m_forward_pipeline_layout;
 
     std::vector<BlasBuildTask> m_blas_tasks;
+
+    bool m_tlas_initialized = false;
+    std::set<ObjectHandle> m_objects_needing_tlas_update;
+    std::unordered_map<MeshHandle, AccelerationBLAS> m_mesh_to_blas;
 
     std::unordered_map<LoadShaderProperties, ShaderHandle> m_shader_cache;
     std::unordered_map<LoadTextureProperties, TextureHandle> m_texture_cache;

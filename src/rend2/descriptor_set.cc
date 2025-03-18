@@ -29,6 +29,9 @@ void DescriptorSet::write_uniform_buffer(u32 binding, u32 array_index, VkBuffer 
 void DescriptorSet::write_storage_buffer(u32 binding, u32 array_index, VkBuffer buffer, VkDeviceSize offset, VkDeviceSize range) {
     m_writer.write_storage_buffer(binding, array_index, buffer, offset, range);
 }
+void DescriptorSet::write_acceleration_structure(u32 binding, u32 array_index, VkAccelerationStructureKHR acceleration_structure) {
+    m_writer.write_acceleration_structure(binding, array_index, acceleration_structure);
+}
 
 Dependency DescriptorSet::flush(gpu_t &gpu) {
     m_writer.update_set(gpu, m_set);

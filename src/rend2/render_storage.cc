@@ -43,11 +43,11 @@ RenderStorage::RenderStorage(gpu_t &gpu, const RenderStorageConfig &config)
     m_mesh_alloc(config.max_meshes),
     m_texture_alloc(config.max_textures),
     m_object_alloc(config.max_objects),
-    m_lights(
+    m_lights{
         GpuBuffer(gpu, config.max_lights * sizeof(LightData), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT),
         new LightData[config.max_lights],
         SlotAllocator(config.max_lights)
-    ) {
+    } {
 
     set_object_name(gpu, VK_OBJECT_TYPE_BUFFER, m_object_buffer.get(), "object-buffer");
     set_object_name(gpu, VK_OBJECT_TYPE_BUFFER, m_vertex_buffer.get(), "vertex-buffer");
@@ -97,9 +97,12 @@ RenderStorage::RenderStorage(gpu_t &gpu, const RenderStorageConfig &config)
         pool_info.poolSizeCount = array_size(pool_sizes);
         pool_info.pPoolSizes = pool_sizes;
         pool_info.maxSets = 1;
+        pool_info.flags = VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT;
 
         VkDescriptorPool descriptor_pool;
         VK_CHECK(vkCreateDescriptorPool(gpu.device, &pool_info, nullptr, &descriptor_pool));
+
+        set_object_name(gpu, VK_OBJECT_TYPE_DESCRIPTOR_POOL, descriptor_pool, "Render Storage Descriptor Pool");
 
         auto ds_builder = DescriptorSetLayoutBuilder()
             .add_binding(0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)
@@ -108,8 +111,11 @@ RenderStorage::RenderStorage(gpu_t &gpu, const RenderStorageConfig &config)
             .add_binding(3, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_FRAGMENT_BIT)
             .add_binding(4, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_FRAGMENT_BIT)
             .add_binding(5, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_FRAGMENT_BIT)
-            .add_variable_binding(6, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, config.max_textures);
+            .add_late_binding(6, VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, VK_SHADER_STAGE_FRAGMENT_BIT)
+            .add_variable_binding(7, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, config.max_textures);
         ds_builder.create_set(gpu, descriptor_pool, m_render_descriptor_set);
+
+        set_object_name(gpu, VK_OBJECT_TYPE_DESCRIPTOR_SET, m_render_descriptor_set.get(), "Render Storage Descriptor Set");
 
         m_render_descriptor_set.write_storage_buffer(0, 0, m_global_buffer.get(), 0, VK_WHOLE_SIZE);
         m_render_descriptor_set.write_storage_buffer(1, 0, m_object_buffer.get(), 0, VK_WHOLE_SIZE);
@@ -192,7 +198,7 @@ TextureHandle RenderStorage::alloc_texture(VkImage image, VkImageView view, VkSa
 
     counts.textures += 1;
 
-    m_render_descriptor_set.write_combined_image_sampler(6, idx, image, view, sampler);
+    m_render_descriptor_set.write_combined_image_sampler(7, idx, image, view, sampler);
     m_textures[idx] = {image, view, sampler};
 
     return {idx};
@@ -348,6 +354,8 @@ void RenderStorage::for_each_point_light(std::function<bool(LightHandle, LightDa
 
 RenderStorage::FlushDependencies RenderStorage::flush(CommandBuffer &cmd) {
     ZoneScoped;
+
+    m_render_descriptor_set.write_acceleration_structure(6, 0, m_tlas.acc);
 
     WriteCache<ObjectData> object_changes;
     for (auto &handle : dirty_objects) {

@@ -13,6 +13,7 @@ public:
     void write_combined_image_sampler(u32 binding, u32 array_index, VkImage image, VkImageView view, VkSampler sampler);
     void write_uniform_buffer(u32 binding, u32 array_index, VkBuffer buffer, VkDeviceSize offset, VkDeviceSize range);
     void write_storage_buffer(u32 binding, u32 array_index, VkBuffer buffer, VkDeviceSize offset, VkDeviceSize range);
+    void write_acceleration_structure(u32 binding, u32 array_index, VkAccelerationStructureKHR acceleration_structure);
 
     Dependency flush(gpu_t &gpu);
 

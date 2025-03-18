@@ -167,9 +167,8 @@ void Renderer::render(gpu_t::frame_t &frame, const View &view) {
             m_cluster_shading.cluster_buffer().get());
     }
 
-    auto state_dependencies = m_storage.flush(frame.cmd);
-
     m_state.finalize_before_render(frame.cmd);
+    auto state_dependencies = m_storage.flush(frame.cmd);
 
     pre_cluster_assign_dependencies.join(state_dependencies.objects);
 

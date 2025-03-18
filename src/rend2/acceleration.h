@@ -9,9 +9,20 @@ struct AccelerationBLAS {
     GpuBuffer buffer;
 };
 
+struct AccelerationTLAS {
+    VkAccelerationStructureKHR acc;
+    GpuBuffer buffer;
+};
+
 class AccelerationBuilder {
 public:
     AccelerationBuilder(gpu_t &gpu);
+
+    struct AccelerationInstance {
+        AccelerationBLAS *blas;
+        u32 custom_index;
+        f32 transform[12];
+    };
 
     AccelerationBLAS build_blas(
         CommandBuffer &cmd,
@@ -23,9 +34,19 @@ public:
         u32 index_count,
         u64 vertex_stride);
 
+    AccelerationTLAS build_tlas(
+        CommandBuffer &cmd,
+        const std::vector<AccelerationInstance> &instances);
+
+    AccelerationTLAS rebuild_tlas(
+        CommandBuffer &cmd,
+        AccelerationTLAS &tlas,
+        const std::vector<AccelerationInstance> &instances);
+
     void await_build(CommandBuffer &cmd);
 private:
     gpu_t &m_gpu;
 
+    std::vector<VkBufferMemoryBarrier2> m_buffer_barriers;
     std::vector<VkMemoryBarrier2> m_barriers;
 };

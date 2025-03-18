@@ -162,10 +162,14 @@ public:
     void write_combined_image_sampler(u32 binding, u32 array_index, VkImageView view, VkSampler sampler);
     void write_uniform_buffer(u32 binding, u32 array_index, VkBuffer buffer, VkDeviceSize offset, VkDeviceSize range);
     void write_storage_buffer(u32 binding, u32 array_index, VkBuffer buffer, VkDeviceSize offset, VkDeviceSize range);
+    void write_acceleration_structure(u32 binding, u32 array_index, VkAccelerationStructureKHR acceleration_structure);
 private:
     std::deque<VkDescriptorImageInfo> image_infos;
     std::deque<VkDescriptorBufferInfo> buffer_infos;
     std::vector<VkWriteDescriptorSet> writes;
+
+    std::vector<VkWriteDescriptorSetAccelerationStructureKHR> acceleration_structure_infos;
+    std::vector<VkAccelerationStructureKHR> acceleration_structures;
 };
 
 void transition_image(VkCommandBuffer cmd, VkImage image, VkImageLayout old_layout, VkImageLayout new_layout);

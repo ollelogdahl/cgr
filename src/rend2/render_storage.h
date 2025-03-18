@@ -151,6 +151,14 @@ public:
 
     u32 highest_object_id() const { return m_highest_object_id; }
 
+    void for_all_objects(std::function<void(ObjectHandle)> func) const {
+        for (u32 i = 0; i <= m_highest_object_id; ++i) {
+            if (m_object_alloc.is_occupied(i)) {
+                func(ObjectHandle{i});
+            }
+        }
+    }
+
     // used by forward indirect pass for now; can maybe be moved?
     //
     // binding 0: global data (vert, frag)
@@ -181,6 +189,9 @@ public:
 
     void for_each_point_light(std::function<bool(LightHandle, LightData &)>);
 
+    AccelerationTLAS &tlas() { return m_tlas; }
+    void set_tlas(AccelerationTLAS &&tlas) { m_tlas = std::move(tlas); }
+
     AccelerationBuilder &acceleration_builder() { return m_acceleration_builder; }
 
 private:
@@ -188,6 +199,7 @@ private:
     gpu_t *m_gpu;
 
     AccelerationBuilder m_acceleration_builder;
+    AccelerationTLAS m_tlas;
 
     // objects are fun! They lie both on the CPU and the GPU.
     GpuBuffer m_object_buffer;

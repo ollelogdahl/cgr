@@ -6,6 +6,13 @@ class Renderer;
 class RenderStorage;
 class RenderState;
 
+#define DECL_HASH_IMPL(type, key) \
+    template <> struct std::hash<type> { \
+        size_t operator()(const type &h) const { \
+            return std::hash<decltype(h.key)>{}(h.key); \
+        } \
+    };
+
 class VertexDataHandle {
 public:
     VertexDataHandle() : idx(-1), size(0) {}
@@ -20,7 +27,9 @@ private:
     friend class Renderer;
     friend class RenderState;
     friend std::string format_as(VertexDataHandle);
+    friend struct std::hash<VertexDataHandle>;
 };
+
 class IndexDataHandle {
 public:
     IndexDataHandle() : idx(-1), size(0) {}
@@ -35,6 +44,7 @@ private:
     friend class Renderer;
     friend class RenderState;
     friend std::string format_as(IndexDataHandle);
+    friend struct std::hash<IndexDataHandle>;
 };
 class MaterialHandle {
 public:
@@ -49,6 +59,7 @@ private:
     friend class Renderer;
     friend class RenderState;
     friend std::string format_as(MaterialHandle);
+    friend struct std::hash<MaterialHandle>;
 };
 class TextureHandle {
 public:
@@ -63,6 +74,7 @@ private:
     friend class Renderer;
     friend class RenderState;
     friend std::string format_as(TextureHandle);
+    friend struct std::hash<TextureHandle>;
 };
 
 class MeshHandle {
@@ -78,6 +90,7 @@ private:
     friend class Renderer;
     friend class RenderState;
     friend std::string format_as(MeshHandle);
+    friend struct std::hash<MeshHandle>;
 };
 
 class ObjectHandle {
@@ -97,13 +110,6 @@ private:
     friend std::string format_as(ObjectHandle);
 };
 
-template <>
-struct std::hash<ObjectHandle> {
-    std::size_t operator()(const ObjectHandle &handle) const {
-        return std::hash<u32>()(handle.id);
-    }
-};
-
 class ShaderHandle {
 public:
     ShaderHandle() : id(-1) {}
@@ -117,6 +123,7 @@ private:
     friend class Renderer;
     friend class RenderState;
     friend std::string format_as(ShaderHandle);
+    friend struct std::hash<ShaderHandle>;
 };
 
 class LightHandle {
@@ -132,6 +139,7 @@ private:
     friend class Renderer;
     friend class RenderState;
     friend std::string format_as(LightHandle);
+    friend struct std::hash<LightHandle>;
 };
 
 std::string format_as(VertexDataHandle);
@@ -142,3 +150,12 @@ std::string format_as(MeshHandle);
 std::string format_as(ObjectHandle);
 std::string format_as(ShaderHandle);
 std::string format_as(LightHandle);
+
+DECL_HASH_IMPL(VertexDataHandle, idx)
+DECL_HASH_IMPL(IndexDataHandle, idx)
+DECL_HASH_IMPL(MaterialHandle, id)
+DECL_HASH_IMPL(TextureHandle, id)
+DECL_HASH_IMPL(MeshHandle, id)
+DECL_HASH_IMPL(ObjectHandle, id)
+DECL_HASH_IMPL(ShaderHandle, id)
+DECL_HASH_IMPL(LightHandle, id)

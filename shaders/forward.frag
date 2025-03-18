@@ -1,9 +1,11 @@
-#version 450
+#version 460
 #extension GL_EXT_nonuniform_qualifier : require
 #extension GL_KHR_shader_subgroup_basic : enable
 #extension GL_KHR_shader_subgroup_vote : enable
 #extension GL_KHR_shader_subgroup_ballot : enable
 #extension GL_KHR_shader_subgroup_arithmetic : enable
+
+#extension GL_EXT_ray_query : enable
 
 #include "cluster.glsl"
 #include "color.glsl"
@@ -77,7 +79,10 @@ layout(set = 0, binding = 5) readonly buffer ClusterItemBuffer {
     uint cluster_items[];
 };
 
-layout(set = 0, binding = 6) uniform sampler2D textures[];
+// raytrace acceleration structure
+layout(set = 0, binding = 6) uniform accelerationStructureEXT acceleration_structure;
+
+layout(set = 0, binding = 7) uniform sampler2D textures[];
 
 layout(push_constant) uniform PushConstants {
     uint debug_mode;
@@ -172,6 +177,40 @@ vec3 pbr(
     return (kD * diffuse + specular) * radiance * NdotL * shadow;
 }
 
+vec3 pbr_no_spec(
+    vec3 L,
+    vec3 V,
+    vec3 N,
+
+    PbrProperties props,
+
+    // should be the incoming light
+    vec3 radiance,
+    float shadow
+) {
+    vec3 H = normalize(L + V);
+    float NdotL = max(dot(N, L), 0.0);
+    float NdotV = max(dot(N, V), 0.0);
+    float HdotV = max(dot(H, V), 0.0);
+
+    float r = max(0.0001, props.roughness);
+
+    // assuming that non-metal materials zero-incidence reflectance of 0.04
+    vec3 F0 = mix(vec3(0.04), props.albedo, props.metallic);
+
+    float D = distribution_ggx(N, H, r);
+    float G = geometry_smith(N, V, L, r);
+    vec3 F = fresnel_schlick(HdotV, vec3(0.04));
+
+    vec3 kS = F;
+    vec3 kD = vec3(1.0) - kS;
+    kD *= 1.0 - props.metallic;
+
+    vec3 diffuse = lambert(props.albedo);
+
+    return (kD * diffuse) * radiance * NdotL * shadow;
+}
+
 // Based on:
 // Christian Schüler, “Normal Mapping without Precomputed Tangents”,
 // ShaderX 5, Chapter 2.6, pp. 131 – 140
@@ -223,14 +262,14 @@ vec3 point_light_shade(vec3 P, vec3 N, vec3 V, LightData light, PbrProperties pr
 
     vec3 radiance = (light.color.rgb * light.color.a) * attenuation;
 
-    vec3 result = pbr(
-        L,
-        V,
-        N,
-        props,
-        radiance,
-        1.0
-    );
+    vec3 result = pbr_no_spec(
+            L,
+            V,
+            N,
+            props,
+            radiance,
+            1.0
+        );
 
     return result;
 }
@@ -286,7 +325,25 @@ void main() {
     }
 
     if (debug_mode == DEBUG_UNLIT) {
+
+        //
+        vec3 reflected = reflect(V, N);
+
         outColor = vec4(albedo, 1.0);
+
+        // do a ray-trace test :D
+        rayQueryEXT rayQuery;
+        rayQueryInitializeEXT(rayQuery, acceleration_structure, gl_RayFlagsTerminateOnFirstHitEXT, 0xFF, P, 0.01, reflected, 100.0);
+        while (rayQueryProceedEXT(rayQuery)) {}
+
+        if (rayQueryGetIntersectionTypeEXT(rayQuery, true) == gl_RayQueryCommittedIntersectionNoneEXT) {
+            // miss case
+            outColor *= 0.2;
+        } else {
+            // outColor = vec4(1.0, 0.0, 0.0, 1.0);
+            // Handle miss case
+        }
+
         return;
     }
 
