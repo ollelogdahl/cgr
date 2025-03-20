@@ -7,11 +7,13 @@
 struct AccelerationBLAS {
     VkAccelerationStructureKHR acc;
     GpuBuffer buffer;
+    VkDeviceAddress device_address;
 };
 
 struct AccelerationTLAS {
     VkAccelerationStructureKHR acc;
     GpuBuffer buffer;
+    GpuBuffer instance_buffer;
 };
 
 class AccelerationBuilder {
@@ -46,6 +48,8 @@ public:
     void await_build(CommandBuffer &cmd);
 private:
     gpu_t &m_gpu;
+
+    std::vector<GpuBuffer> m_scratch_buffers;
 
     std::vector<VkBufferMemoryBarrier2> m_buffer_barriers;
     std::vector<VkMemoryBarrier2> m_barriers;

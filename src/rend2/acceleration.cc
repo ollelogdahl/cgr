@@ -86,7 +86,7 @@ AccelerationBLAS AccelerationBuilder::build_blas(
     build_info.pGeometries = &geometry;
 
     // Create scratch buffer
-    GpuBuffer scratch_buffer(m_gpu, size_info.buildScratchSize,
+    auto &scratch_buffer = m_scratch_buffers.emplace_back(m_gpu, size_info.buildScratchSize,
         VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
 
     build_info.scratchData.deviceAddress = scratch_buffer.get_buffer_device_address();
@@ -108,16 +108,21 @@ AccelerationBLAS AccelerationBuilder::build_blas(
         build_range_infos
     );
 
+    VkAccelerationStructureDeviceAddressInfoKHR accelerationDeviceAddressInfo{};
+	accelerationDeviceAddressInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR;
+	accelerationDeviceAddressInfo.accelerationStructure = acceleration_structure;
+	auto addr = vkGetAccelerationStructureDeviceAddressKHR(m_gpu.device, &accelerationDeviceAddressInfo);
+
     VkMemoryBarrier2 barrier{};
     barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2;
     barrier.srcStageMask = VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR;
     barrier.srcAccessMask = VK_ACCESS_2_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
-    barrier.dstStageMask = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT_KHR;
+    barrier.dstStageMask = VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR;
     barrier.dstAccessMask = VK_ACCESS_2_ACCELERATION_STRUCTURE_READ_BIT_KHR;
 
     m_barriers.push_back(barrier);
 
-    return { acceleration_structure, std::move(as_buffer) };
+    return { acceleration_structure, std::move(as_buffer), addr };
 }
 
 void AccelerationBuilder::await_build(CommandBuffer &cmd) {
@@ -151,51 +156,46 @@ AccelerationTLAS AccelerationBuilder::build_tlas(
 ) {
     TracyVkZone(cmd.tracy_ctx(), cmd.get(), "build-tlas");
 
-    // @todo: wait for the previous commands to finish ...
-
     // Create a buffer to store the instances
-    std::vector<VkAccelerationStructureInstanceKHR> instances_data(instances.size());
-
-    GpuBuffer instance_buffer(m_gpu,
-        instances_data.size() * sizeof(VkAccelerationStructureInstanceKHR),
-        VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR |
-        VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
-
+    std::vector<VkAccelerationStructureInstanceKHR> instance_data(instances.size());
     for (size_t i = 0; i < instances.size(); ++i) {
-
-        VkAccelerationStructureDeviceAddressInfoKHR device_address_info{};
-        device_address_info.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR;
-        device_address_info.accelerationStructure = instances[i].blas->acc;
-
         auto &instance = instances[i];
-        auto &dst = instances_data[i];
+        auto &dst = instance_data[i];
 
         memcpy(dst.transform.matrix, instance.transform, 12 * sizeof(f32));
         dst.instanceCustomIndex = instance.custom_index;
         dst.mask = 0xFF;
         dst.instanceShaderBindingTableRecordOffset = 0;
         dst.flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
-        dst.accelerationStructureReference =
-            vkGetAccelerationStructureDeviceAddressKHR(m_gpu.device, &device_address_info);
+        dst.accelerationStructureReference = instance.blas->device_address;
     }
 
-    fmt::println("after creating instances");
+    for (size_t i = 0; i < instance_data.size(); ++i) {
+        fmt::println("tlas instance {}: blas-addr: {}", i, instance_data[i].accelerationStructureReference);
+    }
+
+    GpuBuffer instance_buffer(m_gpu,
+        instance_data.size() * sizeof(VkAccelerationStructureInstanceKHR),
+        VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR |
+        VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
 
     auto instance_buffer_dep = instance_buffer.write_with_barrier(cmd.get(), slice<byte>(
-        (byte*)instances_data.data(),
-        instances_data.size() * sizeof(VkAccelerationStructureInstanceKHR)));
+        (byte*)instance_data.data(),
+        instance_data.size() * sizeof(VkAccelerationStructureInstanceKHR)));
+
+    VkAccelerationStructureGeometryKHR geometry{};
+    geometry.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
+    geometry.geometryType = VK_GEOMETRY_TYPE_INSTANCES_KHR;
+    geometry.flags = VK_GEOMETRY_OPAQUE_BIT_KHR;
+    geometry.geometry.instances.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR;
+    geometry.geometry.instances.arrayOfPointers = VK_FALSE;
+    geometry.geometry.instances.data.deviceAddress = instance_buffer.get_buffer_device_address();
+
+    u32 primitive_count = instances.size();
 
     // Figure out the size info
     VkAccelerationStructureBuildSizesInfoKHR size_info{};
     {
-        VkAccelerationStructureGeometryKHR geometry{};
-        geometry.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
-        geometry.geometryType = VK_GEOMETRY_TYPE_INSTANCES_KHR;
-        geometry.flags = VK_GEOMETRY_OPAQUE_BIT_KHR;
-        geometry.geometry.instances.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR;
-        geometry.geometry.instances.arrayOfPointers = VK_FALSE;
-        geometry.geometry.instances.data.deviceAddress = instance_buffer.get_buffer_device_address();
-
         VkAccelerationStructureBuildGeometryInfoKHR build_info{};
         build_info.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
         build_info.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
@@ -205,7 +205,6 @@ AccelerationTLAS AccelerationBuilder::build_tlas(
 
         size_info.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR;
 
-        u32 primitive_count = instances.size();
         vkGetAccelerationStructureBuildSizesKHR(
             m_gpu.device,
             VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR,
@@ -214,6 +213,11 @@ AccelerationTLAS AccelerationBuilder::build_tlas(
             &size_info
         );
     }
+    fmt::println("TLAS size: {}", size_info.accelerationStructureSize);
+    fmt::println("TLAS scratch size: {}", size_info.buildScratchSize);
+    fmt::println("TLAS instance count: {}", instances.size());
+    fmt::println("TLAS instance size: {}", sizeof(VkAccelerationStructureInstanceKHR));
+
 
     // Create the acceleration structure buffer
     GpuBuffer as_buffer(m_gpu, size_info.accelerationStructureSize,
@@ -221,23 +225,20 @@ AccelerationTLAS AccelerationBuilder::build_tlas(
         VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR);
 
     // Create the acceleration structure
-    VkAccelerationStructureCreateInfoKHR create_info{};
-    create_info.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR;
-    create_info.buffer = as_buffer.get();
-    create_info.size = size_info.accelerationStructureSize;
-    create_info.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
-
     VkAccelerationStructureKHR acceleration_structure;
-    vkCreateAccelerationStructureKHR(m_gpu.device, &create_info, nullptr, &acceleration_structure);
+    {
+        VkAccelerationStructureCreateInfoKHR create_info{};
+        create_info.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR;
+        create_info.buffer = as_buffer.get();
+        create_info.size = size_info.accelerationStructureSize;
+        create_info.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
 
-    // Build the acceleration structure
-    VkAccelerationStructureGeometryKHR geometry{};
-    geometry.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
-    geometry.geometryType = VK_GEOMETRY_TYPE_INSTANCES_KHR;
-    geometry.flags = VK_GEOMETRY_OPAQUE_BIT_KHR;
-    geometry.geometry.instances.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR;
-    geometry.geometry.instances.arrayOfPointers = VK_FALSE;
-    geometry.geometry.instances.data.deviceAddress = instance_buffer.get_buffer_device_address();
+        vkCreateAccelerationStructureKHR(m_gpu.device, &create_info, nullptr, &acceleration_structure);
+    }
+
+    // Create scratch buffer
+    auto &scratch_buffer = m_scratch_buffers.emplace_back(m_gpu, size_info.buildScratchSize,
+        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
 
     VkAccelerationStructureBuildGeometryInfoKHR build_info{};
     build_info.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
@@ -247,11 +248,6 @@ AccelerationTLAS AccelerationBuilder::build_tlas(
     build_info.dstAccelerationStructure = acceleration_structure;
     build_info.geometryCount = 1;
     build_info.pGeometries = &geometry;
-
-    // Create scratch buffer
-    GpuBuffer scratch_buffer(m_gpu, size_info.buildScratchSize,
-        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
-
     build_info.scratchData.deviceAddress = scratch_buffer.get_buffer_device_address();
 
     VkAccelerationStructureBuildRangeInfoKHR build_range_info{};
@@ -264,6 +260,12 @@ AccelerationTLAS AccelerationBuilder::build_tlas(
 
     fmt::println("building TLAS acceleration structure");
 
+    {
+        // wait for instance data write before building the TLAS
+        instance_buffer_dep.pipeline_barrier(cmd.get(),
+            VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+            VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR);
+    }
     vkCmdBuildAccelerationStructuresKHR(
         cmd.get(),
         1,
@@ -275,14 +277,12 @@ AccelerationTLAS AccelerationBuilder::build_tlas(
     barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2;
     barrier.srcStageMask = VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR;
     barrier.srcAccessMask = VK_ACCESS_2_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
-    barrier.dstStageMask = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT_KHR;
+    barrier.dstStageMask = VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR;
     barrier.dstAccessMask = VK_ACCESS_2_ACCELERATION_STRUCTURE_READ_BIT_KHR;
-
-    // wait for the instance data write
 
     m_barriers.push_back(barrier);
 
-    return { acceleration_structure, std::move(as_buffer) };
+    return { acceleration_structure, std::move(as_buffer), std::move(instance_buffer) };
 }
 
 AccelerationTLAS AccelerationBuilder::rebuild_tlas(
