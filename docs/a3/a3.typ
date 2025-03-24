@@ -26,7 +26,7 @@ In the following section, the usage of the program is described. Firstly in @sec
 For building the application, the following are required:
 - C++20 / C++2a compatible compiler.
 - `GLFW` installed system-wide.
-- `make`
+- `make` or `cmake` (and a buildsystem like `make` or `ninja`)
 
 The following `make` commands are available:
 
@@ -54,9 +54,45 @@ only works on linux curretly.
 - Vulkan 1.3 compatible GPU. The descriptor indexing feature is also
   required. These are generally widely supported.
 
+= Background
+
+A classical forward renderer suffers from some issues, the biggest usually being
+overdraw. An overdrawn fragment is both wasted work, as well as inefficient usage
+of fill rate. As each fragment is being rendered in a forward-fashion, costly
+lighting calcuation occurs for fragments which will not be seen.
+Historically, deferred rendering has been proposed to solve this. By rendering only
+albedo, normals and other properties per-object, and later shading by pixel,
+the shading is only performed on every visible fragment. While this solves overdraw,
+deferred shading comes with other issues relating to bandwidth as well as anti-aliasing.
+
+The issue of overdraw can be handled in many ways, like performing an early depth-only
+pass or by triangle reordering. @han2016triangle In this assignment we kept using a
+forward renderer, but focused on shading optimizations.
+
+Our solution successfully renders a scene with 10'000 point lights in real time.
+
 = Clustered Forward Shading
 
+Clustered shading is a method to reduce lighting calculations by reducing the number
+of lights that are tested against each fragment. @olsson2012clustered The method works
+by splitting the view frustum into frustum shaped boxes (_froxels_) called clusters and
+assigning the lights to the clusters based on their influence. When shading, each fragment
+can look up the containing cluster and only calculate shading using those lights. This means
+that clusters with no lights perform no lighting calculations.
+
+In our implementation, we define the clusters using axis-aligned bounding boxes in view space.
+This is not completely accurate, as there will be slight overlap, but this doesn't seem to cause
+any artifacts in our scenes.
+
+A great feature of clustering is that the system can be reused for other spatial-related
+systems like decals and light probes.@devilisinthedetails
+
 == Cluster Assignment
+
+The first step is to assign lights to clusters. As we already store all point lights in a buffer,
+we use an indirection buffer similar to @devilisinthedetails. Each cluster reference its start of
+the list 
+
 
 == Forward Shading
 

@@ -6,3 +6,36 @@ glslc:
   urldate: 2025-02-11
   parent:
     title: GitHub
+han2016triangle:
+  type: article
+  title: Triangle reordering for reduced overdraw in animated scenes
+  author:
+  - Han, Songfang
+  - Sander, Pedro V
+  date: 2016
+  page-range: 23–27
+  parent:
+    type: proceedings
+    title: Proceedings of the 20th ACM SIGGRAPH Symposium on Interactive 3D Graphics and Games
+olsson2012clustered:
+  type: article
+  title: Clustered deferred and forward shading
+  author:
+  - Olsson, Ola
+  - Billeter, Markus
+  - Assarsson, Ulf
+  date: 2012
+  page-range: 87–96
+  parent:
+    type: proceedings
+    title: Proceedings of the Fourth ACM SIGGRAPH/Eurographics conference on High-Performance Graphics
+devilisinthedetails:
+  type: article
+  title: The Devil is in the Details
+  author:
+  - Sousa, Tiago
+  - Geffroy, Jean
+  date: 2016
+  parent:
+    type: conference
+    title: Advances in Real-Time Rendering in Games Course
