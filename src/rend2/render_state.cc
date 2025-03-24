@@ -292,9 +292,14 @@ TextureHandle RenderState::load_texture(const LoadTextureProperties &props) {
             &view);
     }
 
-    auto texture = m_storage.alloc_texture(image, view, sampler);
-    m_texture_cache[props] = texture;
-    return texture;
+    auto &textures = m_storage.textures();
+
+    auto handle = textures.alloc_persistent();
+    m_texture_cache[props] = handle;
+
+    textures.update(handle, view, sampler);
+
+    return handle;
 }
 
 void RenderState::update_material(MaterialHandle handle, const MaterialData &data) {

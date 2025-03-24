@@ -27,6 +27,7 @@ RenderStorage::RenderStorage(gpu_t &gpu, const RenderStorageConfig &config)
     // @note: vertex and index data requires device addressing, as they are used in acceleration structures.
     m_gpu(&gpu),
     m_acceleration_builder(gpu),
+    m_textures(gpu, config.max_textures),
     m_object_buffer(gpu, config.max_objects * sizeof(ObjectData), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT),
     m_object_data(new ObjectData[config.max_objects]),
     m_vertex_buffer(gpu, config.max_vertices * vertex_size,
@@ -36,12 +37,10 @@ RenderStorage::RenderStorage(gpu_t &gpu, const RenderStorageConfig &config)
     m_material_buffer(gpu, config.max_materials * sizeof(MaterialData), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT),
     m_mesh_buffer(gpu, config.max_meshes * sizeof(MeshData), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT),
     m_global_buffer(gpu, sizeof(GlobalData), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT),
-    m_textures(new TextureSlot[config.max_textures]),
     m_vertex_alloc(config.max_vertices),
     m_index_alloc(config.max_indices),
     m_material_alloc(config.max_materials),
     m_mesh_alloc(config.max_meshes),
-    m_texture_alloc(config.max_textures),
     m_object_alloc(config.max_objects),
     m_lights{
         GpuBuffer(gpu, config.max_lights * sizeof(LightData), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT),
@@ -83,45 +82,6 @@ RenderStorage::RenderStorage(gpu_t &gpu, const RenderStorageConfig &config)
         }
 
         m_object_buffer.write(slice<byte>((byte *)m_object_data, config.max_objects * sizeof(ObjectData)));
-    }
-
-    // create the descriptor pool & set
-    {
-        VkDescriptorPoolSize pool_sizes[] = {
-            { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 6 },
-            { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, config.max_textures },
-        };
-
-        VkDescriptorPoolCreateInfo pool_info = {};
-        pool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-        pool_info.poolSizeCount = array_size(pool_sizes);
-        pool_info.pPoolSizes = pool_sizes;
-        pool_info.maxSets = 1;
-        pool_info.flags = VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT;
-
-        VkDescriptorPool descriptor_pool;
-        VK_CHECK(vkCreateDescriptorPool(gpu.device, &pool_info, nullptr, &descriptor_pool));
-
-        set_object_name(gpu, VK_OBJECT_TYPE_DESCRIPTOR_POOL, descriptor_pool, "Render Storage Descriptor Pool");
-
-        auto ds_builder = DescriptorSetLayoutBuilder()
-            .add_binding(0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)
-            .add_binding(1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_VERTEX_BIT)
-            .add_binding(2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_FRAGMENT_BIT)
-            .add_binding(3, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_FRAGMENT_BIT)
-            .add_binding(4, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_FRAGMENT_BIT)
-            .add_binding(5, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_FRAGMENT_BIT)
-            .add_late_binding(6, VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, VK_SHADER_STAGE_FRAGMENT_BIT)
-            .add_variable_binding(7, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, config.max_textures);
-        ds_builder.create_set(gpu, descriptor_pool, m_render_descriptor_set);
-
-        set_object_name(gpu, VK_OBJECT_TYPE_DESCRIPTOR_SET, m_render_descriptor_set.get(), "Render Storage Descriptor Set");
-
-        m_render_descriptor_set.write_storage_buffer(0, 0, m_global_buffer.get(), 0, VK_WHOLE_SIZE);
-        m_render_descriptor_set.write_storage_buffer(1, 0, m_object_buffer.get(), 0, VK_WHOLE_SIZE);
-        m_render_descriptor_set.write_storage_buffer(2, 0, m_material_buffer.get(), 0, VK_WHOLE_SIZE);
-        m_render_descriptor_set.write_storage_buffer(3, 0, m_lights.buffer.get(), 0, VK_WHOLE_SIZE);
-        m_render_descriptor_set.flush(gpu);
     }
 }
 
@@ -184,22 +144,6 @@ MaterialHandle RenderStorage::alloc_material(const MaterialData &data) {
     counts.materials += 1;
 
     m_writes.materials.insert(idx * sizeof(MaterialData), data);
-
-    return {idx};
-}
-
-TextureHandle RenderStorage::alloc_texture(VkImage image, VkImageView view, VkSampler sampler) {
-    ZoneScoped;
-    u32 idx = m_texture_alloc.allocate();
-    if (idx == -1U) {
-        logger.error("failed to allocate texture");
-        return {-1U};
-    }
-
-    counts.textures += 1;
-
-    m_render_descriptor_set.write_combined_image_sampler(7, idx, image, view, sampler);
-    m_textures[idx] = {image, view, sampler};
 
     return {idx};
 }
@@ -355,8 +299,6 @@ void RenderStorage::for_each_point_light(std::function<bool(LightHandle, LightDa
 RenderStorage::FlushDependencies RenderStorage::flush(CommandBuffer &cmd) {
     ZoneScoped;
 
-    m_render_descriptor_set.write_acceleration_structure(6, 0, m_tlas.acc);
-
     WriteCache<ObjectData> object_changes;
     for (auto &handle : dirty_objects) {
         ObjectData &object = m_object_data[handle.id];
@@ -372,8 +314,6 @@ RenderStorage::FlushDependencies RenderStorage::flush(CommandBuffer &cmd) {
     m_lights.dirty.clear();
 
     FlushDependencies deps;
-
-    deps.textures = m_render_descriptor_set.flush(*m_gpu);
 
     {
         TracyVkZone(cmd.tracy_ctx(), cmd.get(), "render-state-write");
@@ -417,7 +357,6 @@ RenderStorage::FlushDependencies RenderStorage::flush(CommandBuffer &cmd) {
     metrics::gauge_u32("rend2.state.indices", counts.indices);
     metrics::gauge_u32("rend2.state.materials", counts.materials);
     metrics::gauge_u32("rend2.state.meshes", counts.meshes);
-    metrics::gauge_u32("rend2.state.textures", counts.textures);
     metrics::gauge_u32("rend2.state.objects", counts.objects);
     metrics::gauge_u32("rend2.state.lights", counts.lights);
 

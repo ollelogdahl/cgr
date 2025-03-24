@@ -12,6 +12,7 @@
 #include <set>
 
 
+#include "rend2/texture_storage.h"
 #include "render_handles.h"
 
 struct RenderStorageConfig {
@@ -112,9 +113,6 @@ public:
     MeshHandle alloc_mesh(const MeshData &);
 
     MaterialHandle alloc_material(const MaterialData &);
-    TextureHandle alloc_texture(VkImage image, VkImageView view, VkSampler sampler);
-
-    TextureHandle reserve_contiguous_textures(u32 count);
 
     ObjectHandle alloc_object();
 
@@ -143,7 +141,6 @@ public:
         WriteDependency objects;
         WriteDependency global;
         WriteDependency lights;
-        Dependency textures;
     };
 
     // flushes changes to the GPU.
@@ -158,14 +155,6 @@ public:
             }
         }
     }
-
-    // used by forward indirect pass for now; can maybe be moved?
-    //
-    // binding 0: global data (vert, frag)
-    // binding 1: object data (vert)
-    // binding 2: material data (frag)
-    // binding 3: texture array (frag)
-    DescriptorSet &render_descriptor_set() { return m_render_descriptor_set; }
 
     struct Batch {
         BatchId id;
@@ -182,10 +171,7 @@ public:
     const GpuBuffer &global_buffer() const { return m_global_buffer; }
     const GpuBuffer &light_buffer() const { return m_lights.buffer; }
 
-    TextureSlot &texture(TextureHandle handle) { return m_textures[handle.id]; }
-
     std::span<const ShaderInfo> shaders() { return m_shaders; }
-
 
     void for_each_point_light(std::function<bool(LightHandle, LightData &)>);
 
@@ -194,12 +180,15 @@ public:
 
     AccelerationBuilder &acceleration_builder() { return m_acceleration_builder; }
 
+    TextureStorage &textures() { return m_textures; }
 private:
 
     gpu_t *m_gpu;
 
     AccelerationBuilder m_acceleration_builder;
     AccelerationTLAS m_tlas;
+
+    TextureStorage m_textures;
 
     // objects are fun! They lie both on the CPU and the GPU.
     GpuBuffer m_object_buffer;
@@ -211,16 +200,11 @@ private:
     GpuBuffer m_mesh_buffer;
     GpuBuffer m_global_buffer;
 
-    TextureSlot *m_textures = nullptr;
-
     RandomAllocator m_vertex_alloc;
     RandomAllocator m_index_alloc;
     SlotAllocator m_material_alloc;
     SlotAllocator m_mesh_alloc;
-    SlotAllocator m_texture_alloc;
     SlotAllocator m_object_alloc;
-
-    DescriptorSet m_render_descriptor_set;
 
     std::vector<Batch> m_object_batches;
     std::unordered_map<ObjectHandle, u32> m_object_to_idx_map;
@@ -245,7 +229,6 @@ private:
         u32 materials = 0;
         u32 meshes = 0;
         u32 objects = 0;
-        u32 textures = 0;
         u32 lights = 0;
     } counts;
 

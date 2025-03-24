@@ -73,6 +73,7 @@ private:
     friend class RenderStorage;
     friend class Renderer;
     friend class RenderState;
+    friend class TextureStorage;
     friend std::string format_as(TextureHandle);
     friend struct std::hash<TextureHandle>;
 };

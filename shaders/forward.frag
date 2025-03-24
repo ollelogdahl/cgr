@@ -80,9 +80,10 @@ layout(set = 0, binding = 5) readonly buffer ClusterItemBuffer {
 };
 
 // raytrace acceleration structure
-layout(set = 0, binding = 6) uniform accelerationStructureEXT acceleration_structure;
+// layout(set = 0, binding = 6) uniform accelerationStructureEXT acceleration_structure;
 
 layout(set = 0, binding = 7) uniform sampler2D textures[];
+layout(set = 0, binding = 7) uniform samplerCube cube_textures[];
 
 layout(push_constant) uniform PushConstants {
     uint debug_mode;
@@ -330,7 +331,7 @@ void main() {
         vec3 reflected = reflect(V, N);
 
         outColor = vec4(albedo, 1.0);
-
+        /*
         // do a ray-trace test :D
         rayQueryEXT rayQuery;
         rayQueryInitializeEXT(rayQuery, acceleration_structure, gl_RayFlagsTerminateOnFirstHitEXT, 0xFF, P, 0.01, reflected, 100.0);
@@ -343,6 +344,7 @@ void main() {
             // outColor = vec4(1.0, 0.0, 0.0, 1.0);
             // Handle miss case
         }
+        */
 
         return;
     }

@@ -36,12 +36,14 @@ CCFLAGS_COMMON = -std=c++2a -Wall -Wextra -Werror -Ivendor/include -Isrc -I. -g 
 	-Wno-nullability-completeness -Wno-unused-parameter -Wno-unused-variable -Wno-unused-function -Wno-unused-private-field \
 	-Wno-missing-field-initializers \
 	-march=native					\
+	-DVK_USE_PLATFORM_XCB_KHR		\
+	-DVK_NO_PROTOTYPES				\
 	-Ivendor/tracy
 LDFLAGS_COMMON = -ldl -lglfw -lz -pthread
 
 CCFLAGS_DEV = $(CCFLAGS_COMMON) -DDEBUG -O3 -DTRACY_ENABLE -DTRACY_CALLSTACK=2
 CCFLAGS_RELEASE = $(CCFLAGS_COMMON) -DRELEASE -O3
-CCFLAGS_MEM = $(CCFLAGS_COMMON) -DVALIDATE -O0 -fsanitize=undefined -fsanitize=address
+CCFLAGS_MEM = $(CCFLAGS_COMMON) -DVALIDATE -O0  -fsanitize=address
 
 CCFLAGS_VENDOR_DEV = $(CCFLAGS_COMMON) -DDEBUG -O3
 CCFLAGS_VENDOR_RELEASE = $(CCFLAGS_COMMON) -DRELEASE -O3
@@ -49,7 +51,7 @@ CCFLAGS_VENDOR_MEM = $(CCFLAGS_COMMON) -DVALIDATE -O0
 
 LDFLAGS_DEV = $(LDFLAGS_COMMON)
 LDFLAGS_RELEASE = $(LDFLAGS_COMMON)
-LDFLAGS_MEM = $(LDFLAGS_COMMON) -fsanitize=undefined -fsanitize=address
+LDFLAGS_MEM = $(LDFLAGS_COMMON) -fsanitize=address
 
 ifeq ($(USE_MOLD_LINKER),true)
 LDFLAGS_COMMON += --ld-path=/usr/bin/mold

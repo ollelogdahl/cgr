@@ -17,7 +17,7 @@
         />
     </transform>
     <transform translate="0 1.5 0" scale="2 2 2">
-        <model file="assets/ico7s.obj"
+        <model file="assets/cube.obj"
             mat-color="0.4 0.1 0.1"
             mat-roughness="0.3"
         />

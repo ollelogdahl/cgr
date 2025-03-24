@@ -37,13 +37,13 @@ inline constexpr TrackedResourceID operator ""_tr(const char *s, size_t n) {
 
 class ResourceTracker {
 public:
-    void declare_buffer(TrackedResourceID id, VkBuffer buffer /* range */);
-    void declare_image(TrackedResourceID id, VkImage image /* range */);
+    struct Range {
+        u64 start;
+        u64 size;
+    };
 
-    void compute_write(TrackedResourceID resource);
-    void compute_read(TrackedResourceID resource);
-
-    void graphics_read(TrackedResourceID resource);
+    void compute_ssbo_write(VkBuffer buffer, Range range);
+    void compute_ssbo_read(VkBuffer buffer, Range range);
 private:
 };
 
@@ -189,6 +189,7 @@ void Renderer::render(gpu_t::frame_t &frame, const View &view) {
             m_cluster_shading.cluster_item_buffer().get());
     }
 
+    /*
     {
         pre_forward_dependencies.pipeline_barrier(frame.cmd.get(),
             VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT);
@@ -214,6 +215,7 @@ void Renderer::render(gpu_t::frame_t &frame, const View &view) {
 
         m_forward_pass.record(frame.cmd, target, view, batches);
     }
+    */
 }
 
 bool operator==(const LoadShaderProperties &lhs, const LoadShaderProperties &rhs) {

@@ -48,7 +48,8 @@ void gpu_t::init(GLFWwindow *window, const gpu_create_options_t &options) {
     std::vector<const char *> required_device_extensions = {
         VK_KHR_SWAPCHAIN_EXTENSION_NAME,
         VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME,
-        VK_KHR_RAY_QUERY_EXTENSION_NAME,
+        // VK_KHR_RAY_QUERY_EXTENSION_NAME,
+        VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME,
         VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME,
         // VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME, @note: core in 1.2
         // VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME, @note: core in 1.3
@@ -299,14 +300,20 @@ void gpu_t::init(GLFWwindow *window, const gpu_create_options_t &options) {
         acceleration_structure_features.accelerationStructure = VK_TRUE;
         acceleration_structure_features.descriptorBindingAccelerationStructureUpdateAfterBind = VK_TRUE;
 
+        VkPhysicalDeviceRayTracingPipelineFeaturesKHR ray_tracing_features{};
+        ray_tracing_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR;
+        ray_tracing_features.pNext = &acceleration_structure_features;
+        ray_tracing_features.rayTracingPipeline = VK_TRUE;
+        /*
         VkPhysicalDeviceRayQueryFeaturesKHR ray_query_features{};
         ray_query_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR;
         ray_query_features.pNext = &acceleration_structure_features;
         ray_query_features.rayQuery = VK_TRUE;
+        */
 
         VkPhysicalDeviceSynchronization2Features synchronization2_feature {
             .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES,
-            .pNext = &ray_query_features,
+            .pNext = &ray_tracing_features,
             .synchronization2 = VK_TRUE,
         };
 
@@ -331,7 +338,7 @@ void gpu_t::init(GLFWwindow *window, const gpu_create_options_t &options) {
         auto result = vkCreateDevice(pdev, &createInfo, nullptr, &device);
         if (result != VK_SUCCESS) {
             gpu_log.error("failed to create logical device: {}", vk_result_to_cstr(result));
-            return;
+            abort();
         }
         gpu_log.info("logical device created");
     }

@@ -12,7 +12,7 @@ ForwardMeshPass::ForwardMeshPass(gpu_t &gpu, ShaderCompiler &sc, RenderStorage &
     m_cull_pass.bind_buffers(storage.object_buffer(), draw_buffer, storage.mesh_buffer());
 
     m_pipeline_layout = PipelineLayoutBuilder()
-        .add_descriptor_set(storage.render_descriptor_set().layout())
+        .add_descriptor_set(storage.textures().descriptor_set_layout())
         .add_push_constant_range({VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(u32)})
         .build(gpu);
 }
@@ -25,7 +25,7 @@ void ForwardMeshPass::record(CommandBuffer &cmd, RenderTarget& target, const Vie
     m_cull_pass.update_view(view.position, view.view * view.projection);
 
     // bind the global descriptor set
-    VkDescriptorSet descriptor_sets[] = { m_state.render_descriptor_set().get() };
+    VkDescriptorSet descriptor_sets[] = { m_state.textures().descriptor_set() };
     vkCmdBindDescriptorSets(cmd.get(), VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline_layout, 0,
         1, descriptor_sets, 0, nullptr);
 

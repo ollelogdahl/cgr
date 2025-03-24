@@ -55,6 +55,7 @@ GpuBuffer::GpuBuffer(gpu_t &gpu, u32 size, VkBufferUsageFlags usage, BufferType 
 GpuBuffer::~GpuBuffer() {
     if (m_buffer != VK_NULL_HANDLE) {
         // @todo: this is not really safe. We need to know that the buffer is not in use.
+        fmt::println("destroying buffer");
         vmaDestroyBuffer(m_gpu->allocator, m_buffer, m_allocation);
     }
 }
