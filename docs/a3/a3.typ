@@ -66,33 +66,59 @@ the shading is only performed on every visible fragment. While this solves overd
 deferred shading comes with other issues relating to bandwidth as well as anti-aliasing.
 
 The issue of overdraw can be handled in many ways, like performing an early depth-only
-pass or by triangle reordering. @han2016triangle In this assignment we kept using a
-forward renderer, but focused on shading optimizations.
-
-Our solution successfully renders a scene with 10'000 point lights in real time.
+pass or by triangle reordering. @han2016triangle In this assignment, we focused on lessening
+the overdraw impact by reducing the cost of fragment shading. Our method, Clustered
+Shading, can also efficiently be applied to a deferred renderer to support many lights.
+Our solution is capable of rendering a scene with 10'000 point lights in real time.
 
 = Clustered Forward Shading
 
 Clustered shading is a method to reduce lighting calculations by reducing the number
 of lights that are tested against each fragment. @olsson2012clustered The method works
-by splitting the view frustum into frustum shaped boxes (_froxels_) called clusters and
-assigning the lights to the clusters based on their influence. When shading, each fragment
-can look up the containing cluster and only calculate shading using those lights. This means
-that clusters with no lights perform no lighting calculations.
+by splitting the view frustum into frustum shaped boxes called clusters and
+assigning the lights to the clusters based on their influence radius. When shading, each
+fragment can look up the containing cluster and only calculate shading using those lights.
+This means that clusters with no lights perform no lighting calculations.
 
 In our implementation, we define the clusters using axis-aligned bounding boxes in view space.
-This is not completely accurate, as there will be slight overlap, but this doesn't seem to cause
-any artifacts in our scenes.
+This is not completely accurate, as there will be slight overlap, but this doesn't cause any
+issues in the tested scenes.
 
 A great feature of clustering is that the system can be reused for other spatial-related
 systems like decals and light probes.@devilisinthedetails
 
+== Cluster Generation
+
+The first step is to generate the clusters bounding boxes. The clusters needs to be
+recalculated every time the projection changes. For clustering, we define a grid size
+for the number of clusters in the frustum; we use the same as @devilisinthedetails
+which is 16x8x24. Each compute invocation calculates the bounding box for a single
+cluster, using its invocation ID to calculate the cluster position in view space.
+
+While the X and Y axis are divided into equal parts, the Z axis is sliced logarithmically
+to counteract both the fact that the NDC space is not linear and that clusters closer
+to the camera likely cover more fragments. The start depth of slice $n$ ($Z_n$)
+is calculated using @eq:cluster-z-slice, where $N$ is the total number of Z slices.@devilisinthedetails
+
+$
+  Z_n = Z_text("near") * (Z_text("far") / Z_text("near")) ^ (n / N)
+$ <eq:cluster-z-slice>
+
+This gives us a cheap mapping between view-space position and cluster index.
+
 == Cluster Assignment
 
-The first step is to assign lights to clusters. As we already store all point lights in a buffer,
-we use an indirection buffer similar to @devilisinthedetails. Each cluster reference its start of
-the list 
+Assigning lights to clusters is the main part of the clustering algorithm. In previous assignments
+we already store all point lights in a buffer, so we use an indirection buffer similar to @devilisinthedetails to reference them. After this pass, each cluster will have a reference to the start of the cluster items, as well as a hash and the number of lights. See @fig:cluster-mem for a memory layout of clusters, cluster items and lights.
 
+Using a naive approach, we were able to assign 10'000 lights to 2'800 clusters in 6ms on a GTX 1070.
+While an extreme case, we optimized the algorithm to perform faster. 
+
+#figure(
+  placement: top,
+  image("fig/clusters.svg"),
+  caption: [Memory layout of clusters, cluster items and lights.]
+) <fig:cluster-mem>
 
 == Forward Shading
 

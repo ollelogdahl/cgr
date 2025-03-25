@@ -28,7 +28,7 @@
   body
 ) = {
   // Set document metadata.
-  set document(title: title, author: authors.map(author => author.name))
+  set document(author: authors.map(author => author.name))
 
   // Set the body font.
   // set text(font: "STIX Two Text", size: 10pt)
@@ -152,7 +152,7 @@
   // Start two column mode and configure paragraph properties.
   show: columns.with(2, gutter: 12pt)
   set par(justify: true, first-line-indent: 0em)
-  set par(spacing: 1.2em)
+  // set par(spacing: 1.2em)
 
   // Display abstract and index terms.
   if abstract != none [
@@ -165,11 +165,10 @@
     #v(2pt)
   ]
 
-  show table.cell.where(y: 0): set text(weight: "bold")
-  show table: it => box(it, width: 90%)
+  // show table.cell.where(y: 0): set text(weight: "bold")
+  // show table: it => box(it, width: 90%)
   set table(
     align: center + horizon,
-    stroke: (),
   )
 
   // Display the paper's contents.
