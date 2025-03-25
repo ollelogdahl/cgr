@@ -60,10 +60,9 @@ ShaderModule ShaderCompiler::compile(const char *glsl_path) {
         if (ret != 0) {
             logger.error("failed to compile shader: {}", glsl_path);
             logger.error("Likely, the shader compiler (glslc) could not be found. Please ensure that it is in your PATH, or set using GLSC_PATH environment variable.");
-            logger.error("it should be set as GLSLC_PATH=./glslc ./cgr <scene file>");
 
             if (retries == 0) {
-                logger.warn("retrying to compile using default lab computer path");
+                logger.warn("retrying compilation using default lab computer path (GLSLC_PATH=./glslc)");
                 m_glslc_path = "./glslc";
                 retries++;
             } else {
