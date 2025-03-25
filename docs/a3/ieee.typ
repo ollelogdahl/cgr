@@ -28,7 +28,7 @@
   body
 ) = {
   // Set document metadata.
-  set document(author: authors.map(author => author.name))
+  set document(title: title, author: authors.map(author => author.name))
 
   // Set the body font.
   // set text(font: "STIX Two Text", size: 10pt)
@@ -65,50 +65,50 @@
 
   // Configure headings.
   set heading(numbering: "I.A.1.")
-  show heading: it => locate(loc => {
-    // Find out the final number of the heading counter.
-    let levels = counter(heading).at(loc)
-    let deepest = if levels != () {
-      levels.last()
-    } else {
-      1
-    }
+  // show heading: it => locate(loc => {
+  //   // Find out the final number of the heading counter.
+  //   let levels = counter(heading).at(loc)
+  //   let deepest = if levels != () {
+  //     levels.last()
+  //   } else {
+  //     1
+  //   }
 
-    set text(10pt, weight: 400)
-    if it.level == 1 [
-      // First-level headings are centered smallcaps.
-      // We don't want to number of the acknowledgment section.
-      #let is-ack = it.body in ([Acknowledgment], [Acknowledgement])
-      #set align(center)
-      #set text(if is-ack { 10pt } else { 12pt })
-      #show: smallcaps
-      #v(20pt, weak: true)
-      #if it.numbering != none and not is-ack {
-        numbering("I.", deepest)
-        h(7pt, weak: true)
-      }
-      #it.body
-      #v(13.75pt, weak: true)
-    ] else if it.level == 2 [
-      // Second-level headings are run-ins.
-      #set par(first-line-indent: 0pt)
-      #set text(style: "italic")
-      #v(10pt, weak: true)
-      #if it.numbering != none {
-        numbering("A.", deepest)
-        h(7pt, weak: true)
-      }
-      #it.body
-      #v(10pt, weak: true)
-    ] else [
-      // Third level headings are run-ins too, but different.
-      #if it.level == 3 {
-        numbering("1)", deepest)
-        [ ]
-      }
-      _#(it.body):_
-    ]
-  })
+  //   set text(10pt, weight: 400)
+  //   if it.level == 1 [
+  //     // First-level headings are centered smallcaps.
+  //     // We don't want to number of the acknowledgment section.
+  //     #let is-ack = it.body in ([Acknowledgment], [Acknowledgement])
+  //     #set align(center)
+  //     #set text(if is-ack { 10pt } else { 12pt })
+  //     #show: smallcaps
+  //     #v(20pt, weak: true)
+  //     #if it.numbering != none and not is-ack {
+  //       numbering("I.", deepest)
+  //       h(7pt, weak: true)
+  //     }
+  //     #it.body
+  //     #v(13.75pt, weak: true)
+  //   ] else if it.level == 2 [
+  //     // Second-level headings are run-ins.
+  //     #set par(first-line-indent: 0pt)
+  //     #set text(style: "italic")
+  //     #v(10pt, weak: true)
+  //     #if it.numbering != none {
+  //       numbering("A.", deepest)
+  //       h(7pt, weak: true)
+  //     }
+  //     #it.body
+  //     #v(10pt, weak: true)
+  //   ] else [
+  //     // Third level headings are run-ins too, but different.
+  //     #if it.level == 3 {
+  //       numbering("1)", deepest)
+  //       [ ]
+  //     }
+  //     _#(it.body):_
+  //   ]
+  // })
 
   // Display the paper's title.
   v(3pt, weak: true)
@@ -152,7 +152,7 @@
   // Start two column mode and configure paragraph properties.
   show: columns.with(2, gutter: 12pt)
   set par(justify: true, first-line-indent: 0em)
-  // set par(spacing: 1.2em)
+  set par(spacing: 1.2em)
 
   // Display abstract and index terms.
   if abstract != none [
@@ -165,10 +165,11 @@
     #v(2pt)
   ]
 
-  // show table.cell.where(y: 0): set text(weight: "bold")
-  // show table: it => box(it, width: 90%)
+  show table.cell.where(y: 0): set text(weight: "bold")
+  show table: it => box(it, width: 90%)
   set table(
     align: center + horizon,
+    stroke: (),
   )
 
   // Display the paper's contents.

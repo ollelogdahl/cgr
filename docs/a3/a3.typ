@@ -109,10 +109,16 @@ This gives us a cheap mapping between view-space position and cluster index.
 == Cluster Assignment
 
 Assigning lights to clusters is the main part of the clustering algorithm. In previous assignments
-we already store all point lights in a buffer, so we use an indirection buffer similar to @devilisinthedetails to reference them. After this pass, each cluster will have a reference to the start of the cluster items, as well as a hash and the number of lights. See @fig:cluster-mem for a memory layout of clusters, cluster items and lights.
+we already store all point lights in a buffer, so we use an indirection buffer similar to
+@devilisinthedetails to reference them. After this pass, each cluster will have a reference to
+the start of the cluster items, as well as a hash and the number of lights. Each cluster supports
+up to 255 lights.
+See @fig:cluster-mem for a memory layout of clusters, cluster items and lights.
 
+Assignment is done using a simple AABB-sphere intersection test. As the lights don't store their
+radii, this needs to be calculated using the intensity and the falloff parameters.
 Using a naive approach, we were able to assign 10'000 lights to 2'800 clusters in 6ms on a GTX 1070.
-While an extreme case, we optimized the algorithm to perform faster. 
+While an extreme case, we optimized the algorithm to perform faster and require less memory.
 
 #figure(
   placement: top,
@@ -120,9 +126,58 @@ While an extreme case, we optimized the algorithm to perform faster.
   caption: [Memory layout of clusters, cluster items and lights.]
 ) <fig:cluster-mem>
 
+The naive approach would be to let each invocation handle a single cluster, and then iterate over all lights
+directly. This requires alot of memory accesses (although they are mostly coherent), and repeats light
+radii calculations. Another issue is that the amount of memory required is very high, as there is no
+communication between clusters. Therefore, each cluster needs to reserve a worst-case amount of memory.
+If using a 16x8x24 grid, this would require 3.1MB of memory. Also consider that when looking up
+items during shading, a sparse lookup would occur in the items buffer. This implementation is shown
+in @fig:cluster-naive, simplified for 3 lights and 2 clusters.
+
+#figure(
+    placement: top,
+    image("fig/cluster-assign-naive.svg"),
+    caption: [Naive cluster assignment implementation.]
+) <fig:cluster-naive>
+
+We propose an optimized approach using shared memory and subgroup operations. The cluster assignment
+is broken up into multiple stages; prefetching, intersection, and writing. The stages require explicit
+barriers to ensure that all invocations are in sync.
+The optimized approach uses light batches, with the same batch size as the size of the workgroup.
+First, each invocation collaborates on reading a single light of the following batch into shared memory.
+After this, the radii have been calculated and all lights. The intersection tests work as before,
+still using coherent reads, but from shared memory. Each invocation keeps a running hash of the light
+IDs that intersected, as well as store the lights into invocation-private memory. After there are
+no more batches to process, the invocations hashes are compared. If multiple invocations have the same
+hash, the one with the lowest ID writes the lights from private memory to the cluster list, and atomically
+increments the number of items in the list. This implementation is shown in @fig:cluster-opt, simplified
+for 5 lights and 4 clusters.
+
+#figure(
+    placement: bottom,
+    scope: "parent",
+    image("fig/cluster-assign-opt.svg"),
+    caption: [Optimized cluster assignment implementation. Vertical lines are barriers.]
+) <fig:cluster-opt>
+
+The optimized implementation using the batch system took the time to assign 10'000 lights to 2'800
+clusters down to 1.3ms on a GTX 1070. Compressing the cluster items reduced this time down to 1.1ms.
+Importantly, the memory usage also went down to 164000 bytes.
+
+While much better, there are still some optimization opportunities. One idea is to cull lights
+early in the prefetching stage against the entire frustum.
+
 == Forward Shading
 
-== Optimized Scalar Reads
+Lastly, the cluster data can be used for shading. When shading a given fragment, we perform the opposite
+operation to the cluster generation, and get the cluster index of the view-space fragment position. We can
+then iterate over all lights in the cluster and shade the fragment using the lights.
+
+Usually, multiple fragments in the same subgroup will be contained by the same cluster. This means that
+in theory, we should be able to reduce the amount of memory accesses and make them scalar. While this didn't
+seem to make a difference on NVIDIA,
+
+// = Optimized Scalar Reads
 
 
 
