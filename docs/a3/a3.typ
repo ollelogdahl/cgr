@@ -173,6 +173,8 @@ Lastly, the cluster data can be used for shading. When shading a given fragment,
 operation to the cluster generation, and get the cluster index of the view-space fragment position. We can
 then iterate over all lights in the cluster and shade the fragment using the lights.
 
+=== Optimized Scalar Reads
+
 Usually, multiple fragments in the same subgroup will be contained by the same cluster. This means that
 in theory, we should be able to optimize for this by sharing information within the subgroup. Our solution
 uses ballots to determine if an entire subgroup is contained by the same cluster hash, and if so, reads
@@ -183,6 +185,37 @@ impact on NVIDIA GPUs, as they don't have the same optimizations.
 
 = Results
 
+In @fig:cluster-img, a screenshot of the clustered forward shading renderer is shown, ran on a
+NVIDIA GTX 1070. In the most distant clusters, the lights show artifacts as there are more than
+255 lights in the cluster. Some minimal artifacts are visible in the specular reflections along the
+floor. @fig:cluster-count-hash shows two debug views; the left shows the number of lights in each cluster,
+and the right shows the hash of the lights in each cluster. In @fig:cluster-scalar, an overlay of green
+is shown where the entire warp is contained by the same cluster.
+
+#figure(
+    placement: top,
+    scope: "parent",
+    image("fig/cluster-img.png"),
+    caption: [Screenshot of the clustered forward shading renderer.]
+) <fig:cluster-img>
+
+#figure(
+    placement: top,
+    scope: "parent",
+    grid(columns: 2, gutter: 1em, image("fig/cluster-count.png"), image("fig/cluster-hash.png")),
+    caption: [_left_: Number of lights in each cluster. _right_: Hash of lights in each cluster.]
+) <fig:cluster-count-hash>
+
+#figure(
+    placement: top,
+    image("fig/cluster-scalar.png"),
+    caption: [Overlay of green where entire warp is contained by the same cluster.]
+) <fig:cluster-scalar>
+
+= Limitations and Analysis
+
+The renderer has required some trade-offs to be able to submit the assignment in time. Firstly,
+the renderer only supports point lights. Secondly, the problem of reflections has not been solved.
 
 == Specular reflections
 
@@ -203,10 +236,9 @@ things outside the screen, requiring another method to fall back on. IBL Cubemap
 good idea, as it synergizes well with the current clustering system, but has some PBR issues.
 
 Cubemap reflections, hereforth called _Reflection Probes_, synergizes well with our clustering approach.
-Each cluster could track both lights and reflection probes, meaning that local reflections could be possible.
-One problem with reflection probes is that fragments not on the probe origin will be reflected incorrectly.
-This can be compensated for using parallax correction, but this doesn't fully solve it.
-
-
+Each cluster could track both lights and reflection probes, meaning that local reflections could be
+possible. One problem with reflection probes is that fragments not on the probe origin will be reflected
+incorrectly. This can be compensated for using parallax correction, but this doesn't fully solve it.
+This means that these types of reflections need to be very rough, or only used for distant reflections.
 
 #bibliography(style: "ieee", "bib.yml")
