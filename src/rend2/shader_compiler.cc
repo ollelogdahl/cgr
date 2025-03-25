@@ -37,6 +37,8 @@ ShaderCompiler::ShaderCompiler(gpu_t &gpu, const char *glslc_path)
 ShaderModule ShaderCompiler::compile(const char *glsl_path) {
     u64 hash = std::hash<std::string>{}(glsl_path);
 
+    logger.info("compiling shader: {}", glsl_path);
+
     const char *tmp_dir = "/tmp";
     auto tmp_path = fmt::format("{}/{}.spv", tmp_dir, hash);
 
@@ -44,14 +46,34 @@ ShaderModule ShaderCompiler::compile(const char *glsl_path) {
 
     // @todo: make it easy to set flags and stuff
 
-    auto cmd = fmt::format("{} {} --target-env=vulkan1.3 --target-spv=spv1.5 -I . -g -O -o {} {}", m_glslc_path,
-        debug_info, tmp_path, glsl_path);
+    if (strcmp(m_glslc_path, "") == 0) {
+        m_glslc_path = "./glslc";
+    }
 
-    // @todo: use exec instead of system.
-    // we want to be able to do these things in parallel i think.
-    // for this, we will break this function into two, (try_invoke_compiler, create_shader),
-    // and then we can call try_invoke_compiler in parallel.
-    system(cmd.c_str());
+    bool should_retry = true;
+    u32 retries = 0;
+    while (should_retry) {
+        auto cmd = fmt::format("{} {} --target-env=vulkan1.3 --target-spv=spv1.5 -I . -g -O -o {} {}", m_glslc_path,
+            debug_info, tmp_path, glsl_path);
+
+        int ret = system(cmd.c_str());
+        if (ret != 0) {
+            logger.error("failed to compile shader: {}", glsl_path);
+            logger.error("Likely, the shader compiler (glslc) could not be found. Please ensure that it is in your PATH, or set using GLSC_PATH environment variable.");
+            logger.error("it should be set as GLSLC_PATH=./glslc ./cgr <scene file>");
+
+            if (retries == 0) {
+                logger.warn("retrying to compile using default lab computer path");
+                m_glslc_path = "./glslc";
+                retries++;
+            } else {
+                logger.error("still couldn't find glslc. aborting.");
+                exit(1);
+            }
+        } else {
+            should_retry = false;
+        }
+    }
 
     auto code = file_read(tmp_path.c_str()).unwrap();
 
