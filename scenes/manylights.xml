@@ -2,10 +2,11 @@
 <scene>
     <camera position="0 1 0" />
 
-    <transform translate="0 -1 0" scale="80 1 80">
+    <transform translate="0 -1 0" scale="500 1 500">
         <model file="assets/plane.obj"
             mat-color="0.1 0.1 0.1"
             mat-roughness="0.3"
+            mat-tex-scale="25"
             mat-tex-albedo0="assets/tiles133a_color.jpg"
             mat-tex-normal="assets/tiles133a_normal.jpg"
             mat-tex-roughness="assets/tiles133a_roughness.jpg"

@@ -50,6 +50,9 @@ uint hash_fnv1a_next(uint hash, uint value);
 layout(local_size_x = 128) in;
 
 shared vec4 shared_lights[128];
+shared uint shared_hashes[128];
+shared uint shared_starts[128];
+shared uint shared_first_invocation_with_hash[128];
 
 void main() {
     uint cluster_index = gl_GlobalInvocationID.x;
@@ -62,6 +65,8 @@ void main() {
 
     vec3 cluster_min;
     vec3 cluster_max;
+
+    uint private_items[MAX_CLUSTER_ITEMS];
 
     if (cluster_index_valid(cluster_index, cluster_constants)) {
         cluster_min = clusters[cluster_index].bounds_min.xyz;
@@ -105,6 +110,17 @@ void main() {
         if (cluster_index_valid(cluster_index, cluster_constants)) {
             for (uint i = 0; i < light_batch_count; i++) {
                 if (cluster_item_count >= MAX_CLUSTER_ITEMS) break;
+                uint light_id = batch_start + i;
+                vec4 packed = shared_lights[i];
+
+                if (sphere_aabb_intersect(packed.xyz, packed.w, cluster_min, cluster_max)) {
+                    private_items[cluster_item_count] = light_id;
+                    cluster_item_count++;
+                    hash = hash_fnv1a_next(hash, light_id);
+                }
+
+                /*
+                if (cluster_item_count >= MAX_CLUSTER_ITEMS) break;
 
                 uint light_id = batch_start + i;
                 vec4 packed = shared_lights[i];
@@ -114,16 +130,50 @@ void main() {
                     cluster_item_count++;
                     hash = hash_fnv1a_next(hash, light_id);
                 }
+                */
             }
         }
     }
 
     hash = hash_fnv1a_next(hash, cluster_item_count);
 
+    shared_hashes[local_index] = hash;
+    shared_first_invocation_with_hash[local_index] = 0xFFFFFFFF;
+    barrier();
+
+    if (!cluster_index_valid(cluster_index, cluster_constants)) return;
+
+    // scan the subgroup for the first thread with the same hash as us
+    for (uint i = 0; i < 128; i++) {
+        if (i > local_index) continue;
+
+        if (hash == shared_hashes[i]) {
+            atomicMin(shared_first_invocation_with_hash[local_index], i);
+        }
+    }
+
+    bool is_first = shared_first_invocation_with_hash[local_index] == local_index;
+    uint first = shared_first_invocation_with_hash[local_index];
+
+    if (is_first) {
+        uint start = atomicAdd(cluster_items_size, cluster_item_count);
+        shared_starts[local_index] = start;
+
+        for (uint i = 0; i < cluster_item_count; i++) {
+            cluster_items[start + i] = private_items[i];
+        }
+    }
+    barrier();
+
+    clusters[cluster_index].item_start = shared_starts[first];
+    clusters[cluster_index].hash_and_num_lights = cluter_hash_and_count(hash, cluster_item_count);
+
+    /*
     if (cluster_index_valid(cluster_index, cluster_constants)) {
         clusters[cluster_index].item_start = cluster_item_offset;
         clusters[cluster_index].hash_and_num_lights = cluter_hash_and_count(hash, cluster_item_count);
     }
+    */
 }
 
 bool sphere_aabb_intersect(vec3 sphere_center, float radius, vec3 aabb_min, vec3 aabb_max) {

@@ -36,11 +36,11 @@ RenderStorage::RenderStorage(gpu_t &gpu, const RenderStorageConfig &config)
     m_mesh_alloc(config.max_meshes),
     m_texture_alloc(config.max_textures),
     m_object_alloc(config.max_objects),
-    m_lights(
+    m_lights{
         GpuBuffer(gpu, config.max_lights * sizeof(LightData), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT),
         new LightData[config.max_lights],
         SlotAllocator(config.max_lights)
-    ) {
+    } {
 
     set_object_name(gpu, VK_OBJECT_TYPE_BUFFER, m_object_buffer.get(), "object-buffer");
     set_object_name(gpu, VK_OBJECT_TYPE_BUFFER, m_vertex_buffer.get(), "vertex-buffer");
