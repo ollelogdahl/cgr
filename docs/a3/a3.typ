@@ -174,16 +174,17 @@ operation to the cluster generation, and get the cluster index of the view-space
 then iterate over all lights in the cluster and shade the fragment using the lights.
 
 Usually, multiple fragments in the same subgroup will be contained by the same cluster. This means that
-in theory, we should be able to reduce the amount of memory accesses and make them scalar. While this didn't
-seem to make a difference on NVIDIA,
+in theory, we should be able to optimize for this by sharing information within the subgroup. Our solution
+uses ballots to determine if an entire subgroup is contained by the same cluster hash, and if so, reads
+the lights in a scalar fashion. This should mean that instead of performing vectorized reads and storing in
+VGPRs, we can make memory accesses more coherent. The RDNA architecture has specialized scalar caches and
+optimized operations for VGPRs, meaning that this should be faster. However, this has a negative performance
+impact on NVIDIA GPUs, as they don't have the same optimizations.
 
-// = Optimized Scalar Reads
+= Results
 
 
-
-= Limitations
-
-== Reflections
+== Specular reflections
 
 The point lights influence is calculated using the range of diffuse lighting. Specular lighting
 has no upper range, and would require an influence range of infinity. This means that normal
