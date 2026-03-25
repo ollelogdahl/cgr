@@ -29,18 +29,20 @@ struct alignas(16) ClusterConstants {
     u32 grid_z;
 };
 
+const f32 max_cluster_items_factor = 0.5;
+
 u32 cluster_buffer_size(const ClusterConfig &config) {
     return sizeof(ClusterConstants) + config.grid_x * config.grid_y * config.grid_z * sizeof(ClusterShading::ClusterData);
 }
 u32 items_buffer_size(const ClusterConfig &config) {
     return (config.grid_x * config.grid_y * config.grid_z)
-        * ClusterShading::MAX_LIGHTS_PER_CLUSTER * sizeof(u32) + sizeof(u32);
+        * ClusterShading::MAX_LIGHTS_PER_CLUSTER * max_cluster_items_factor * sizeof(u32) + sizeof(u32);
 }
 
 ClusterShading::ClusterShading(gpu_t &gpu, ShaderCompiler &sc, const ClusterConfig &config)
 : m_gpu(gpu), m_config(config),
     m_cluster_buffer(gpu, cluster_buffer_size(config), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT),
-    m_items_buffer(gpu, items_buffer_size(config), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT) {
+    m_items_buffer(gpu, items_buffer_size(config), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, BufferType::Readback) {
 
     set_object_name(gpu, VK_OBJECT_TYPE_BUFFER, m_cluster_buffer.get(), "cluster-buffer");
     set_object_name(gpu, VK_OBJECT_TYPE_BUFFER, m_items_buffer.get(), "cluster-items-buffer");
@@ -139,6 +141,31 @@ void ClusterShading::assign_items(CommandBuffer &cmd, const m4f &view_proj, cons
         .light_threshold = runtime_config.light_threshold,
     };
     m4f::extract_planes(view_proj, push_constants.frustum_planes);
+
+    auto full_barrier = [&]() {
+        VkMemoryBarrier barrier = {};
+        barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+        barrier.srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT | VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT;
+        barrier.dstAccessMask = VK_ACCESS_MEMORY_WRITE_BIT | VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT;
+
+        vkCmdPipelineBarrier(cmd.get(), VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 1, &barrier, 0, nullptr, 0, nullptr);
+    };
+
+    // full barrier
+    full_barrier();
+
+    // read the number of items last frame
+    // {
+    //     u32 *num_items = m_items_buffer.read<u32>(0);
+    //     metrics::gauge_u32("rend2.clusters.items", *num_items);
+    // }
+
+    // full_barrier();
+
+    // clear the count field in the items buffer.
+    vkCmdFillBuffer(cmd.get(), m_items_buffer.get(), 0, sizeof(u32), 0);
+
+    full_barrier();
 
     VkDescriptorSet sets[] = { m_assign_descriptor_set.get() };
 
