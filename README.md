@@ -12,4 +12,13 @@ It would be cool to clean this up in the future and continue building on it.
 But for now, see it as just an implementation of a forward+ renderer with
 culling and light clustering.
 
+To run:
+
+```sh
+cmake -B build
+cmake --build build
+
+./build/cgr scenes/manylights.xml
+```
+
 Take care :^)
