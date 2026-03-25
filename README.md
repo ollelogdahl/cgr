@@ -1,19 +1,14 @@
-# CGR
+# Computer Graphics Renderer
 
-Handin for 5DV179, advanced computer graphics at UMU, developed over 3 months. This is a GPU-driven
-renderer written in vulkan, implementing indirect rendering and clustered forward shading.
+#![docs/cluster-img.png]
 
-See the reports for the [indirect renderer](docs/a2/rend2.pdf) and the [clustered forward shading](docs/a3/a3.pdf).
+This is a publication of the code discussed in [https://logdahl.net/p/gpu-driven].
+I have determined to publish it with a big warning! The code quality is a result
+of loads of incremental adjustments, and also redundant features (the code is
+based on a lab assignment i wrote for 5DV179 at Umeå University).
 
-# Usage
+It would be cool to clean this up in the future and continue building on it.
+But for now, see it as just an implementation of a forward+ renderer with
+culling and light clustering.
 
-Build using `make`.
-
-Run simply with `./cgr <path to scene>`.
-
-Using glsl shaders requires `glslc` to compile to spir-v. It will automatically be found on the path. If not found,
-you can set the path using the `GLSLC_PATH` environment variable.
-
-```
-GLSLC_PATH=/path/to/glslc ./cgr
-```
+Take care :^)
