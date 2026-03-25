@@ -12,6 +12,7 @@ It would be cool to clean this up in the future and continue building on it.
 But for now, see it as just an implementation of a forward+ renderer with
 culling and light clustering.
 
+Likely only working on Linux (not due to the Vulkan code itself, but many other parts. sorry!).
 To run:
 
 ```sh
