@@ -6,8 +6,11 @@ project(cgr
 )
 include(FetchContent)
 
+LIST(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake" )
+LIST(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake/sanitizers" )
 
-option(ENABLE_SANITIZERS "Enable sanitizers" OFF)
+find_package(Sanitizers)
+
 option(ENABLE_TRACY "Enable Tracy profiler" OFF)
 option(ENABLE_VULKAN_VALIDATION "Enable Vulkan validation layers" OFF)
 
@@ -72,12 +75,4 @@ target_link_libraries(cgr PRIVATE
     glfw
 )
 
-if (ENABLE_SANITIZERS)
-    target_compile_options(cgr PRIVATE
-        "-fsanitize=address,undefined"
-        "-g"
-    )
-    target_link_options(cgr PRIVATE
-        "-fsanitize=address,undefined"
-    )
-endif()
+add_sanitizers(cgr)

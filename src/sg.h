@@ -31,7 +31,7 @@ typedef std::function<void(node_t &)> update_callback_t;
 
 class Material {
 public:
-    Material(RenderState &state) : m_state(state) {
+    Material(RenderState &state) : m_data(), m_handle(), m_shader(), m_state(state) {
         m_handle = m_state.add_material(m_data);
     }
 

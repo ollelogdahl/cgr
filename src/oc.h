@@ -517,16 +517,16 @@ private:
     u32 *ref_count;
 
     template <typename U, typename ...Args>
-    friend ref_t<U> make_ref(Args... args);
+    friend ref_t<U> make_ref(Args&&... args);
 
     template <typename U, typename ...Args>
     friend ref_t<U> make_ref_owned(Args... args);
 };
 
 template <typename T, typename ...Args>
-ref_t<T> make_ref(Args... args) {
+ref_t<T> make_ref(Args&&... args) {
     ref_t<T> ref;
-    ref.ptr = new T(args...);
+    ref.ptr = new T(std::forward<Args>(args)...);
     ref.ref_count = new u32(1);
     return ref;
 }

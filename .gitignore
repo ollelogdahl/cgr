@@ -1,7 +1,7 @@
-/.target
-/cgr
+/build
 /imgui.ini
 /.cache
+/compile_commands.json
 /assets/arena.obj
 /report/report.pdf
 /handin.zip

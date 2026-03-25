@@ -35,6 +35,16 @@ void operator delete(void *ptr) noexcept {
     free(ptr);
 }
 
+void operator delete(void* ptr, std::size_t size) noexcept {
+    TracyFree(ptr);
+    free(ptr);
+}
+
+void operator delete[](void* ptr, std::size_t size) noexcept {
+    TracyFree(ptr);
+    free(ptr);
+}
+
 void operator delete(void *ptr, const std::nothrow_t &tag) noexcept {
     TracyFree(ptr);
     free(ptr);
